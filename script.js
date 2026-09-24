@@ -1,52 +1,46 @@
-const mirrorCamera = document.querySelector("#mirrorCamera");
-const mirrorSurface = document.querySelector(".mirror-surface");
-const cameraMessage = document.querySelector("#cameraMessage");
-const cameraRetry = document.querySelector("#cameraRetry");
+const emptyState = document.querySelector("#emptyState");
+const mirrorFrame = document.querySelector("#mirrorFrame");
+const mirrorStatus = document.querySelector("#mirrorStatus");
+const mirrorStatusText = document.querySelector("#mirrorStatusText");
 
-let cameraStream;
-
-function stopCamera() {
-  cameraStream?.getTracks().forEach((track) => track.stop());
-  cameraStream = undefined;
-  mirrorCamera.srcObject = null;
-  mirrorCamera.classList.remove("is-ready");
-  mirrorSurface.classList.remove("has-camera");
+function showStatus(message) {
+  mirrorStatusText.textContent = message;
+  mirrorStatus.hidden = false;
 }
 
-function showCameraUnavailable() {
-  cameraMessage.textContent = "Камера недоступна — зеркало всё равно готово.";
-  cameraRetry.hidden = false;
+function showEmptyState() {
+  emptyState.hidden = false;
+  mirrorFrame.hidden = true;
+  mirrorFrame.removeAttribute("src");
+  mirrorStatus.hidden = true;
 }
 
-async function startCamera() {
-  cameraRetry.hidden = true;
-  cameraMessage.textContent = "";
-  stopCamera();
+function showTarget(targetUrl) {
+  emptyState.hidden = true;
+  mirrorFrame.hidden = false;
+  mirrorFrame.src = targetUrl;
+  showStatus("Тестовая страница загружается");
+}
 
-  if (!navigator.mediaDevices?.getUserMedia) {
-    showCameraUnavailable();
-    return;
-  }
-
+async function loadMirrorTarget() {
   try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        facingMode: "user",
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-      },
-    });
+    const response = await fetch("/api/target", { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error("Target endpoint is unavailable");
 
-    mirrorCamera.srcObject = cameraStream;
-    await mirrorCamera.play();
-    mirrorCamera.classList.add("is-ready");
-    mirrorSurface.classList.add("has-camera");
+    const payload = await response.json();
+    if (payload.url) {
+      showTarget(payload.url);
+    } else {
+      showEmptyState();
+    }
   } catch {
-    showCameraUnavailable();
+    // The static preview remains useful without the optional bot server.
+    showEmptyState();
   }
 }
 
-cameraRetry.addEventListener("click", startCamera);
-window.addEventListener("pagehide", stopCamera);
-startCamera();
+mirrorFrame.addEventListener("load", () => {
+  if (!mirrorFrame.hidden) showStatus("Зеркало открыто");
+});
+
+loadMirrorTarget();

@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+mirror_state.json
+mirror_state.tmp
+.env

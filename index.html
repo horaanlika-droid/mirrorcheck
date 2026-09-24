@@ -13,24 +13,25 @@
         <p>вот так работает зеркало</p>
       </header>
 
-      <main class="mirror-surface" aria-label="Зеркало">
-        <div class="mirror-fallback" aria-hidden="true">
-          <span class="mirror-fallback__ring"></span>
+      <main class="mirror-surface" aria-label="Зеркало тестовой страницы">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-state__mark" aria-hidden="true">↗</div>
+          <h1>Зеркало готово</h1>
+          <p>Отправьте боту команду <code>/mirror ссылка</code>, чтобы открыть тестовую страницу.</p>
         </div>
 
-        <video
-          class="mirror-camera"
-          id="mirrorCamera"
-          autoplay
-          muted
-          playsinline
-          aria-label="Отражение с камеры"
-        ></video>
+        <iframe
+          class="mirror-frame"
+          id="mirrorFrame"
+          title="Тестовая страница в зеркале"
+          sandbox="allow-forms allow-modals allow-popups allow-scripts"
+          hidden
+        ></iframe>
 
-        <p class="camera-message" id="cameraMessage" role="status"></p>
-        <button class="camera-retry" id="cameraRetry" type="button" hidden>
-          Включить камеру
-        </button>
+        <div class="mirror-status" id="mirrorStatus" role="status" aria-live="polite" hidden>
+          <span class="mirror-status__dot" aria-hidden="true"></span>
+          <span id="mirrorStatusText"></span>
+        </div>
       </main>
     </div>
 
