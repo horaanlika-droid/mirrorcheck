@@ -10,8 +10,8 @@
     try {
       tg.ready();
       tg.expand();
-      tg.setHeaderColor && tg.setHeaderColor('#04060d');
-      tg.setBackgroundColor && tg.setBackgroundColor('#04060d');
+      tg.setHeaderColor && tg.setHeaderColor('#050506');
+      tg.setBackgroundColor && tg.setBackgroundColor('#050506');
     } catch (e) {}
     initData = tg.initData || '';
     startParam = tg.startParam || '';
@@ -888,7 +888,7 @@
     const s = S.settings;
     $('#view-info').innerHTML = `
       <section class="card speech" id="speech">
-        <div class="sp-art" style="background-image:url('/img/office.jpg')" aria-hidden="true"></div>
+        <div class="sp-art" style="background-image:url('/img/aurora.jpg')" aria-hidden="true"></div>
         <div class="sp-body">
           <div class="sp-mic"><span class="dot"></span>Слово PRICELEX</div>
           <p class="sp-line lead">PRICELEX — это не просто обменник.</p>
@@ -1025,7 +1025,7 @@
     const hasCompleted = S.orders.some((o) => o.status === 'completed');
     v.innerHTML = `
       <section class="card editorial rv-hero">
-        <div class="ed-art" style="background-image:url('/img/desk.jpg')" aria-hidden="true"></div>
+        <div class="ed-art" style="background-image:url('/img/vault.jpg')" aria-hidden="true"></div>
         <div class="ed-body">
           <div class="kicker gold">Репутация</div>
           <div class="rv-score">
