@@ -21,6 +21,12 @@ const STATUS_LABEL = {
   cancelled: '⚪ Отменена клиентом',
 };
 
+// BTC-суммы: 0.0004 вместо 0.00040000, ноль — «0 BTC».
+const fmtBtc = (n) => {
+  const v = Math.round((Number(n) || 0) * 1e8) / 1e8;
+  return (v ? v.toFixed(8).replace(/\.?0+$/, '') : '0') + ' BTC';
+};
+
 /* ---------- рендер сообщений ---------- */
 
 function orderText(o) {
@@ -32,6 +38,7 @@ function orderText(o) {
     `🪙 Валюта: <b>${o.currency}</b> ≈ ${fmtCrypto(o.crypto, o.currency)}\n` +
     `👛 Кошелёк: <code>${esc(o.wallet)}</code>\n` +
     `🧬 Реферер: ${ref ? esc(ref.name) + ' (#' + esc(ref.id) + ')' : '—'}\n` +
+    (o.brokerId ? `🤝 Брокер: <code>${esc((store.getBroker(o.brokerId) || {}).login || o.brokerId)}</code>\n` : '') +
     (o.requisites ? `🏦 Реквизиты: ${esc(o.requisites)}\n` : '') +
     (o.payRub ? `💰 К оплате: <b>${fmtRub(o.payRub)}</b>\n` : '') +
     (o.receipt
@@ -512,6 +519,325 @@ async function onReviewCallback(ctx, d, prevFlow) {
   return false;
 }
 
+/* ---------- брокеры: кандидаты, аккаунты, выплаты (администрация) ---------- */
+
+const getBrokerApp = (id) => store.get().brokerApps.find((a) => a.id === Number(id)) || null;
+
+async function brokersMenu(ctx, edit = true) {
+  const accs = store.get().brokers;
+  const apps = store.brokerAppsByStatus('new');
+  const pays = store.payoutsByStatus('requested');
+  const linked = accs.filter((b) => b.active && b.tgId).length;
+  const text =
+    `🤝 <b>Брокеры площадки</b>\n\n` +
+    `Аккаунтов: <b>${accs.length}</b> (привязано к Telegram: ${linked})\n` +
+    `Заявок кандидатов: <b>${apps.length}</b> · выплат ожидают: <b>${pays.length}</b>\n` +
+    `Доля брокера: ${store.get().settings.brokerPercent ?? 10}% от суммы сделки\n` +
+    `Минимальная выплата: ${fmtBtc(store.BROKER_MIN_PAYOUT)}\n\n` +
+    `Доступ выдаётся вручную, логином и паролем:\n` +
+    `<code>/addbroker логин пароль Имя</code>\n` +
+    `<code>/brokerpass логин новыйпароль</code> — сменить пароль\n` +
+    `<code>/delbroker логин</code> — отозвать доступ\n\n` +
+    `Брокер входит в свою панель командой /broker в этом же боте.`;
+  const kb = new InlineKeyboard()
+    .text(`📥 Заявки кандидатов${apps.length ? ` (${apps.length})` : ''}`, 'brm:apps').row()
+    .text(`💸 Выплаты${pays.length ? ` (${pays.length})` : ''}`, 'brm:pays')
+    .text('📋 Аккаунты', 'brm:accs').row()
+    .text('↩️ Назад', 'm:home');
+  return show(ctx, edit, text, kb);
+}
+
+async function brokerAppsMenu(ctx, edit = true) {
+  const apps = store.brokerAppsByStatus('new');
+  const kb = new InlineKeyboard();
+  for (const a of apps.slice(0, 8)) {
+    kb.text(`#${a.id} · ${a.name.slice(0, 16)} · ${fmtDate(a.createdAt)}`, `brm:app:${a.id}`).row();
+  }
+  kb.text('🤝 Брокеры', 'brm:home').text('↩️ Меню', 'm:home');
+  const text = `📥 <b>Заявки кандидатов в брокеры</b> — ${apps.length}\n\n` +
+    (apps.length ? 'Откройте заявку, чтобы прочитать опыт и отметить обработку:' : 'Новых заявок нет.');
+  return show(ctx, edit, text, kb);
+}
+
+const brokerAppText = (a) =>
+  `📥 <b>Заявка в брокеры #${a.id}</b>\n` +
+  `👤 ${esc(a.name)}${a.username ? ' (@' + esc(a.username) + ')' : ''} · <code>${esc(a.userId)}</code>\n` +
+  `📇 Контакт: <code>${esc(a.contact)}</code>\n` +
+  `🕒 ${fmtDate(a.createdAt)}\n\n` +
+  `📝 <b>Опыт кандидата:</b>\n${esc(a.experience)}\n\n` +
+  (a.status === 'done'
+    ? '✅ Заявка обработана.'
+    : 'Свяжитесь с кандидатом, выдайте доступ (<code>/addbroker логин пароль Имя</code>) и отметьте заявку обработанной.');
+
+async function brokerAppView(ctx, a, edit = true) {
+  const kb = new InlineKeyboard();
+  if (a.status === 'new') kb.text('✅ Отметить обработанной', `brm:app:${a.id}:done`).row();
+  kb.text('📥 Все заявки', 'brm:apps').text('🤝 Брокеры', 'brm:home');
+  return show(ctx, edit, brokerAppText(a), kb);
+}
+
+async function brokerAccsMenu(ctx, edit = true) {
+  const accs = store.get().brokers.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 30);
+  const lines = accs.length
+    ? accs.map((b) =>
+      `• <code>${esc(b.login)}</code> · ${esc(b.name)} — ${b.active ? (b.tgId ? '🔗 в работе' : '⌛ ждёт входа') : '⛔ доступ отозван'}\n` +
+      `  баланс ${fmtBtc(store.brokerAvailable(b))} · начислено ${fmtBtc(b.earnedBTC)} · выплачено ${fmtBtc(b.paidBTC)}`).join('\n')
+    : 'Аккаунтов пока нет.';
+  const kb = new InlineKeyboard().text('🤝 Брокеры', 'brm:home').text('↩️ Меню', 'm:home');
+  return show(ctx, edit, `📋 <b>Аккаунты брокеров</b>\n\n${lines}\n\nВыдача: <code>/addbroker логин пароль Имя</code>`, kb);
+}
+
+async function payoutsMenu(ctx, edit = true) {
+  const list = store.payoutsByStatus('requested');
+  const kb = new InlineKeyboard();
+  for (const p of list.slice(0, 8)) {
+    kb.text(`✅ Выдать #${p.id} · ${p.login} · ${fmtBtc(p.amountBTC)}`, `brm:pay:${p.id}:done`).row();
+  }
+  kb.text('🤝 Брокеры', 'brm:home').text('↩️ Меню', 'm:home');
+  const lines = list.slice(0, 8)
+    .map((p) => `• #${p.id} · <code>${esc(p.login)}</code> · <b>${fmtBtc(p.amountBTC)}</b>\n  → <code>${esc(p.address)}</code>`)
+    .join('\n');
+  const text = `💸 <b>Запрошенные выплаты</b> — ${list.length}\n\n` +
+    (list.length ? `${lines}\n\nПосле перевода нажмите кнопку выплаты — брокер получит уведомление.` : 'Запросов нет.');
+  return show(ctx, edit, text, kb);
+}
+
+// Веб-приложение: клиент подал заявку «стать брокером».
+async function onBrokerApp({ application }) {
+  if (!bot) return;
+  const a = application;
+  await broadcast(
+    `🤝 <b>Новая заявка «Стать брокером» #${a.id}</b>\n` +
+    `👤 ${esc(a.name)}${a.username ? ' (@' + esc(a.username) + ')' : ''} · <code>${esc(a.userId)}</code>\n` +
+    `📇 Контакт: <code>${esc(a.contact)}</code>\n` +
+    `🕒 ${fmtDate(a.createdAt)}\n\n` +
+    `📝 ${esc(a.experience.slice(0, 600))}`,
+    { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('✅ Отметить обработанной', `brm:app:${a.id}:done`) }
+  );
+}
+
+/* ---------- панель брокера (логин + пароль от администрации) ---------- */
+
+const linkedBroker = (ctx) => store.getBrokerByTg(ctx.from?.id);
+
+async function brokerPanel(ctx, edit = false) {
+  const me = linkedBroker(ctx);
+  if (!me) return ctx.reply('⛔ Доступ не привязан к этому Telegram. Вход: /broker');
+  const avail = store.brokerAvailable(me);
+  const active = store.activeOrders().length;
+  const text =
+    `🤝 <b>Панель брокера</b>\n` +
+    `${esc(me.name)} · <code>${esc(me.login)}</code>\n\n` +
+    `💰 Доступно к выводу: <b>${fmtBtc(avail)}</b>\n` +
+    `Начислено всего: ${fmtBtc(me.earnedBTC)}\n` +
+    `На выплате: ${fmtBtc(me.pendingBTC)} · выплачено: ${fmtBtc(me.paidBTC)}\n` +
+    `Минимальная выплата: ${fmtBtc(store.BROKER_MIN_PAYOUT)}\n\n` +
+    `Активных заявок в системе: ${active}\n` +
+    `Средства клиентов проходят через гарантийный счёт площадки — подтверждайте оплату только после проверки чека.`;
+  const kb = new InlineKeyboard()
+    .text(`📥 Заявки${active ? ` (${active})` : ''}`, 'brk:orders').row()
+    .text('💸 Вывести BTC', 'brk:payout').text('🔄 Обновить', 'brk:home').row()
+    .text('⏏ Выйти', 'brk:logout');
+  return show(ctx, edit, text, kb);
+}
+
+async function brokerOrdersMenu(ctx, edit = true) {
+  const list = store.activeOrders().sort((a, b) => b.createdAt - a.createdAt);
+  const kb = new InlineKeyboard();
+  if (list.length) {
+    for (const o of list.slice(0, 8)) {
+      kb.text(`#${o.id} · ${o.currency} · ${fmtRub(o.rub)} · ${o.status === 'new' ? '🔍' : o.status === 'paid' ? '⏳' : '💳'}`, `brk:o:${o.id}`).row();
+    }
+  }
+  kb.text('🤝 Панель', 'brk:home');
+  const text = list.length
+    ? '📥 <b>Активные заявки</b> — выберите и ведите:'
+    : '📥 <b>Заявки</b>\n\nАктивных заявок нет. Новые появятся здесь по мере поступления — обновляйте панель.';
+  return show(ctx, edit, text, kb);
+}
+
+function brokerOrderKb(o, me) {
+  const kb = new InlineKeyboard();
+  const mine = String(o.brokerId) === String(me.id);
+  if (o.status === 'new') {
+    kb.text('💳 Дать реквизиты счёта', `brk:o:${o.id}:req`);
+  } else if (o.status === 'details') {
+    kb.text('✅ Платёж проверен — завершить', `brk:o:${o.id}:confirm`);
+    if (o.receipt) kb.row().text('🧾 Получить чек', `brk:o:${o.id}:receipt`);
+  } else if (o.status === 'paid') {
+    kb.text('✅ Подтвердить и завершить', `brk:o:${o.id}:confirm`);
+    if (o.receipt) kb.row().text('🧾 Получить чек', `brk:o:${o.id}:receipt`);
+  } else if (o.status === 'completed') {
+    if (o.receipt) kb.text('🧾 Получить чек', `brk:o:${o.id}:receipt`);
+    if (mine) kb.text(o.txUrl ? '🔗 Изменить ссылку' : '🔗 Ссылка на блокчейн', `brk:o:${o.id}:tx`);
+  }
+  kb.row().text('📥 Все заявки', 'brk:orders').text('🤝 Панель', 'brk:home');
+  return kb;
+}
+
+function brokerOrderText(o, me) {
+  let t = orderText(o);
+  if (String(o.brokerId) === String(me.id)) t += `\n🤝 Сделку ведёте вы.`;
+  if (o.brokerAccrued != null) t += `\n💰 Начислено вам за сделку: <b>${fmtBtc(o.brokerAccrued)}</b>`;
+  return t;
+}
+
+async function onBrokerCallback(ctx, d) {
+  const me = linkedBroker(ctx);
+  if (!me) return ctx.reply('⛔ Доступ не найден или отозван администрацией. Вход: /broker');
+  if (d === 'brk:home') return brokerPanel(ctx, true);
+  if (d === 'brk:orders') return brokerOrdersMenu(ctx, true);
+  if (d === 'brk:logout') {
+    store.updateBroker(me.id, { tgId: null });
+    return show(ctx, true, '⏏ Вы вышли из панели брокера. Снова войти: /broker (понадобятся логин и пароль).', new InlineKeyboard());
+  }
+  if (d === 'brk:payout') {
+    const avail = store.brokerAvailable(me);
+    if (avail < store.BROKER_MIN_PAYOUT) {
+      return ctx.reply(`Минимальная сумма выплаты — ${fmtBtc(store.BROKER_MIN_PAYOUT)}.\nДоступно сейчас: ${fmtBtc(avail)}.`);
+    }
+    flows.set(ctx.from.id, { type: 'brkpayout', brokerId: me.id });
+    return ctx.reply(
+      `💸 К выплате вся доступная сумма: <b>${fmtBtc(avail)}</b>.\n` +
+      `Отправьте адрес BTC-кошелька для получения.\n` +
+      `Администрация проверит запрос, переведёт средства и отметит выплату.\n/cancel — отмена`,
+      { parse_mode: 'HTML' }
+    );
+  }
+  const m = d.match(/^brk:o:(\d+)(?::(\w+))?$/);
+  if (!m) return;
+  const o = store.getOrder(m[1]);
+  if (!o) return show(ctx, true, 'Заявка не найдена.', new InlineKeyboard().text('📥 Все заявки', 'brk:orders'));
+  const act = m[2];
+  if (!act) return show(ctx, true, brokerOrderText(o, me), brokerOrderKb(o, me));
+  const allowed = { req: ['new'], confirm: ['details', 'paid'], receipt: ['details', 'paid', 'completed'], tx: ['completed'] };
+  if (!allowed[act] || !allowed[act].includes(o.status)) {
+    return ctx.reply('Действие недоступно: статус заявки уже изменился. Откройте её заново.');
+  }
+  if (act === 'receipt') {
+    if (!o.receipt) return ctx.reply('Чек по этой заявке не прикреплён.');
+    return sendReceiptTo(ctx.from.id, o);
+  }
+  if (act === 'req') {
+    flows.set(ctx.from.id, { type: 'brkreq', orderId: o.id, version: o.version || 0 });
+    return ctx.reply(
+      `💳 Заявка #${o.id}. Отправьте одним сообщением реквизиты гарантийного счёта (карта / СБП / счёт, банк, получатель).\n\n` +
+      `Они СРАЗУ появятся у клиента с суммой ${fmtRub(o.payRub || o.rub)}. Точную сумму при необходимости скорректирует администрация.\n/cancel — отмена`
+    );
+  }
+  if (act === 'confirm') {
+    const upd = store.updateOrder(o.id, { status: 'completed' });
+    const accrual = store.accrueCompletedOrder(o.id);
+    await sendOrUpdateOrderAdmin(upd);
+    await broadcast(
+      `🤝 Брокер <code>${esc(me.login)}</code> завершил заявку #${o.id} (${fmtRub(upd.payRub || upd.rub)} → ${fmtCrypto(upd.crypto, upd.currency)}).` +
+      (accrual ? `\nНачислено брокеру: ${fmtBtc(accrual.earnedBTC)}.` : ''),
+      { parse_mode: 'HTML' }
+    );
+    await show(ctx, true, brokerOrderText(upd, me), brokerOrderKb(upd, me));
+    return ctx.reply(
+      `✅ Заявка #${o.id} завершена.` +
+      (accrual ? ` На ваш баланс начислено <b>${fmtBtc(accrual.earnedBTC)}</b>.` : '') +
+      `\n\nОтправьте клиенту вручную:\n🪙 <b>${fmtCrypto(upd.crypto, upd.currency)}</b>\n👛 <code>${esc(upd.wallet)}</code>`,
+      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🔗 Ссылка на блокчейн', `brk:o:${o.id}:tx`) }
+    );
+  }
+  if (act === 'tx') {
+    if (String(o.brokerId) !== String(me.id)) return ctx.reply('Ссылку добавляет брокер, который вёл заявку.');
+    flows.set(ctx.from.id, { type: 'brktx', orderId: o.id });
+    return ctx.reply(`🔗 Заявка #${o.id} — отправьте ссылку на транзакцию в блокчейне (https://…).\n/cancel — отмена`);
+  }
+}
+
+async function handleBrokerText(ctx, f) {
+  const text = ctx.message.text.trim();
+  if (/^\/(cancel|stop)(?:@\w+)?(?:\s|$)|^отмена$/i.test(text)) {
+    flows.delete(ctx.from.id);
+    return ctx.reply('❌ Отменено. /broker — панель брокера.');
+  }
+  if (f.type === 'brklogin') {
+    if (f.step === 'login') {
+      const b = store.getBrokerByLogin(text);
+      if (!b || !b.active) return ctx.reply('Такой логин не найден (или доступ отозван). Проверьте логин у администрации и отправьте ещё раз.\n/cancel — выход');
+      flows.set(ctx.from.id, { type: 'brklogin', step: 'pass', brokerId: b.id });
+      return ctx.reply('Логин принят. Теперь отправьте пароль.\nПосле входа удалите сообщение с паролем из чата.\n/cancel — выход');
+    }
+    if (f.step === 'pass') {
+      const b = store.getBroker(f.brokerId);
+      if (!b || !b.active || b.pass !== text) return ctx.reply('Неверный пароль — попробуйте ещё раз.\n/cancel — выход');
+      flows.delete(ctx.from.id);
+      store.updateBroker(b.id, { tgId: String(ctx.from.id) });
+      await ctx.reply(`✅ Вход выполнен, ${esc(b.name)}.`, { parse_mode: 'HTML' });
+      return brokerPanel(ctx, false);
+    }
+    return;
+  }
+  const me = linkedBroker(ctx);
+  if (!me) {
+    flows.delete(ctx.from.id);
+    return ctx.reply('⛔ Сессия завершена. Войдите снова: /broker');
+  }
+  if (f.type === 'brkreq') {
+    const o = store.getOrder(f.orderId);
+    if (!o || o.status !== 'new' || (o.version || 0) !== f.version) {
+      flows.delete(ctx.from.id);
+      return ctx.reply('Заявка уже изменена оператором или клиентом. Откройте её заново через /broker.');
+    }
+    if (!text || text.length > 900) return ctx.reply('Реквизиты — от 1 до 900 символов. Отправьте целиком ещё раз.');
+    flows.delete(ctx.from.id);
+    const upd = store.updateOrder(o.id, { requisites: text, payRub: o.payRub || o.rub, status: 'details', brokerId: me.id });
+    const [, delivered] = await Promise.all([sendOrUpdateOrderAdmin(upd), notifyClient(upd)]);
+    await broadcast(`🤝 Брокер <code>${esc(me.login)}</code> выдал реквизиты по заявке #${o.id} (${fmtRub(upd.payRub)}).`, { parse_mode: 'HTML' });
+    return ctx.reply(
+      `✅ Реквизиты по заявке #${o.id} опубликованы. К оплате: ${fmtRub(upd.payRub)}.` +
+      (delivered ? '' : '\nЛичное сообщение клиенту не доставлено — реквизиты ждут его в приложении.'),
+      { reply_markup: new InlineKeyboard().text('📥 Заявки', 'brk:orders').text('🤝 Панель', 'brk:home') }
+    );
+  }
+  if (f.type === 'brktx') {
+    const o = store.getOrder(f.orderId);
+    if (!o || o.status !== 'completed') {
+      flows.delete(ctx.from.id);
+      return ctx.reply('Ссылка добавляется только к завершённой заявке.');
+    }
+    if (!/^https?:\/\/.{4,800}$/i.test(text)) return ctx.reply('Пришлите корректную ссылку, начинающуюся с https:// (до 800 символов).');
+    flows.delete(ctx.from.id);
+    const upd = store.updateOrder(o.id, { txUrl: text });
+    await Promise.all([sendOrUpdateOrderAdmin(upd), notifyClientTx(upd)]);
+    return ctx.reply(`✅ Ссылка сохранена для заявки #${o.id}:\n${text}\n\nКлиент увидит её в приложении.`, {
+      reply_markup: new InlineKeyboard().text('🤝 Панель', 'brk:home'),
+    });
+  }
+  if (f.type === 'brkpayout') {
+    const meNow = store.getBroker(f.brokerId);
+    if (!meNow || String(meNow.tgId) !== String(ctx.from.id)) {
+      flows.delete(ctx.from.id);
+      return ctx.reply('⛔ Сессия завершена. Войдите снова: /broker');
+    }
+    const addr = text.replace(/\s+/g, '');
+    if (!/^[a-zA-Z0-9]{26,90}$/.test(addr)) return ctx.reply('Пришлите корректный адрес BTC-кошелька (26–90 символов, без пробелов).');
+    const avail = store.brokerAvailable(meNow);
+    if (avail < store.BROKER_MIN_PAYOUT) {
+      flows.delete(ctx.from.id);
+      return ctx.reply(`Недостаточно средств: доступно ${fmtBtc(avail)}, минимум ${fmtBtc(store.BROKER_MIN_PAYOUT)}.`);
+    }
+    flows.delete(ctx.from.id);
+    const payout = store.createPayout({ brokerId: meNow.id, amountBTC: avail, address: addr });
+    await broadcast(
+      `💸 <b>Брокер ${esc(meNow.login)} запросил выплату</b>\n` +
+      `Сумма: <b>${fmtBtc(payout.amountBTC)}</b>\n` +
+      `Адрес: <code>${esc(addr)}</code>`,
+      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('✅ Выдать', `brm:pay:${payout.id}:done`) }
+    );
+    return ctx.reply(
+      `✅ Запрос на выплату <b>${fmtBtc(payout.amountBTC)}</b> отправлен администрации.\n` +
+      `Адрес: <code>${esc(addr)}</code>\n` +
+      `Администрация проверит запрос, переведёт средства и отметит выплату — вы получите уведомление.`,
+      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🤝 Панель', 'brk:home') }
+    );
+  }
+}
+
 /* ---------- меню ---------- */
 
 async function mainMenu(ctx, edit = false) {
@@ -519,6 +845,8 @@ async function mainMenu(ctx, edit = false) {
   const active = store.activeOrders().length;
   const supportCount = store.getSupportThreads().length;
   const pendingReviews = store.reviewsByStatus('pending').length;
+  const pendingBrokerApps = store.brokerAppsByStatus('new').length;
+  const pendingPayouts = store.payoutsByStatus('requested').length;
   const kb = new InlineKeyboard()
     .text(`📥 Заявки${active ? ` (${active})` : ''}`, 'm:orders')
     .text('📊 Статистика', 'm:stats')
@@ -529,6 +857,7 @@ async function mainMenu(ctx, edit = false) {
     .text(`💬 Поддержка${supportCount ? ` (${supportCount})` : ''}`, 'm:support')
     .text(`⭐ Отзывы${pendingReviews ? ` (${pendingReviews})` : ''}`, 'm:reviews')
     .row()
+    .text('🤝 Брокеры', 'm:brokers')
     .text('👥 Админы', 'm:admins');
   const text =
     `🌌 <b>PRICELEX | Official</b> — пульт оператора\n` +
@@ -536,7 +865,9 @@ async function mainMenu(ctx, edit = false) {
     `₿ ${fmtRub(s.rateBTC)} · G ${fmtRub(s.rateGRAM)} (комиссия ${s.feePercent ?? 0}%)\n` +
     `Официальный курс ${s.rateUpdatedAt ? 'от ' + fmtDate(s.rateUpdatedAt) + ` (${esc(s.rateSource || '?')})` : 'ещё не подтянут — действуют стартовые курсы'}\n` +
     `Активных заявок: ${active} · 💬 Чатов: ${supportCount}` +
-    (pendingReviews ? `\n⭐ Отзывов на модерации: <b>${pendingReviews}</b>` : '');
+    (pendingReviews ? `\n⭐ Отзывов на модерации: <b>${pendingReviews}</b>` : '') +
+    (pendingBrokerApps ? `\n🤝 Кандидатов в брокеры: <b>${pendingBrokerApps}</b>` : '') +
+    (pendingPayouts ? `\n💸 Выплат запросили брокеры: <b>${pendingPayouts}</b>` : '');
   if (edit) await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
   else await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
 }
@@ -571,6 +902,7 @@ function settingsKb(s) {
     .text(s.online ? '🟢 Онлайн' : '🔴 Оффлайн', 's:online')
     .text('🎁 Реф. %', 's:ref')
     .row()
+    .text('🤝 % брокера', 's:bpct')
     .text('📢 Объявление', 's:ann')
     .text('🛟 Поддержка', 's:op')
     .row()
@@ -592,6 +924,7 @@ function settingsText(s) {
     `💵 Курс для клиентов: <b>₿ ${fmtRub(s.rateBTC)} · G ${fmtRub(s.rateGRAM)}</b>\n` +
     `Лимиты: ${fmtRub(s.minRub)} — ${fmtRub(s.maxRub)}\n` +
     `🎁 Реферальный процент: <b>${s.refPercent}%</b>\n` +
+    `🤝 Доля брокера: <b>${s.brokerPercent ?? 10}%</b> от суммы сделки · мин. выплата ${store.BROKER_MIN_PAYOUT} BTC\n` +
     `Статус: ${s.online ? '🟢 Онлайн' : '🔴 Оффлайн'}\n` +
     `📢 ${esc(s.announcement)}\n` +
     `🛟 Поддержка: ${esc(s.operator)} · 📣 ${esc(s.channel)}\n💬 ${esc(s.chat)}`
@@ -637,8 +970,9 @@ const SET_FIELDS = {
   min: { label: 'минимальную сумму обмена (₽)', num: true, key: 'minRub' },
   max: { label: 'максимальную сумму обмена (₽)', num: true, key: 'maxRub' },
   ref: { label: 'реферальный процент (например 1)', num: true, key: 'refPercent' },
+  bpct: { label: 'долю брокера в % от крипто-суммы сделки (0–50, например 10)', num: true, key: 'brokerPercent' },
   ann: { label: 'текст объявления для сайта' },
-  op: { label: 'юзернейм поддержки (например @stonym0ntana)' },
+  op: { label: 'юзернейм поддержки (например @pricelex_support)' },
   ch: { label: 'ссылку на канал' },
   chat: { label: 'ссылку на чат' },
 };
@@ -743,8 +1077,8 @@ async function handleAdminText(ctx) {
     if (field) {
       if (field.num) {
         const n = parseNum(text);
-        if (f.type === 'set:fee') {
-          if (!isFinite(n) || n < 0 || n > 50) return ctx.reply('Комиссия — число от 0 до 50. Пример: 2');
+        if (f.type === 'set:fee' || f.type === 'set:bpct') {
+          if (!isFinite(n) || n < 0 || n > 50) return ctx.reply('Нужно число от 0 до 50. Пример: 2');
         } else if (!isFinite(n) || n <= 0) {
           return ctx.reply('Нужно положительное число.');
         }
@@ -776,6 +1110,7 @@ function homeKb() {
     .text('💬 Поддержка', 'm:support')
     .text('⭐ Отзывы', 'm:reviews')
     .row()
+    .text('🤝 Брокеры', 'm:brokers')
     .text('👥 Админы', 'm:admins');
 }
 
@@ -823,6 +1158,47 @@ function register() {
       } catch (e) { return ctx.reply(e.message); }
     });
   }
+  bot.command('brokers', (ctx) => {
+    if (!isAdmin(ctx)) return;
+    flows.delete(ctx.from.id);
+    return brokersMenu(ctx, false);
+  });
+  bot.command('addbroker', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const parts = ctx.match.trim().split(/\s+/).filter(Boolean);
+    const [login, pass] = parts;
+    const name = parts.slice(2).join(' ') || login;
+    if (!login || !pass || !/^[a-zA-Z0-9_]{3,24}$/.test(login)) {
+      return ctx.reply('Формат: /addbroker логин пароль [Имя]\nЛогин — 3–24 латинские буквы, цифры или подчёркивание.');
+    }
+    if (pass.length < 4 || pass.length > 64) return ctx.reply('Пароль — от 4 до 64 символов, без пробелов.');
+    const b = store.createBroker({ login, pass, name });
+    if (!b) return ctx.reply(`Логин «${login}» уже занят. Сменить пароль: /brokerpass ${login} новыйпароль`);
+    return ctx.reply(
+      `✅ Доступ брокера создан.\nЛогин: <code>${esc(b.login)}</code>\nПароль: <code>${esc(pass)}</code>\nИмя: ${esc(b.name)}\n\nПередайте кандидату логин и пароль — он войдёт командой /broker в этом боте.`,
+      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🤝 Брокеры', 'brm:home') }
+    );
+  });
+  bot.command('brokerpass', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const [login, pass] = ctx.match.trim().split(/\s+/).filter(Boolean);
+    if (!login || !pass || pass.length < 4 || pass.length > 64) {
+      return ctx.reply('Формат: /brokerpass логин новыйпароль (4–64 символа, без пробелов).');
+    }
+    const b = store.getBrokerByLogin(login);
+    if (!b) return ctx.reply(`Логин «${esc(login)}» не найден.`, { parse_mode: 'HTML' });
+    store.updateBroker(b.id, { pass });
+    return ctx.reply(`✅ Пароль брокера <code>${esc(b.login)}</code> обновлён. Передайте его брокеру.`, { parse_mode: 'HTML' });
+  });
+  bot.command('delbroker', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const login = ctx.match.trim();
+    if (!login) return ctx.reply('Формат: /delbroker логин');
+    const b = store.getBrokerByLogin(login);
+    if (!b) return ctx.reply(`Логин «${esc(login)}» не найден.`, { parse_mode: 'HTML' });
+    store.updateBroker(b.id, { active: false, tgId: null });
+    return ctx.reply(`⛔ Доступ брокера <code>${esc(b.login)}</code> отозван, сессия завершена. Начисленный баланс сохранён: ${fmtBtc(store.brokerAvailable(b))}.`, { parse_mode: 'HTML' });
+  });
   bot.command('start', async (ctx) => {
     if (!isAdmin(ctx)) {
       const url = store.get().settings.publicUrl;
@@ -842,11 +1218,24 @@ function register() {
     await mainMenu(ctx, false);
   });
 
+  bot.command('broker', async (ctx) => {
+    if (ctx.chat?.type !== 'private') return;
+    const me = linkedBroker(ctx);
+    flows.delete(ctx.from.id);
+    if (me) return brokerPanel(ctx, false);
+    flows.set(ctx.from.id, { type: 'brklogin', step: 'login' });
+    return ctx.reply('🤝 <b>Вход в панель брокера</b>\nОтправьте логин, выданный администрацией площадки.\n/cancel — выход', { parse_mode: 'HTML' });
+  });
+
   bot.on('callback_query:data', async (ctx) => {
-    if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: '⛔️' });
     const d = ctx.callbackQuery.data;
+    if (typeof d === 'string' && d.startsWith('brk:')) {
+      await ctx.answerCallbackQuery().catch(() => {});
+      flows.delete(ctx.from.id);
+      return onBrokerCallback(ctx, d);
+    }
+    if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: '⛔️' });
     await ctx.answerCallbackQuery().catch(() => {});
-    if (!isAdmin(ctx)) return;
     const prevFlow = flows.get(ctx.from.id);
     flows.delete(ctx.from.id);
 
@@ -862,6 +1251,33 @@ function register() {
     if (d === 'm:admins') return adminsMenu(ctx);
     if (d === 'm:links') return linksMenu(ctx, true);
     if (d === 'm:support') return supportMenu(ctx, true);
+
+    if (d === 'm:brokers' || d === 'brm:home') return brokersMenu(ctx, true);
+    if (d === 'brm:apps') return brokerAppsMenu(ctx, true);
+    if (d === 'brm:accs') return brokerAccsMenu(ctx, true);
+    if (d === 'brm:pays') return payoutsMenu(ctx, true);
+    let bm = d.match(/^brm:app:(\d+)(?::(done))?$/);
+    if (bm) {
+      const a = getBrokerApp(bm[1]);
+      if (!a) return show(ctx, true, 'Заявка не найдена.', new InlineKeyboard().text('🤝 Брокеры', 'brm:home'));
+      if (bm[2] === 'done' && a.status === 'new') {
+        store.updateBrokerApp(a.id, { status: 'done', processedAt: Date.now(), processedBy: String(ctx.from.id) });
+      }
+      return brokerAppView(ctx, getBrokerApp(bm[1]), true);
+    }
+    bm = d.match(/^brm:pay:(\d+):done$/);
+    if (bm) {
+      const res = store.markPayoutPaid(bm[1]);
+      if (!res) return ctx.reply('Выплата уже обработана.');
+      const { payout, broker: payoutBroker } = res;
+      if (payoutBroker && payoutBroker.tgId) {
+        await bot.api.sendMessage(payoutBroker.tgId,
+          `💸 <b>Выплата #${payout.id} отправлена!</b>\n<b>${fmtBtc(payout.amountBTC)}</b> переведены на ваш кошелёк:\n<code>${esc(payout.address)}</code>\n\nСпасибо за работу на площадке 🤝`,
+          { parse_mode: 'HTML' }).catch(() => {});
+      }
+      await ctx.reply(`✅ Выплата #${payout.id} отмечена выданной${payoutBroker && payoutBroker.tgId ? ', брокер уведомлён' : ''}.`);
+      return payoutsMenu(ctx, true);
+    }
 
     if (d.startsWith('sup:')) {
       const userId = d.slice(4);
@@ -938,9 +1354,11 @@ function register() {
       }
       if (act === 'confirm') {
         const upd = store.updateOrder(id, { status: 'completed' });
+        const accrual = store.accrueCompletedOrder(id);
         await sendOrUpdateOrderAdmin(upd);
         await ctx.reply(
-          `📨 <b>Заявка #${id} завершена.</b>\nОтправьте клиенту вручную:\n🪙 <b>${fmtCrypto(upd.crypto, upd.currency)}</b>\n👛 <code>${esc(upd.wallet)}</code>\n\n💡 Теперь вы можете опционально отправить ссылку на блокчейн-транзакцию — нажмите кнопку ниже.`,
+          `📨 <b>Заявка #${id} завершена.</b>\nОтправьте клиенту вручную:\n🪙 <b>${fmtCrypto(upd.crypto, upd.currency)}</b>\n👛 <code>${esc(upd.wallet)}</code>\n\n💡 Теперь вы можете опционально отправить ссылку на блокчейн-транзакцию — нажмите кнопку ниже.` +
+          (accrual ? `\\n\\n🤝 Брокеру начислено за сделку: <b>${fmtBtc(accrual.earnedBTC)}</b>.` : ''),
           { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🔗 Добавить ссылку на блокчейн', `o:${id}:tx`) }
         );
         return;
@@ -949,6 +1367,8 @@ function register() {
   });
 
   bot.on('message:text', async (ctx) => {
+    const f = flows.get(ctx.from.id);
+    if (f && typeof f.type === 'string' && f.type.startsWith('brk')) return handleBrokerText(ctx, f);
     if (!isAdmin(ctx)) return;
     await handleAdminText(ctx);
   });
@@ -962,6 +1382,7 @@ function createBot(options = {}) {
   bus.on('order_event', onOrderEvent);
   bus.on('support_message', onSupportMessage);
   bus.on('review_event', onReviewEvent);
+  bus.on('broker_app', onBrokerApp);
   return bot;
 }
 
@@ -981,6 +1402,7 @@ async function startBot() {
       { command: 'menu', description: 'Показать меню' },
       { command: 'support', description: 'Чаты поддержки' },
       { command: 'reviews', description: 'Отзывы и модерация' },
+      { command: 'broker', description: 'Панель брокера' },
     ])
     .catch(() => {});
 

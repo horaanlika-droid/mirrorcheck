@@ -288,6 +288,35 @@ function startWeb() {
     res.json({ review: { ...store.publicReview(review), orderId: review.orderId }, order: clientOrder(o) });
   });
 
+  /* ---------- заявка «стать брокером» ---------- */
+  // Клиент рассказывает про опыт и оставляет контакт — заявка уходит администрации.
+  app.get('/api/broker/application', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const appItem = store.latestBrokerApp(a.user.id);
+    res.json({ application: appItem ? { id: appItem.id, status: appItem.status, createdAt: appItem.createdAt } : null });
+  });
+
+  app.post('/api/broker/apply', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const experience = String(req.body?.experience || '').trim();
+    const contact = String(req.body?.contact || '').trim();
+    if (experience.length < 20) return res.status(400).json({ error: 'Расскажите про опыт чуть подробнее — от 20 символов' });
+    if (experience.length > 2000) return res.status(400).json({ error: 'Слишком длинно — до 2000 символов' });
+    if (contact.length < 3) return res.status(400).json({ error: 'Оставьте контакт для связи' });
+    if (contact.length > 120) return res.status(400).json({ error: 'Контакт слишком длинный' });
+    if (store.pendingBrokerApp(a.user.id)) {
+      return res.status(409).json({ error: 'Заявка уже отправлена — мы свяжемся с вами' });
+    }
+    const user = store.touchUser(a.user, req.body.startParam || '');
+    const appItem = store.createBrokerApp({
+      userId: user.id, name: user.name, username: user.username, contact, experience,
+    });
+    bus.emit('broker_app', { application: appItem, user });
+    res.json({ application: { id: appItem.id, status: appItem.status, createdAt: appItem.createdAt } });
+  });
+
   /* ---------- support chat ---------- */
   app.get('/api/support/messages', (req, res) => {
     const a = needAuth(req, res);
@@ -331,6 +360,7 @@ function startWeb() {
       const o = store.getOrder(req.params.id);
       if (!o) return res.status(404).json({ error: 'not found' });
       const upd = store.updateOrder(o.id, { status: 'completed' });
+      store.accrueCompletedOrder(o.id);
       bus.emit('order_event', { order: upd, type: 'completed' });
       res.json({ order: clientOrder(upd) });
     });

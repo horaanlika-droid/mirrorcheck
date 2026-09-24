@@ -428,12 +428,135 @@ test('admin adds a review in the bot and edits name, rating, text, date and time
   assert.equal(store.getReview(r.id), null);
 });
 
-test('public address is never shown; support contact defaults to @stonym0ntana', async () => {
+test('public address is never shown; operator handle defaults to @pricelex_support', async () => {
   const s = await (await fetch(`http://127.0.0.1:${server.address().port}/api/settings`)).json();
   assert.ok(!('publicUrl' in s));
-  assert.equal(s.operator, '@stonym0ntana');
+  assert.equal(s.operator, '@pricelex_support');
   calls = [];
   await bus.emit('public_url', 'https://secret.example');
   await click(111, 'm:links');
   assert.ok(!calls.some((c) => /secret\.example|Публичный адрес/.test(c.text || '')));
+});
+
+test('broker application from the app: validation, admin notification, done-marking, duplicate guard', async () => {
+  const missing = await api('/api/broker/application');
+  assert.equal((await missing.json()).application, null);
+  const short = await api('/api/broker/apply', { method: 'POST', body: { experience: 'коротко', contact: '@me' } });
+  assert.equal(short.status, 400);
+  const nocontact = await api('/api/broker/apply', { method: 'POST', body: { experience: 'Три года P2P-арбитража и OTC-сделок', contact: '' } });
+  assert.equal(nocontact.status, 400);
+
+  calls = [];
+  const r = await api('/api/broker/apply', {
+    method: 'POST',
+    body: { experience: 'Три года P2P-арбитража и OTC-сделок <b>круто</b>', contact: '@trader_joe' },
+  });
+  assert.equal(r.status, 200);
+  const { application } = await r.json();
+  assert.equal(application.status, 'new');
+  await bus.emit('broker_app', { application: store.get().brokerApps.find((a) => a.id === application.id) });
+  for (const id of admins.all()) {
+    assert.ok(calls.some((c) => c.method === 'sendMessage' && String(c.chat_id) === String(id) && /Стать брокером/.test(c.text)));
+  }
+  assert.ok(calls.every((c) => !c.text || c.text.includes('&lt;b&gt;круто&lt;/b&gt;') || !/круто/.test(c.text)));
+
+  const dup = await api('/api/broker/apply', { method: 'POST', body: { experience: 'Три года P2P-арбитража и OTC-сделок', contact: '@trader_joe' } });
+  assert.equal(dup.status, 409, 'одна активная заявка на пользователя');
+
+  await click(999, `brm:app:${application.id}:done`); // посторонний не может отметить
+  assert.equal(store.get().brokerApps.find((a) => a.id === application.id).status, 'new');
+  await click(222, `brm:app:${application.id}:done`);
+  assert.equal(store.get().brokerApps.find((a) => a.id === application.id).status, 'done');
+
+  const me = await (await api('/api/broker/application')).json();
+  assert.equal(me.application.id, application.id);
+  assert.equal(me.application.status, 'done');
+  // После обработки можно подать новую заявку.
+  const again = await api('/api/broker/apply', { method: 'POST', body: { experience: 'Пять лет в крипте, вёл P2P-оборот', contact: '@trader_joe' } });
+  assert.equal(again.status, 200);
+});
+
+test('broker panel: password login, escrow flow, BTC accrual and payout settlement', async () => {
+  // Администрация выдаёт доступ логином и паролем.
+  await text(111, '/addbroker sato passw0rd Сато');
+  const account = store.getBrokerByLogin('sato');
+  assert.ok(account && account.active && !account.tgId);
+
+  // Крупная заявка клиента: 10 % от крипто-суммы ≥ минимальной выплаты.
+  const s = store.get().settings;
+  const r = await api('/api/orders', { method: 'POST', body: { rub: 250000, currency: 'BTC', wallet: 'bc1' + 'b'.repeat(35) } });
+  assert.equal(r.status, 200);
+  const { order } = await r.json();
+  await bus.emit('order_event', { order, type: 'new' });
+
+  // Вход в панель: неверный пароль не пускает, верный — привязывает Telegram.
+  await text(777, '/broker');
+  await text(777, 'sato');
+  await text(777, 'wrong-pass');
+  assert.ok(!store.getBrokerByTg(777));
+  calls = [];
+  await text(777, 'passw0rd');
+  const me = store.getBrokerByTg(777);
+  assert.ok(me && me.login === 'sato');
+  assert.ok(calls.some((c) => String(c.chat_id) === '777' && /Вход выполнен/.test(c.text || '')));
+
+  // Брокер выдаёт реквизиты гарантийного счёта — заявка закрепляется за ним.
+  await click(777, `brk:o:${order.id}:req`);
+  await text(777, 'СБП: +7 900 111-22-33\nБанк: Гарант');
+  let o2 = store.getOrder(order.id);
+  assert.equal(o2.status, 'details');
+  assert.equal(String(o2.brokerId), String(me.id));
+  assert.ok(calls.some((c) => String(c.chat_id) === '999' && /Реквизиты/.test(c.text || '')), 'клиент уведомлён');
+
+  // Клиент оплачивает — брокер завершает сделку, вознаграждение начисляется один раз.
+  const pdf = Buffer.from('%PDF-1.4 broker').toString('base64');
+  await api(`/api/order/${order.id}/receipt`, { method: 'POST', body: { filename: 'check.pdf', data: pdf } });
+  await api(`/api/order/${order.id}/paid`, { method: 'POST' });
+  await click(777, `brk:o:${order.id}:confirm`);
+  assert.equal(store.getOrder(order.id).status, 'completed');
+  const expectedEarn = Math.round((250000 / s.rateBTC) * (s.brokerPercent / 100) * 1e8) / 1e8;
+  assert.ok(expectedEarn >= store.BROKER_MIN_PAYOUT, 'фикстура: начисления хватает на выплату');
+  let b = store.getBrokerByLogin('sato');
+  assert.equal(b.earnedBTC, expectedEarn);
+  assert.equal(store.getOrder(order.id).brokerAccrued, expectedEarn);
+  assert.equal(store.accrueCompletedOrder(order.id), null, 'двойного начисления нет');
+
+  // Выплата: брокер запрашивает всю доступную сумму, администрация рассчитывается.
+  calls = [];
+  await click(777, 'brk:payout');
+  assert.ok(calls.some((c) => String(c.chat_id) === '777' && /доступная сумма/.test(c.text || '')));
+  await text(777, 'не адрес');
+  assert.ok(!store.get().payouts.some((p) => p.login === 'sato'), 'невалидный адрес отклонён');
+  await text(777, 'bc1' + 'q'.repeat(38));
+  let payout = store.get().payouts.find((p) => p.login === 'sato');
+  assert.ok(payout && payout.status === 'requested');
+  assert.equal(payout.amountBTC, expectedEarn);
+  assert.ok(calls.some((c) => /запросил выплату/.test(c.text || '')), 'администрация уведомлена о выплате');
+  assert.equal(store.brokerAvailable(store.getBrokerByLogin('sato')), 0);
+
+  calls = [];
+  await click(222, `brm:pay:${payout.id}:done`);
+  assert.equal(store.get().payouts.find((p) => p.id === payout.id).status, 'paid');
+  b = store.getBrokerByLogin('sato');
+  assert.equal(b.pendingBTC, 0);
+  assert.equal(b.paidBTC, expectedEarn);
+  assert.ok(calls.some((c) => String(c.chat_id) === '777' && /отправлена/.test(c.text || '')), 'брокер получил уведомление о выплате');
+  await click(222, `brm:pay:${payout.id}:done`);
+  assert.equal(store.getBrokerByLogin('sato').paidBTC, expectedEarn, 'повторная отметка не дублирует');
+});
+
+test('payout below the 0.0002 BTC minimum is politely refused', async () => {
+  await text(111, '/addbroker mini passw0rd Мини');
+  const small = store.getBrokerByLogin('mini');
+  store.updateBroker(small.id, { earnedBTC: 0.0001 });
+  await text(778, '/broker');
+  await text(778, 'mini');
+  await text(778, 'passw0rd');
+  calls = [];
+  await click(778, 'brk:payout');
+  assert.ok(!store.get().payouts.some((p) => p.login === 'mini'));
+  assert.ok(calls.some((c) => String(c.chat_id) === '778' && /Минимальная сумма выплаты/.test(c.text || '')));
+  // Администрация отзывает доступ — сессия разрывается.
+  await text(111, '/delbroker mini');
+  assert.ok(!store.getBrokerByTg(778));
 });

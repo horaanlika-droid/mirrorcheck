@@ -22,7 +22,8 @@ const defaults = () => ({
     announcement:
       '🚀 PRICELEX официально начинает работу! Принимаем заявки на обмен BTC и GRAM. Минимальная сумма обмена — от 3 000 ₽.',
     refPercent: 1,
-    operator: '@stonym0ntana', // поддержка клиентов
+    brokerPercent: 10, // доля брокера от крипто-суммы завершённой сделки, %
+    operator: '@pricelex_support', // внутренний контакт операторов (клиентам не показываем)
     channel: 'https://t.me/pricelex_channel',
     chat: 'https://t.me/pricelex_chat',
     publicUrl: null,
@@ -37,9 +38,23 @@ const defaults = () => ({
   // Отзывы: { id, userId, orderId, name, rating 1–5, text, status, source, createdAt, updatedAt, adminMsgIds }
   // status: 'pending' (модерация) | 'approved' (опубликован) | 'rejected' (скрыт)
   reviews: [],
+  // Брокеры площадки: логин/пароль выдаёт администрация в боте.
+  // { id, login, pass, name, tgId, active, earnedBTC, pendingBTC, paidBTC, createdAt }
+  brokers: [],
+  brokerSeq: 1,
+  // Заявки клиентов «Стать брокером» из приложения:
+  // { id, userId, name, username, contact, experience, status, createdAt, processedAt }
+  brokerApps: [],
+  brokerAppSeq: 1,
+  // Заявки брокеров на выплату: { id, brokerId, amountBTC, address, status, createdAt, paidAt }
+  payouts: [],
+  payoutSeq: 1,
 });
 
-const OLD_OPERATOR_DEFAULTS = ['@pricelex_operator'];
+const OLD_OPERATOR_DEFAULTS = ['@pricelex_operator', '@stonym0ntana'];
+
+// Выплата брокеру доступна от этой суммы BTC (в любое время, через бота).
+const BROKER_MIN_PAYOUT = 0.0002;
 
 // График курса в Web App строится только по реальным наблюдениям:
 // каждое успешное автообновление курса добавляет точку. Храним неделю.
@@ -73,7 +88,15 @@ function load() {
       if (!Array.isArray(db.rateHistory)) db.rateHistory = [];
       if (!Array.isArray(db.reviews)) db.reviews = [];
       if (!Number.isFinite(db.reviewSeq)) db.reviewSeq = db.reviews.reduce((m, r) => Math.max(m, r.id || 0), 0) + 1;
-      // Поддержка переехала на @stonym0ntana: обновляем только нетронутое старое значение.
+      // Брокерская подсистема: аккаунты, заявки кандидатов, выплаты.
+      if (!Array.isArray(db.brokers)) db.brokers = [];
+      if (!Array.isArray(db.brokerApps)) db.brokerApps = [];
+      if (!Array.isArray(db.payouts)) db.payouts = [];
+      if (!Number.isFinite(db.brokerSeq)) db.brokerSeq = db.brokers.reduce((m, b) => Math.max(m, b.id || 0), 0) + 1;
+      if (!Number.isFinite(db.brokerAppSeq)) db.brokerAppSeq = db.brokerApps.reduce((m, a) => Math.max(m, a.id || 0), 0) + 1;
+      if (!Number.isFinite(db.payoutSeq)) db.payoutSeq = db.payouts.reduce((m, p) => Math.max(m, p.id || 0), 0) + 1;
+      if (db.settings.brokerPercent == null) db.settings.brokerPercent = 10;
+      // Поддержка уехала из клиентских контактов: обновляем нетронутое старое значение.
       if (!db.settings.operator || OLD_OPERATOR_DEFAULTS.includes(db.settings.operator)) {
         db.settings.operator = defaults().settings.operator;
       }
@@ -389,6 +412,148 @@ function countSupportUnread() {
   return getSupportThreads().length;
 }
 
+/* ---------- брокеры ---------- */
+
+const roundBtc = (n) => Math.round(Number(n) * 1e8) / 1e8;
+
+function createBroker({ login, pass, name }) {
+  login = String(login || '').trim();
+  return mutate((d) => {
+    if (d.brokers.some((b) => b.login.toLowerCase() === login.toLowerCase())) return null;
+    const broker = {
+      id: d.brokerSeq++,
+      login,
+      pass: String(pass),
+      name: String(name || login).trim().slice(0, 60) || login,
+      tgId: null, // привязывается при первом входе /broker
+      active: true,
+      earnedBTC: 0, // начислено всего
+      pendingBTC: 0, // запрошено к выплате
+      paidBTC: 0, // выплачено администрацией
+      createdAt: Date.now(),
+    };
+    d.brokers.push(broker);
+    return broker;
+  });
+}
+
+const getBroker = (id) => db.brokers.find((b) => b.id === Number(id)) || null;
+const getBrokerByLogin = (login) =>
+  db.brokers.find((b) => b.login.toLowerCase() === String(login || '').trim().toLowerCase()) || null;
+const getBrokerByTg = (tgId) => db.brokers.find((b) => b.active && String(b.tgId) === String(tgId)) || null;
+
+function updateBroker(id, patch) {
+  return mutate((d) => {
+    const b = d.brokers.find((x) => x.id === Number(id));
+    if (!b) return null;
+    Object.assign(b, patch);
+    return b;
+  });
+}
+
+// Доступно к выводу = начислено − на выплате − выплачено.
+const brokerAvailable = (b) => roundBtc((b.earnedBTC || 0) - (b.pendingBTC || 0) - (b.paidBTC || 0));
+
+// Начисление вознаграждения брокеру за завершённую им сделку (однократно на заявку).
+// Сумма в валюте сделки × brokerPercent; GRAM конвертируется в BTC по текущему курсу.
+function accrueCompletedOrder(orderId) {
+  return mutate((d) => {
+    const o = d.orders.find((x) => x.id === Number(orderId));
+    if (!o || o.status !== 'completed' || !o.brokerId || o.brokerAccrued != null) return null;
+    const b = d.brokers.find((x) => x.id === Number(o.brokerId));
+    if (!b) return null;
+    const pct = Number(d.settings.brokerPercent) || 0;
+    const inCur = (Number(o.crypto) || 0) * pct / 100;
+    const btc = o.currency === 'BTC'
+      ? inCur
+      : (inCur * (Number(o.rate) || 0)) / Math.max(1, Number(d.settings.rateBTC) || 1);
+    const earned = roundBtc(btc);
+    o.brokerAccrued = earned;
+    o.updatedAt = Date.now();
+    b.earnedBTC = roundBtc((b.earnedBTC || 0) + earned);
+    return { broker: b, order: o, earnedBTC: earned };
+  });
+}
+
+/* ---------- заявки «стать брокером» ---------- */
+
+function createBrokerApp({ userId, name, username, contact, experience }) {
+  return mutate((d) => {
+    const app = {
+      id: d.brokerAppSeq++,
+      userId: String(userId),
+      name: String(name || 'Клиент').slice(0, 60),
+      username: username ? String(username).slice(0, 60) : null,
+      contact: String(contact).slice(0, 120),
+      experience: String(experience).slice(0, 2000),
+      status: 'new', // 'new' | 'done'
+      createdAt: Date.now(),
+      processedAt: null,
+    };
+    d.brokerApps.push(app);
+    return app;
+  });
+}
+
+const pendingBrokerApp = (userId) =>
+  db.brokerApps.find((a) => a.userId === String(userId) && a.status === 'new') || null;
+const latestBrokerApp = (userId) =>
+  db.brokerApps.filter((a) => a.userId === String(userId)).sort((a, b) => b.createdAt - a.createdAt)[0] || null;
+const brokerAppsByStatus = (status) =>
+  db.brokerApps.filter((a) => !status || a.status === status).sort((a, b) => b.createdAt - a.createdAt);
+
+function updateBrokerApp(id, patch) {
+  return mutate((d) => {
+    const a = d.brokerApps.find((x) => x.id === Number(id));
+    if (!a) return null;
+    Object.assign(a, patch);
+    return a;
+  });
+}
+
+/* ---------- выплаты брокерам ---------- */
+
+function createPayout({ brokerId, amountBTC, address }) {
+  return mutate((d) => {
+    const b = d.brokers.find((x) => x.id === Number(brokerId));
+    if (!b) return null;
+    const amount = roundBtc(amountBTC);
+    const payout = {
+      id: d.payoutSeq++,
+      brokerId: b.id,
+      login: b.login,
+      name: b.name,
+      amountBTC: amount,
+      address: String(address).slice(0, 128),
+      status: 'requested', // 'requested' | 'paid'
+      createdAt: Date.now(),
+      paidAt: null,
+    };
+    d.payouts.push(payout);
+    b.pendingBTC = roundBtc((b.pendingBTC || 0) + amount);
+    return payout;
+  });
+}
+
+const getPayout = (id) => db.payouts.find((p) => p.id === Number(id)) || null;
+const payoutsByStatus = (status) =>
+  db.payouts.filter((p) => !status || p.status === status).sort((a, b) => b.createdAt - a.createdAt);
+
+function markPayoutPaid(id) {
+  return mutate((d) => {
+    const p = d.payouts.find((x) => x.id === Number(id));
+    if (!p || p.status !== 'requested') return null;
+    p.status = 'paid';
+    p.paidAt = Date.now();
+    const b = d.brokers.find((x) => x.id === Number(p.brokerId));
+    if (b) {
+      b.pendingBTC = roundBtc(Math.max(0, (b.pendingBTC || 0) - p.amountBTC));
+      b.paidBTC = roundBtc((b.paidBTC || 0) + p.amountBTC);
+    }
+    return { payout: p, broker: b };
+  });
+}
+
 load();
 
 module.exports = {
@@ -420,4 +585,21 @@ module.exports = {
   publicReviews,
   reviewForOrder,
   userReviews,
+  BROKER_MIN_PAYOUT,
+  createBroker,
+  getBroker,
+  getBrokerByLogin,
+  getBrokerByTg,
+  updateBroker,
+  brokerAvailable,
+  accrueCompletedOrder,
+  createBrokerApp,
+  pendingBrokerApp,
+  latestBrokerApp,
+  brokerAppsByStatus,
+  updateBrokerApp,
+  createPayout,
+  getPayout,
+  payoutsByStatus,
+  markPayoutPaid,
 };

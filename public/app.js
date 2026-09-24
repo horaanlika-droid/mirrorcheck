@@ -32,7 +32,7 @@
   const TERMINAL = ['completed', 'rejected', 'cancelled'];
   const S = {
     settings: null, me: null, orders: [], order: null, tab: 'exchange',
-    currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [],
+    currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [], brokerApp: null,
     history: { points: [], updatedFor: null },
     reviews: { list: [], stats: { count: 0, avg: 0 }, loaded: false },
     reviewDraft: { orderId: null, rating: 5, text: '' },
@@ -682,7 +682,7 @@
         <div class="card stage">
           <div class="failmark">${rej ? '🔴' : '⚪'}</div>
           <div class="stage-title">${rej ? 'Заявка отклонена' : 'Заявка отменена'}</div>
-          <div class="stage-sub">${rej ? `Заявка #${o.id} отклонена. Если это ошибка — напишите в поддержку ${supportLinkHtml()}.` : 'Вы отменили заявку #' + o.id + '.'}</div>
+          <div class="stage-sub">${rej ? `Заявка #${o.id} отклонена. Если это ошибка — напишите в поддержку в разделе «Помощь».` : 'Вы отменили заявку #' + o.id + '.'}</div>
           ${o.txUrl ? `<div class="tx-box"><div class="tx-label">🔗 Блокчейн</div><a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a></div>` : ''}
           <button class="btn btn-primary mt" id="btnNew">Создать заявку</button>
         </div>`;
@@ -861,7 +861,8 @@
     const v = $('#view-refs');
     const link = s.botUsername ? `https://t.me/${s.botUsername}?startapp=ref${S.me.id}` : null;
     v.innerHTML = `
-      <div class="card">
+      <div class="card ref-card">
+        <div class="ref-art" style="background-image:url('/img/ref.jpg')" aria-hidden="true"><span class="ref-tag" aria-hidden="true">PLX / PARTNERS</span></div>
         <div class="card-title">Реферальная программа</div>
         ${
           link
@@ -883,9 +884,72 @@
     if (cp) cp.addEventListener('click', () => copyText(link, 'Ссылка скопирована'));
   }
 
-  const supportHandle = () => '@' + String((S.settings && S.settings.operator) || '@stonym0ntana').replace(/^@/, '');
-  const supportUrl = () => 'https://t.me/' + supportHandle().slice(1);
-  const supportLinkHtml = () => `<a class="inline-link" href="${esc(supportUrl())}" target="_blank" rel="noopener">${esc(supportHandle())}</a>`;
+  const RULES = [
+    ['Предмет соглашения', 'PRICELEX (далее — «Площадка») — цифровой сервис аренды профессионального опыта независимых брокеров. Брокер сопровождает Пользователя при приобретении цифровых активов с той же заботой, с какой близкий человек помогает установить приложение.'],
+    ['Стороны и роли', 'Пользователь поручает Брокеру подбор условий и сопровождение сделки. Площадка обеспечивает учёт заявок, гарантийный счёт и контроль расчётов, не выступая биржей, банком или платёжным институтом.'],
+    ['Порядок операции', 'Пользователь оформляет заявку в приложении, Брокер подбирает условия и выдаёт реквизиты. Курс фиксируется на момент выдачи реквизитов и не изменяется в течение действия заявки.'],
+    ['Гарантийный счёт', 'Денежные средства Пользователя зачисляются на гарантийный счёт Площадки. Администрация проверяет платёж по приложенному чеку, после чего средства разблокируются, а цифровые активы перечисляются на указанный Пользователем кошелёк.'],
+    ['Стоимость услуг', 'Вознаграждение Площадки и Брокера уже учтено в курсе обмена, который отображается до оплаты. Доплат сверх указанной к оплате суммы не требуется.'],
+    ['Вознаграждение Брокера', 'Начисляется за каждую завершённую Брокером операцию и выплачивается по его требованию в любое время через официального бота Площадки при достижении минимальной суммы вывода 0.0002 BTC.'],
+    ['Доступ Брокера', 'Панель Брокера доступна в официальном боте по персональным логину и паролю, которые выдаются, изменяются и отзываются Администрацией Площадки. Передача учётных данных третьим лицам влечёт отзыв доступа.'],
+    ['Честность сторон', 'Пользователь подтверждает правомерность происхождения средств и достоверность чека оплаты. Сведения о курсе носят информационный характер и не являются инвестиционной рекомендацией. Споры рассматривает Администрация через чат поддержки.'],
+  ];
+
+  function rulesCardHtml() {
+    return `
+      <div class="card">
+        <div class="card-title">Правила площадки</div>
+        <div class="rules">
+          ${RULES.map(([t, x], i) => `<div class="rule"><span class="rn">${String(i + 1).padStart(2, '0')}</span><div><b>${t}.</b> ${x}</div></div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  function applyBodyHtml() {
+    if (S.brokerApp) {
+      return `
+        <div class="apply-done">
+          <div class="ad-ic">${ICONS.check}</div>
+          <div class="ad-t">Заявка №${S.brokerApp.id} у администрации</div>
+          <div class="ad-s">Мы изучим ваш опыт и свяжемся по указанному контакту. Доступ к панели брокера выдаётся логином и паролем через бота.</div>
+        </div>`;
+    }
+    return `
+      <div class="apply-form">
+        <label class="f-label"><span>Расскажите про свой опыт</span></label>
+        <textarea id="applyExp" class="rv-text" rows="4" maxlength="2000" placeholder="Крипта, обменники, P2P, OTC — что уже умеете и как давно?"></textarea>
+        <label class="f-label"><span>Контакт для связи</span></label>
+        <div class="field"><input id="applyContact" placeholder="@username или +7 900 000-00-00" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
+        <div class="f-err" id="applyErr"></div>
+        <button class="btn btn-primary" id="applySend">${ICONS.send}<span>Подать заявку</span></button>
+        <div class="f-hint">Доступ к панели брокера выдаётся логином и паролем через бота после личного общения с администрацией.</div>
+      </div>`;
+  }
+
+  function wireApplyForm() {
+    const btn = $('#applySend');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const err = $('#applyErr');
+      err.textContent = '';
+      const experience = ($('#applyExp').value || '').trim();
+      const contact = ($('#applyContact').value || '').trim();
+      if (experience.length < 20) return (err.textContent = 'Расскажите про опыт чуть подробнее — от 20 символов.');
+      if (contact.length < 3) return (err.textContent = 'Оставьте контакт для связи.');
+      btn.disabled = true;
+      haptic('medium');
+      try {
+        const r = await api('/api/broker/apply', { method: 'POST', body: { experience, contact, startParam } });
+        S.brokerApp = r.application;
+        haptic('heavy');
+        toast('Заявка отправлена — мы свяжемся с вами');
+        renderInfo();
+      } catch (e) {
+        err.textContent = e.message;
+        btn.disabled = false;
+      }
+    });
+  }
 
   function renderInfo() {
     const s = S.settings;
@@ -921,10 +985,19 @@
           <div class="step"><div class="n">4</div>После подтверждения средства уходят на ваш кошелёк — ссылку на транзакцию увидите в заявке.</div>
         </div>
       </div>
+      ${rulesCardHtml()}
+      <section class="card apply-hero">
+        <div class="apply-art" style="background-image:url('/img/apply.jpg')" aria-hidden="true"></div>
+        <div class="ed-body">
+          <div class="kicker gold">Команда брокеров</div>
+          <div class="display">Станьте брокером <em>PRICELEX</em></div>
+          <p class="apply-lead">Умеете спокойно объяснять сложное — так, как объяснили бы бабушке установку приложения? Ведите сделки клиентов через гарантийный счёт площадки, зарабатывайте на каждой завершённой заявке и выводите BTC в любое время.</p>
+        </div>
+        <div class="apply-body">${applyBodyHtml()}</div>
+      </section>
       <div class="card">
         <div class="card-title">Связь с нами</div>
         <div class="contacts">
-          <a class="contact" href="${esc(supportUrl())}" target="_blank" rel="noopener"><span class="ci">${ICONS.chat}</span><span>Поддержка<small>${esc(supportHandle())} · отвечаем лично</small></span></a>
           <a class="contact" href="${esc(s.channel)}" target="_blank" rel="noopener"><span class="ci">📣</span><span>Официальный канал<small>новости и курсы</small></span></a>
           <a class="contact" href="${esc(s.chat)}" target="_blank" rel="noopener"><span class="ci">💬</span><span>Чат PRICELEX<small>общение с клиентами</small></span></a>
         </div>
@@ -933,6 +1006,7 @@
       <div class="signature">PRICELEX<span>— быстро · надёжно · выгодно —</span></div>`;
     const go = $('#goSupport');
     if (go) go.addEventListener('click', () => { haptic('light'); goTab('support'); });
+    wireApplyForm();
   }
 
   /* ---------- отзывы ---------- */
@@ -1058,7 +1132,7 @@
     v.innerHTML = `
       <div class="card">
         <div class="card-title">Чат поддержки</div>
-        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:12px">Задайте вопрос брокеру прямо здесь — обычно отвечаем за 1–3 минуты. Или напишите напрямую в Telegram: ${supportLinkHtml()}.</div>
+        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:12px">Задайте вопрос брокеру прямо здесь — обычно отвечаем за 1–3 минуты. На связи 24/7.</div>
         <div class="chat-box" id="chatBox">
           <div class="chat-empty" id="chatEmpty"><div class="e-ic">💬</div>Напишите сообщение — мы на связи 24/7</div>
           <div class="chat-list" id="chatList"></div>
@@ -1328,6 +1402,11 @@
       try {
         const sup = await api('/api/support/messages');
         S.support = sup.messages || [];
+      } catch {}
+      // статус заявки «стать брокером» (если подавалась)
+      try {
+        const br = await api('/api/broker/application');
+        S.brokerApp = br.application || null;
       } catch {}
       loadRateHistory();
     } catch (e) {

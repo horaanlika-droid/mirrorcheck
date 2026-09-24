@@ -20,7 +20,7 @@
 > PRICELEX — агентство криптоброкеров. Обмен BTC и GRAM в формате private banking.
 >
 > Приложение → @pricelex_bot
-> Поддержка 24/7 → @stonym0ntana
+> Поддержка 24/7 → прямо в приложении
 
 **Хештеги:** #PRICELEX #PrivateBrokerage #BTC #GRAM
 
@@ -98,7 +98,7 @@
 > 🖤 Поддержка, которая отвечает, а не отписывается
 >
 > 📲 Приложение: @pricelex_bot
-> 🗣 Поддержка: @stonym0ntana
+> 🗣 Поддержка: прямо в приложении
 > 📰 Канал: @pricelex_channel
 > 💬 Чат: @pricelex_chat
 >

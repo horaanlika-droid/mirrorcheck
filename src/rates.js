@@ -3,7 +3,8 @@
 // Комиссию задаёт оператор в админ-панели, официальный курс трогать не нужно.
 const store = require('./store');
 
-const INTERVAL_MS = Number(process.env.RATES_INTERVAL_MS) || 5 * 60 * 1000;
+// Курс обновляется каждые 10 секунд (переопределяется RATES_INTERVAL_MS).
+const INTERVAL_MS = Number(process.env.RATES_INTERVAL_MS) || 10 * 1000;
 const DISABLED = process.env.RATES_DISABLED === '1';
 
 async function fetchJson(url, timeoutMs = 12000) {
