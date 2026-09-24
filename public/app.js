@@ -1,4 +1,4 @@
-/* PRICELEX | Official — клиентское Web App (BTC & GRAM обмен + поддержка + tx) */
+/* PRICELEX — агентство криптоброкеров: клиентское Web App (обмен BTC & GRAM, отзывы, поддержка) */
 (() => {
   'use strict';
 
@@ -34,6 +34,8 @@
     settings: null, me: null, orders: [], order: null, tab: 'exchange',
     currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [],
     history: { points: [], updatedFor: null },
+    reviews: { list: [], stats: { count: 0, avg: 0 }, loaded: false },
+    reviewDraft: { orderId: null, rating: 5, text: '' },
   };
 
   const STATUS = {
@@ -143,7 +145,10 @@
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
     users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.4 3.4-5 6.5-5s5.7 1.6 6.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 15.2c2.6.3 4.4 1.8 5 4.8"/></svg>',
     info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>',
-    chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.5 7.5L3 21l2-5.5A8.5 8.5 0 0 1 21 11.5Z"/><path d="M8 12h8"/><path d="M8 8h5"/></svg>',
+    // Поддержка: чистый силуэт вопросительного знака (дуга + ножка + точка).
+    chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8.6 7.8a3.6 3.6 0 1 1 5.3 3.17c-1.14.62-1.9 1.5-1.9 2.73v.9"/><circle cx="12" cy="18.6" r="1.3" fill="currentColor" stroke="none"/></svg>',
+    star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3.6 2.55 5.2 5.75.84-4.16 4.05.98 5.72L12 16.72 6.88 19.4l.98-5.72L3.7 9.64l5.75-.84L12 3.6Z"/></svg>',
+    starFill: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 3.6 2.55 5.2 5.75.84-4.16 4.05.98 5.72L12 16.72 6.88 19.4l.98-5.72L3.7 9.64l5.75-.84L12 3.6Z"/></svg>',
     down: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16"/><path d="m6 14 6 6 6-6"/></svg>',
     copy: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
     check: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 12.5 5 5 10-11"/></svg>',
@@ -175,7 +180,7 @@
   }
 
   // series: [{ at, v }] — реальные наблюдения; рисуем только то, что есть.
-  function renderChart(el, series) {
+  function renderChart(el, series, opts = {}) {
     if (!el) return;
     const W = Math.max(240, Math.round(el.clientWidth || 320));
     const H = Math.max(120, Math.round(el.clientHeight || 158));
@@ -208,27 +213,79 @@
     const area = hasLine ? `${line} L${last.x.toFixed(1)},${H - bottom} L${pts[0].x.toFixed(1)},${H - bottom} Z` : '';
     const guide = hasLine ? '' : `<line class="guide" x1="0" y1="${last.y.toFixed(1)}" x2="${(last.x - 12).toFixed(1)}" y2="${last.y.toFixed(1)}"/>`;
 
+    // Просадка: самая низкая фактическая точка окна — лучшая цена для покупки.
+    let dip = null;
+    if (opts.markDip && hasLine && span > 0) {
+      let mi = 0;
+      series.forEach((p, i) => { if (Number(p.v) < Number(series[mi].v)) mi = i; });
+      dip = { x: pts[mi].x, y: pts[mi].y, v: Number(series[mi].v), at: series[mi].at, isLast: mi === pts.length - 1 };
+    }
+    const dipSvg = dip ? `
+        <rect class="dip-zone" x="${Math.max(0, dip.x - 22).toFixed(1)}" y="${top - 6}" width="44" height="${H - top - bottom + 10}" rx="10" fill="url(#plDip${id})"/>
+        <line class="dip-line" x1="${dip.x.toFixed(1)}" y1="${top - 6}" x2="${dip.x.toFixed(1)}" y2="${H - bottom + 4}"/>
+        ${dip.isLast ? '' : `<path class="dip-mark" d="M${dip.x.toFixed(1)},${(dip.y - 6).toFixed(1)} L${(dip.x + 6).toFixed(1)},${dip.y.toFixed(1)} L${dip.x.toFixed(1)},${(dip.y + 6).toFixed(1)} L${(dip.x - 6).toFixed(1)},${dip.y.toFixed(1)} Z"/>`}` : '';
+
     el.innerHTML = `
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <linearGradient id="plLine${id}" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stop-color="#2f6bff"/><stop offset="55%" stop-color="#5ea9ff"/><stop offset="100%" stop-color="#bfe4ff"/>
+            <stop offset="0%" stop-color="#8a6a2f"/><stop offset="50%" stop-color="#d8b46a"/><stop offset="100%" stop-color="#fff1cc"/>
           </linearGradient>
           <linearGradient id="plArea${id}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(78,168,255,.34)"/><stop offset="100%" stop-color="rgba(78,168,255,0)"/>
+            <stop offset="0%" stop-color="rgba(216,180,106,.30)"/><stop offset="100%" stop-color="rgba(216,180,106,0)"/>
           </linearGradient>
           <radialGradient id="plDot${id}">
-            <stop offset="0%" stop-color="rgba(170,215,255,.5)"/><stop offset="100%" stop-color="rgba(170,215,255,0)"/>
+            <stop offset="0%" stop-color="rgba(255,228,170,.55)"/><stop offset="100%" stop-color="rgba(255,228,170,0)"/>
           </radialGradient>
+          <linearGradient id="plDip${id}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(53,224,161,0)"/><stop offset="70%" stop-color="rgba(53,224,161,.10)"/><stop offset="100%" stop-color="rgba(53,224,161,.22)"/>
+          </linearGradient>
         </defs>
         ${grid.join('')}
         ${guide}
+        ${dipSvg}
         ${area ? `<path class="area" d="${area}" fill="url(#plArea${id})"/>` : ''}
         ${line ? `<path class="line" d="${line}" stroke="url(#plLine${id})"/>` : ''}
         <circle class="dot-halo" cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="15" fill="url(#plDot${id})"/>
         <circle class="dot-core" cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="4.6"/>
       </svg>`;
-    return { x: last.x, y: last.y, W, H };
+    return { x: last.x, y: last.y, W, H, dip };
+  }
+
+  // Подпись у точки просадки + сигнал «лучшее время для покупки» под графиком.
+  function renderDipLabel(el, spot) {
+    if (!el || !spot || !spot.dip || spot.dip.isLast) return;
+    const { dip, W } = spot;
+    const lab = document.createElement('div');
+    const leftSide = dip.x > W * 0.6;
+    lab.className = 'chart-dip' + (leftSide ? ' left' : '');
+    lab.style.left = (leftSide ? dip.x - 12 : Math.min(W - 70, Math.max(70, dip.x))) + 'px';
+    lab.style.top = Math.max(0, dip.y - (leftSide ? 20 : 46)) + 'px';
+    lab.innerHTML = `<span class="d-k">Просадка · ${esc(fmtTime(dip.at))}</span><span class="d-v">${esc(Math.round(dip.v).toLocaleString('ru-RU'))} ₽</span>`;
+    el.appendChild(lab);
+  }
+
+  function marketSignal(series, spot) {
+    if (!spot || !spot.dip || series.length < 3) return '';
+    const vals = series.map((p) => Number(p.v));
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const cur = vals[vals.length - 1];
+    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const when = spanLabel(series[series.length - 1].at - series[0].at);
+    const pos = hi > lo ? (cur - lo) / (hi - lo) : 1;
+    const above = lo > 0 ? ((cur - lo) / lo) * 100 : 0;
+    if (spot.dip.isLast || pos <= 0.2) {
+      return `<div class="signal buy"><span class="s-ic">◆</span><div><div class="s-t">Лучшее время для покупки</div>` +
+        `<div class="s-s">${spot.dip.isLast ? `Курс на минимуме ${when}` : `Курс у минимума ${when} — всего на ${above.toFixed(2)} % выше дна`}. Брокеры PRICELEX зафиксируют цену за вас.</div></div></div>`;
+    }
+    const below = avg > 0 ? ((avg - cur) / avg) * 100 : 0;
+    if (below > 0.05) {
+      return `<div class="signal good"><span class="s-ic">◆</span><div><div class="s-t">Курс ниже среднего ${when}</div>` +
+        `<div class="s-s">На ${below.toFixed(2)} % дешевле средней цены периода — хороший момент для покупки.</div></div></div>`;
+    }
+    return `<div class="signal"><span class="s-ic">◇</span><div><div class="s-t">Лучшая цена ${when} — ${Math.round(lo).toLocaleString('ru-RU')} ₽ в ${fmtTime(spot.dip.at)}</div>` +
+      `<div class="s-s">Сейчас на ${above.toFixed(2)} % выше. Отмечаем просадки на графике — следите за точкой входа.</div></div></div>`;
   }
 
   function renderChartNote(el, text) {
@@ -264,11 +321,15 @@
       .filter((p) => Number.isFinite(p.v) && p.v > 0);
     const chart = document.getElementById('rateChart');
     const axis = document.getElementById('rateAxis');
+    const signal = document.getElementById('rateSignal');
     chart.innerHTML = '';
     if (axis) axis.innerHTML = '';
+    if (signal) signal.innerHTML = '';
 
     if (series.length >= 2) {
-      const spot = renderChart(chart, series);
+      const spot = renderChart(chart, series, { markDip: true });
+      renderDipLabel(chart, spot);
+      if (signal) signal.innerHTML = marketSignal(series, spot);
       renderChartTip(chart, spot, (Math.round(series[series.length - 1].v) || 0).toLocaleString('ru-RU') + ' ₽', fmtTime(series[series.length - 1].at));
       if (axis) {
         const mid = series[Math.floor((series.length - 1) / 2)];
@@ -320,14 +381,16 @@
     if (tab === 'refs') renderRefs();
     if (tab === 'info') renderInfo();
     if (tab === 'support') renderSupport();
+    if (tab === 'reviews') { renderReviews(); loadReviews(); }
   }
 
   function renderNav() {
     const items = [
       ['exchange', 'Обмен', ICONS.swap],
       ['history', 'История', ICONS.clock],
+      ['reviews', 'Отзывы', ICONS.star],
       ['refs', 'Рефералы', ICONS.users],
-      ['support', 'Чат', ICONS.chat],
+      ['support', 'Помощь', ICONS.chat],
       ['info', 'Инфо', ICONS.info],
     ];
     $('#nav').innerHTML = items
@@ -345,7 +408,8 @@
   function renderExchange() {
     $('#view-exchange').innerHTML = `
       <div id="exForm" class="${S.order ? 'hidden' : ''}">
-        <section class="card card-hero">
+        <section class="card card-hero lux-hero">
+          <div class="hero-art" aria-hidden="true"></div>
           <div class="hero-top">
             <div class="kicker">Курс обмена</div>
             <div class="seg" id="segCur">
@@ -360,6 +424,7 @@
           <div class="metric-sub" id="heroSub">за 1 <b>${S.currency}</b></div>
           <div class="chart" id="rateChart"></div>
           <div class="chart-axis" id="rateAxis"></div>
+          <div id="rateSignal"></div>
           <div class="hero-foot">
             <div>
               <div class="k">Курс обновлён</div>
@@ -451,7 +516,7 @@
     $('#fMeta').innerHTML = `
       <div class="row"><span>Курс обмена</span><b>1 ${cur} = ${fmtRub(rate)}</b></div>
       ${s.rateUpdatedAt ? `<div class="row"><span>Курс обновлён</span><b>${fmtDate(s.rateUpdatedAt)}</b></div>` : ''}
-      <div class="row"><span>Обработкой занимается</span><b>оператор PRICELEX</b></div>`;
+      <div class="row"><span>Сделку ведёт</span><b>брокер PRICELEX</b></div>`;
     const btn = $('#btnGo');
     btn.disabled = !s.online;
     btn.querySelector('span').textContent = s.online ? 'Найти реквизиты' : '⛔ Обмен временно недоступен';
@@ -503,13 +568,15 @@
     const box = $('#exOrder');
     const o = S.order;
     if (!box) return;
+    if (o && o.status === 'completed' && !o.review && isTypingReview() && box.contains(document.activeElement)) return;
     if (!o) { box.innerHTML = ''; return; }
     if (o.status === 'new') {
       box.innerHTML = `
-        <div class="card stage">
-          <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🔍</div></div>
-          <div class="stage-title">Ищем реквизиты для оплаты</div>
-          <div class="stage-sub">Заявка <b>#${o.id}</b> передана оператору.<br>Обычно это занимает меньше минуты — не закрывайте приложение.</div>
+        <div class="card stage stage-broker">
+          <div class="stage-art" aria-hidden="true"><span class="live"><span class="dot"></span>Брокер на линии</span></div>
+          <div class="stage-title">Ищем реквизиты по лучшей цене</div>
+          <div class="stage-sub">Заявка <b>#${o.id}</b> у брокера. В реальном времени сравниваем предложения рынка и выбираем лучшее.<br>Иногда приходится немного подождать — за качество мы отвечаем репутацией.</div>
+          <div class="progress" aria-hidden="true"><span></span></div>
           <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
         </div>`;
       $('#btnCancel').addEventListener('click', async () => {
@@ -597,7 +664,9 @@
             </div>
           ` : `<div class="note">Оператор отправит средства вручную. Ссылка на блокчейн появится здесь, если оператор её добавит.</div>`}
           <button class="btn btn-primary mt" id="btnNew">Новый обмен</button>
-        </div>`;
+        </div>
+        ${reviewCtaHtml(o)}`;
+      wireReviewForm('stRv', () => o.id);
       const cpTx = $('#cpTx');
       if (cpTx) cpTx.addEventListener('click', () => copyText(o.txUrl, 'Ссылка скопирована'));
       $('#btnNew').addEventListener('click', resetToForm);
@@ -607,7 +676,7 @@
         <div class="card stage">
           <div class="failmark">${rej ? '🔴' : '⚪'}</div>
           <div class="stage-title">${rej ? 'Заявка отклонена' : 'Заявка отменена'}</div>
-          <div class="stage-sub">${rej ? 'Оператор отклонил заявку #' + o.id + '. Если это ошибка — напишите в поддержку.' : 'Вы отменили заявку #' + o.id + '.'}</div>
+          <div class="stage-sub">${rej ? `Заявка #${o.id} отклонена. Если это ошибка — напишите в поддержку ${supportLinkHtml()}.` : 'Вы отменили заявку #' + o.id + '.'}</div>
           ${o.txUrl ? `<div class="tx-box"><div class="tx-label">🔗 Блокчейн</div><a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a></div>` : ''}
           <button class="btn btn-primary mt" id="btnNew">Создать заявку</button>
         </div>`;
@@ -806,24 +875,36 @@
     if (cp) cp.addEventListener('click', () => copyText(link, 'Ссылка скопирована'));
   }
 
+  const supportHandle = () => '@' + String((S.settings && S.settings.operator) || '@stonym0ntana').replace(/^@/, '');
+  const supportUrl = () => 'https://t.me/' + supportHandle().slice(1);
+  const supportLinkHtml = () => `<a class="inline-link" href="${esc(supportUrl())}" target="_blank" rel="noopener">${esc(supportHandle())}</a>`;
+
   function renderInfo() {
     const s = S.settings;
-    const opLink = 'https://t.me/' + String(s.operator || '').replace(/^@/, '');
     $('#view-info').innerHTML = `
+      <section class="card editorial manifesto">
+        <div class="ed-art" style="background-image:url('/img/office.jpg')" aria-hidden="true"></div>
+        <div class="ed-body">
+          <div class="kicker gold">Private crypto brokerage</div>
+          <h2 class="display">Мы не обменник.<br><em>Мы агентство брокеров.</em></h2>
+        </div>
+      </section>
       <div class="card">
-        <div class="about"><b>PRICELEX</b> — современный сервис обмена Bitcoin и Gram. Честность, скорость и выгодные условия: мы создали сервис, которым удобно пользоваться каждый день.</div>
+        <div class="about"><b>PRICELEX</b> — это экосистема. Каждый из нас прошёл непростой путь и на этом пути овладел ремеслом крипторынка.</div>
+        <div class="about" style="margin-top:10px">Теперь за совсем скромную комиссию мы экономим ваше время и нервы: в реальном времени находим лучшие варианты на рынке.</div>
+        <blockquote class="quote">Да, иногда приходится подождать. Но мы знаем, кто мы, — и отвечаем за качество репутацией.</blockquote>
         <div class="feat">
-          <div class="f"><span class="i">✅</span>Выгодный курс — максимум за каждый обмен</div>
-          <div class="f"><span class="i">✅</span>Фиксированная сумма к оплате — известна заранее, без доплат</div>
-          <div class="f"><span class="i">✅</span>Быстрые сделки и живая поддержка оператора</div>
-          <div class="f"><span class="i">✅</span>Безопасность каждой операции</div>
+          <div class="f"><span class="i">◆</span>Живой поиск лучшей цены — сделку ведёт брокер, а не скрипт</div>
+          <div class="f"><span class="i">◆</span>Сумма к оплате известна заранее — без доплат</div>
+          <div class="f"><span class="i">◆</span>Просадки курса отмечены на графике — видно лучшую точку входа</div>
+          <div class="f"><span class="i">◆</span>Отзывы только от реальных клиентов — после завершённого обмена</div>
         </div>
       </div>
       <div class="card">
         <div class="card-title">Как это работает</div>
         <div class="steps">
-          <div class="step"><div class="n">1</div>Выберите валюту и введите сумму — калькулятор сразу покажет, сколько получите.</div>
-          <div class="step"><div class="n">2</div>Укажите адрес кошелька и нажмите «Найти реквизиты»: оператор пришлёт точную сумму к оплате.</div>
+          <div class="step"><div class="n">1</div>Выберите валюту и сумму — калькулятор сразу покажет, сколько получите.</div>
+          <div class="step"><div class="n">2</div>Укажите кошелёк и нажмите «Найти реквизиты»: брокер подберёт лучший вариант и пришлёт точную сумму.</div>
           <div class="step"><div class="n">3</div>Переведите сумму, прикрепите PDF-чек и нажмите «Я оплатил».</div>
           <div class="step"><div class="n">4</div>После подтверждения средства уходят на ваш кошелёк — ссылку на транзакцию увидите в заявке.</div>
         </div>
@@ -831,19 +912,132 @@
       <div class="card">
         <div class="card-title">Связь с нами</div>
         <div class="contacts">
-          <a class="contact" href="${esc(opLink)}" target="_blank" rel="noopener"><span class="ci">🧩</span><span>Оператор<small>${esc(s.operator)}</small></span></a>
+          <a class="contact" href="${esc(supportUrl())}" target="_blank" rel="noopener"><span class="ci">${ICONS.chat}</span><span>Поддержка<small>${esc(supportHandle())} · отвечаем лично</small></span></a>
           <a class="contact" href="${esc(s.channel)}" target="_blank" rel="noopener"><span class="ci">📣</span><span>Официальный канал<small>новости и курсы</small></span></a>
-          <a class="contact" href="${esc(s.chat)}" target="_blank" rel="noopener"><span class="ci">💬</span><span>Чат поддержки<small>отвечаем быстро</small></span></a>
+          <a class="contact" href="${esc(s.chat)}" target="_blank" rel="noopener"><span class="ci">💬</span><span>Чат PRICELEX<small>общение с клиентами</small></span></a>
         </div>
+        <button class="btn btn-ghost" style="margin-top:12px" id="goSupport">${ICONS.chat}<span>Написать в поддержку из приложения</span></button>
       </div>
-      <div class="card">
-        <div class="card-title">Поддержка в приложении</div>
-        <div class="about" style="font-size:12.5px">Напишите нам прямо здесь — отвечаем в реальном времени. Перейдите во вкладку <b>Чат</b> в нижнем меню.</div>
-        <button class="btn btn-ghost" style="margin-top:12px" id="goSupport">${ICONS.chat}<span>Открыть чат поддержки</span></button>
-      </div>
-      <div class="card"><div class="about" style="text-align:center;color:var(--mut);font-size:11.5px">PRICELEX — быстро. Надёжно. Выгодно. ✦</div></div>`;
+      <div class="signature">PRICELEX<span>— быстро · надёжно · выгодно —</span></div>`;
     const go = $('#goSupport');
     if (go) go.addEventListener('click', () => { haptic('light'); goTab('support'); });
+  }
+
+  /* ---------- отзывы ---------- */
+  const starsHtml = (n, cls = '') => `<span class="stars ${cls}" aria-label="${n} из 5">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= Math.round(n) ? 'on' : ''}">${ICONS.starFill}</i>`).join('')}</span>`;
+  const fmtDay = (ts) => new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+  const isTypingReview = () => !!(document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('rv-text'));
+  const reviewableOrders = () => S.orders.filter((o) => o.status === 'completed' && !o.review);
+
+  async function loadReviews() {
+    try {
+      const r = await api('/api/reviews');
+      const next = { list: r.reviews || [], stats: r.stats || { count: 0, avg: 0 }, loaded: true };
+      const changed = JSON.stringify(next) !== JSON.stringify(S.reviews);
+      S.reviews = next;
+      if (changed && S.tab === 'reviews' && !isTypingReview()) renderReviews();
+    } catch (e) {
+      // отзывы не критичны для обмена — тихо пропускаем
+    }
+  }
+
+  function reviewFormHtml(p, orders) {
+    const d = S.reviewDraft;
+    if (!orders.some((o) => o.id === d.orderId)) d.orderId = orders[0] ? orders[0].id : null;
+    const select = orders.length > 1
+      ? `<label class="f-label"><span>Обмен</span></label><select class="rv-select" id="${p}Order">${orders.map((o) => `<option value="${o.id}" ${o.id === d.orderId ? 'selected' : ''}>#${o.id} · ${fmtRub(o.payRub || o.rub)} → ${fmtCrypto(o.crypto, o.currency)} · ${fmtDate(o.createdAt)}</option>`).join('')}</select>`
+      : '';
+    return `
+      <div class="rv-form">
+        ${select}
+        <div class="rv-stars" id="${p}Stars" role="radiogroup" aria-label="Оценка">
+          ${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-n="${n}" class="${n <= d.rating ? 'on' : ''}" aria-label="Оценка ${n}">${ICONS.starFill}</button>`).join('')}
+        </div>
+        <textarea id="${p}Text" class="rv-text" rows="3" maxlength="1000" placeholder="Как прошла сделка? Что стоит знать другим клиентам?">${esc(d.text)}</textarea>
+        <div class="f-err" id="${p}Err"></div>
+        <button class="btn btn-primary" id="${p}Send">${ICONS.check}<span>Отправить отзыв</span></button>
+        <div class="f-hint">Оставить отзыв можно один раз на каждый обмен.</div>
+      </div>`;
+  }
+
+  function wireReviewForm(p, getOrderId) {
+    const stars = $('#' + p + 'Stars');
+    if (!stars) return;
+    stars.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+      S.reviewDraft.rating = Number(b.dataset.n);
+      haptic('light');
+      stars.querySelectorAll('button').forEach((x) => x.classList.toggle('on', Number(x.dataset.n) <= S.reviewDraft.rating));
+    }));
+    const text = $('#' + p + 'Text');
+    text.addEventListener('input', () => { S.reviewDraft.text = text.value; });
+    const sel = $('#' + p + 'Order');
+    if (sel) sel.addEventListener('change', () => { S.reviewDraft.orderId = Number(sel.value); });
+    $('#' + p + 'Send').addEventListener('click', async () => {
+      const err = $('#' + p + 'Err');
+      const orderId = sel ? Number(sel.value) : getOrderId();
+      const body = { orderId, rating: S.reviewDraft.rating, text: text.value.trim(), startParam };
+      if (body.text.length < 5) { err.textContent = 'Напишите хотя бы пару слов (от 5 символов).'; return; }
+      const btn = $('#' + p + 'Send');
+      btn.disabled = true;
+      haptic('medium');
+      try {
+        const r = await api('/api/reviews', { method: 'POST', body });
+        const i = S.orders.findIndex((x) => x.id === r.order.id);
+        if (i >= 0) S.orders[i] = r.order; else S.orders.unshift(r.order);
+        if (S.order && S.order.id === r.order.id) S.order = r.order;
+        // Отзыв сразу виден автору в общем списке.
+        S.reviews.list = [r.review, ...S.reviews.list.filter((x) => x.id !== r.review.id)];
+        const n = S.reviews.list.length;
+        S.reviews.stats = { count: n, avg: Math.round((S.reviews.list.reduce((a, x) => a + x.rating, 0) / n) * 10) / 10 };
+        S.reviewDraft = { orderId: null, rating: 5, text: '' };
+        haptic('heavy');
+        toast('Спасибо! Ваш отзыв опубликован');
+        renderOrderStage();
+        if (S.tab === 'reviews') renderReviews();
+      } catch (e) {
+        err.textContent = e.message;
+        btn.disabled = false;
+      }
+    });
+  }
+
+  function reviewCtaHtml(o) {
+    if (o.review) {
+      return `<div class="card rv-cta done"><div class="rv-cta-t">${ICONS.starFill}<span>Спасибо! Ваш отзыв опубликован в разделе «Отзывы»</span></div></div>`;
+    }
+    return `<div class="card rv-cta"><div class="card-title">Оцените работу брокера</div>${reviewFormHtml('stRv', [o])}</div>`;
+  }
+
+  function renderReviews() {
+    const v = $('#view-reviews');
+    if (!v) return;
+    const { list, stats, loaded } = S.reviews;
+    const eligible = reviewableOrders();
+    const hasCompleted = S.orders.some((o) => o.status === 'completed');
+    v.innerHTML = `
+      <section class="card editorial rv-hero">
+        <div class="ed-art" style="background-image:url('/img/desk.jpg')" aria-hidden="true"></div>
+        <div class="ed-body">
+          <div class="kicker gold">Репутация</div>
+          <div class="rv-score">
+            <div class="metric">${stats.count ? stats.avg.toFixed(1) : '—'}</div>
+            <div>${starsHtml(stats.avg || 0, 'lg')}<div class="metric-sub">${stats.count ? `${stats.count} ${stats.count % 10 === 1 && stats.count % 100 !== 11 ? 'отзыв' : [2, 3, 4].includes(stats.count % 10) && ![12, 13, 14].includes(stats.count % 100) ? 'отзыва' : 'отзывов'} · только после реального обмена` : 'Отзывы только от клиентов, завершивших обмен'}</div></div>
+          </div>
+        </div>
+      </section>
+      ${eligible.length ? `<div class="card"><div class="card-title">Ваш отзыв</div>${reviewFormHtml('tabRv', eligible)}</div>` : ''}
+      ${!eligible.length ? `<div class="card rv-cta done"><div class="rv-cta-t">${ICONS.star}<span>${hasCompleted ? 'Спасибо — вы уже оценили свои обмены' : 'Оставить отзыв можно после завершённого обмена'}</span></div></div>` : ''}
+      <div class="card-title" style="padding:18px 4px 11px">Отзывы клиентов</div>
+      <div id="rvList">${
+        list.length
+          ? list.map((r) => `
+            <article class="card rv-item">
+              <div class="rv-top"><div class="rv-av">${esc((r.name || 'К').trim().charAt(0).toUpperCase())}</div><div class="rv-who"><b>${esc(r.name)}</b><span>${esc(fmtDay(r.createdAt))}</span></div>${starsHtml(r.rating)}</div>
+              <p class="rv-body">${esc(r.text).replace(/\n/g, '<br>')}</p>
+            </article>`).join('')
+          : `<div class="card"><div class="empty"><div class="e-ic">✦</div>${loaded ? 'Отзывов пока нет — станьте первым, кто оценит PRICELEX.' : 'Загружаем отзывы…'}</div></div>`
+      }</div>`;
+    wireReviewForm('tabRv', () => (eligible[0] ? eligible[0].id : null));
   }
 
   /* ---------- поддержка чат ---------- */
@@ -852,7 +1046,7 @@
     v.innerHTML = `
       <div class="card">
         <div class="card-title">Чат поддержки</div>
-        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:12px">Задайте вопрос оператору — отвечаем в реальном времени. Обычно отвечаем за 1–3 минуты.</div>
+        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:12px">Задайте вопрос брокеру прямо здесь — обычно отвечаем за 1–3 минуты. Или напишите напрямую в Telegram: ${supportLinkHtml()}.</div>
         <div class="chat-box" id="chatBox">
           <div class="chat-empty" id="chatEmpty"><div class="e-ic">💬</div>Напишите сообщение — мы на связи 24/7</div>
           <div class="chat-list" id="chatList"></div>
@@ -948,6 +1142,14 @@
       document.body.appendChild(el);
     }
     el.onclick = async () => {
+      if (S.tab === 'reviews') {
+        const r = await api('/api/admin/reviews/approve-pending', { method: 'POST' });
+        const m = await api('/api/me');
+        S.orders = m.orders;
+        await loadReviews();
+        renderReviews();
+        return toast(r.approved ? `Оператор одобрил отзывов: ${r.approved} (демо)` : 'Новых отзывов для оператора нет (демо)');
+      }
       if (!S.order) return toast('Сначала создайте заявку на обмен');
       const o = S.order;
       haptic('medium');
@@ -1042,9 +1244,15 @@
     }
   }
 
+  async function pollReviews() {
+    if (S.tab !== 'reviews') return;
+    await loadReviews();
+  }
+
   async function pollProfile() {
-    if (S.tab !== 'history' && S.tab !== 'refs') return;
+    if (S.tab !== 'history' && S.tab !== 'refs' && S.tab !== 'reviews') return;
     const m = await api('/api/me');
+    const ordersChanged = JSON.stringify(m.orders) !== JSON.stringify(S.orders);
     S.orders = m.orders;
     S.me = m.me;
     if (!S.order) {
@@ -1058,11 +1266,12 @@
     }
     if (S.tab === 'history') renderHistory();
     else if (S.tab === 'refs') renderRefs();
+    else if (S.tab === 'reviews' && ordersChanged && !isTypingReview()) renderReviews();
   }
 
   function startPolling() {
     const running = new Set();
-    const refresh = () => Promise.all([pollOrder, pollSettings, pollProfile, () => pollSupport(false)].map(async (poll) => {
+    const refresh = () => Promise.all([pollOrder, pollSettings, pollProfile, pollReviews, () => pollSupport(false)].map(async (poll) => {
       if (typeof poll !== 'function') return;
       if (running.has(poll)) return;
       running.add(poll);
