@@ -32,7 +32,12 @@ const defaults = () => ({
   orders: [],
   flags: {},
   support: [], // чат поддержки: { id, userId, from: 'user'|'admin', text, at }
+  rateHistory: [], // наблюдения курса: { at, btc, gram } — основа графика в приложении
 });
+
+// График курса в Web App строится только по реальным наблюдениям:
+// каждое успешное автообновление курса добавляет точку. Храним неделю.
+const RATE_HISTORY_MAX = 2016;
 
 let db = null;
 let saveTimer = null;
@@ -59,6 +64,10 @@ function load() {
       }
       if (!Array.isArray(db.support)) db.support = [];
       if (!Number.isFinite(db.supportSeq)) db.supportSeq = (db.support?.length || 0) + 1;
+      if (!Array.isArray(db.rateHistory)) db.rateHistory = [];
+      db.rateHistory = db.rateHistory.filter(
+        (p) => p && Number.isFinite(Number(p.at)) && Number(p.btc) > 0 && Number(p.gram) > 0
+      );
       for (const o of db.orders || []) {
         if (o.txUrl === undefined) o.txUrl = null;
         if (o.txHash === undefined) o.txHash = null;
@@ -231,6 +240,35 @@ function stats() {
   };
 }
 
+/* ---------- история курса для графика ---------- */
+// Записываем только фактические наблюдения курса (автообновление или ручная правка).
+function pushRatePoint({ btc, gram, at = Date.now() } = {}) {
+  const b = Math.round(Number(btc));
+  const g = Math.round(Number(gram));
+  if (!Number.isFinite(b) || !Number.isFinite(g) || b <= 0 || g <= 0) return null;
+  return mutate((d) => {
+    if (!Array.isArray(d.rateHistory)) d.rateHistory = [];
+    const last = d.rateHistory[d.rateHistory.length - 1];
+    if (last && last.btc === b && last.gram === g && at - last.at < 30000) return last;
+    const point = { at, btc: b, gram: g };
+    d.rateHistory.push(point);
+    if (d.rateHistory.length > RATE_HISTORY_MAX) d.rateHistory.splice(0, d.rateHistory.length - RATE_HISTORY_MAX);
+    return point;
+  });
+}
+
+// Точки окна [since; ∞) с прореживанием до maxPoints (последняя всегда сохраняется).
+function rateHistorySince(since = 0, maxPoints = 180) {
+  const all = (db.rateHistory || []).filter((p) => p.at >= since);
+  const limit = Math.max(2, Number(maxPoints) || 180);
+  if (all.length <= limit) return all.slice();
+  const step = Math.ceil(all.length / limit);
+  const out = all.filter((_, i) => i % step === 0);
+  const last = all[all.length - 1];
+  if (out[out.length - 1] !== last) out.push(last);
+  return out;
+}
+
 /* ---------- support chat ---------- */
 function createSupportMessage(userId, from, text) {
   return mutate((d) => {
@@ -289,6 +327,8 @@ module.exports = {
   userOrders,
   activeOrders,
   stats,
+  pushRatePoint,
+  rateHistorySince,
   createSupportMessage,
   getSupportMessages,
   getSupportThreads,

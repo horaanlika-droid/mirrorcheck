@@ -107,6 +107,18 @@ function startWeb() {
 
   app.get('/api/settings', (req, res) => res.json(store.publicSettings()));
 
+  // Реальная история курса для графика в приложении: точки пишутся при каждом
+  // успешном автообновлении курса, поэтому график всегда отражает факт.
+  app.get('/api/rates/history', (req, res) => {
+    const hours = Math.min(168, Math.max(1, Number(req.query.hours) || 24));
+    const since = Date.now() - hours * 3600 * 1000;
+    res.json({
+      hours,
+      updatedAt: store.get().settings.rateUpdatedAt,
+      points: store.rateHistorySince(since, 180),
+    });
+  });
+
   app.get('/api/me', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;

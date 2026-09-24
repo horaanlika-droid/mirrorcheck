@@ -10,8 +10,8 @@
     try {
       tg.ready();
       tg.expand();
-      tg.setHeaderColor && tg.setHeaderColor('#e6eef5');
-      tg.setBackgroundColor && tg.setBackgroundColor('#e6eef5');
+      tg.setHeaderColor && tg.setHeaderColor('#04060d');
+      tg.setBackgroundColor && tg.setBackgroundColor('#04060d');
     } catch (e) {}
     initData = tg.initData || '';
     startParam = tg.startParam || '';
@@ -30,15 +30,19 @@
 
   const $ = (s) => document.querySelector(s);
   const TERMINAL = ['completed', 'rejected', 'cancelled'];
-  const S = { settings: null, me: null, orders: [], order: null, tab: 'exchange', currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [] };
+  const S = {
+    settings: null, me: null, orders: [], order: null, tab: 'exchange',
+    currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [],
+    history: { points: [], updatedFor: null },
+  };
 
   const STATUS = {
-    new: { label: 'Подбор реквизитов', color: '#ffb648' },
-    details: { label: 'Ожидает оплаты', color: '#38bdf8' },
-    paid: { label: 'Подтверждение', color: '#ffb648' },
-    completed: { label: 'Завершён', color: '#22e5a2' },
-    rejected: { label: 'Отклонён', color: '#ff5470' },
-    cancelled: { label: 'Отменён', color: '#8aa0b8' },
+    new: { label: 'Подбор реквизитов', cls: 'new' },
+    details: { label: 'Ожидает оплаты', cls: 'details' },
+    paid: { label: 'Подтверждение', cls: 'paid' },
+    completed: { label: 'Завершён', cls: 'completed' },
+    rejected: { label: 'Отклонён', cls: 'rejected' },
+    cancelled: { label: 'Отменён', cls: 'cancelled' },
   };
 
   const esc = (s) => String(s ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' }[c]));
@@ -59,6 +63,24 @@
     const d = new Date(ts);
     const p = (x) => String(x).padStart(2, '0');
     return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const fmtTime = (ts) => {
+    const d = new Date(ts);
+    const p = (x) => String(x).padStart(2, '0');
+    return `${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const fmtAgo = (ts) => {
+    if (!Number.isFinite(Number(ts))) return '—';
+    const diff = Date.now() - Number(ts);
+    if (diff < 60000) return 'только что';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)} мин назад`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)} ч назад`;
+    return `${Math.floor(diff / 86400000)} дн назад`;
+  };
+  const spanLabel = (ms) => {
+    if (ms < 5400000) return `за ${Math.max(1, Math.round(ms / 60000))} мин`;
+    if (ms < 129600000) return `за ${Math.max(1, Math.round(ms / 3600000))} ч`;
+    return `за ${Math.max(1, Math.round(ms / 86400000))} дн`;
   };
   const fmtSize = (n) => {
     n = Number(n) || 0;
@@ -122,12 +144,154 @@
     users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.4 3.4-5 6.5-5s5.7 1.6 6.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 15.2c2.6.3 4.4 1.8 5 4.8"/></svg>',
     info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>',
     chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.5 7.5L3 21l2-5.5A8.5 8.5 0 0 1 21 11.5Z"/><path d="M8 12h8"/><path d="M8 8h5"/></svg>',
-    down: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16"/><path d="m6 14 6 6 6-6"/></svg>',
+    down: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16"/><path d="m6 14 6 6 6-6"/></svg>',
     copy: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
     check: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 12.5 5 5 10-11"/></svg>',
     bolt: '<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>',
     send: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>',
   };
+
+  /* ---------- график (реальная история курса и сумм) ---------- */
+  let chartSeq = 0;
+
+  function smoothPath(pts, top, bottom) {
+    if (pts.length < 2) return '';
+    if (pts.length === 2) return `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)} L${pts[1].x.toFixed(1)},${pts[1].y.toFixed(1)}`;
+    const clamp = (v) => Math.min(bottom, Math.max(top, v));
+    let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+    for (let i = 0; i < pts.length - 1; i += 1) {
+      const p0 = pts[i - 1] || pts[i];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[i + 2] || p2;
+      const t = 0.2;
+      const c1x = p1.x + (p2.x - p0.x) * t;
+      const c2x = p2.x - (p3.x - p1.x) * t;
+      const c1y = clamp(p1.y + (p2.y - p0.y) * t);
+      const c2y = clamp(p2.y - (p3.y - p1.y) * t);
+      d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+    }
+    return d;
+  }
+
+  // series: [{ at, v }] — реальные наблюдения; рисуем только то, что есть.
+  function renderChart(el, series) {
+    if (!el) return;
+    const W = Math.max(240, Math.round(el.clientWidth || 320));
+    const H = Math.max(120, Math.round(el.clientHeight || 158));
+    const top = 18;
+    const bottom = 14;
+    const values = series.map((p) => Number(p.v)).filter((v) => Number.isFinite(v));
+    const en = values.length;
+    const lo = en ? Math.min(...values) : 0;
+    const hi = en ? Math.max(...values) : 1;
+    const span = hi - lo;
+    const mid = top + (H - top - bottom) / 2;
+    const yOf = (v) => (span > 0 ? top + (1 - (v - lo) / span) * (H - top - bottom) : mid);
+    const t0 = en ? series[0].at : 0;
+    const t1 = en ? series[series.length - 1].at : 0;
+    const ts = t1 - t0;
+    const xOf = (p, i) => {
+      if (ts > 0) return (Math.min(t1, Math.max(t0, p.at)) - t0) / ts * W;
+      return en > 1 ? (i / (en - 1)) * W : W;
+    };
+
+    const id = ++chartSeq;
+    const grid = [];
+    for (let i = 1; i <= 5; i += 1) grid.push(`<line class="grid-v" x1="${(W * i / 6).toFixed(1)}" y1="${top - 6}" x2="${(W * i / 6).toFixed(1)}" y2="${H - bottom + 4}"/>`);
+    for (let i = 1; i <= 3; i += 1) grid.push(`<line class="grid-h" x1="0" y1="${(top + (H - top - bottom) * i / 4).toFixed(1)}" x2="${W}" y2="${(top + (H - top - bottom) * i / 4).toFixed(1)}"/>`);
+
+    const pts = series.map((p, i) => ({ x: xOf(p, i), y: yOf(Number(p.v)) }));
+    const last = pts[pts.length - 1] || { x: W, y: mid };
+    const hasLine = pts.length >= 3;
+    const line = hasLine ? smoothPath(pts, top - 4, H - bottom + 4) : '';
+    const area = hasLine ? `${line} L${last.x.toFixed(1)},${H - bottom} L${pts[0].x.toFixed(1)},${H - bottom} Z` : '';
+    const guide = hasLine ? '' : `<line class="guide" x1="0" y1="${last.y.toFixed(1)}" x2="${(last.x - 12).toFixed(1)}" y2="${last.y.toFixed(1)}"/>`;
+
+    el.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="plLine${id}" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#2f6bff"/><stop offset="55%" stop-color="#5ea9ff"/><stop offset="100%" stop-color="#bfe4ff"/>
+          </linearGradient>
+          <linearGradient id="plArea${id}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(78,168,255,.34)"/><stop offset="100%" stop-color="rgba(78,168,255,0)"/>
+          </linearGradient>
+          <radialGradient id="plDot${id}">
+            <stop offset="0%" stop-color="rgba(170,215,255,.5)"/><stop offset="100%" stop-color="rgba(170,215,255,0)"/>
+          </radialGradient>
+        </defs>
+        ${grid.join('')}
+        ${guide}
+        ${area ? `<path class="area" d="${area}" fill="url(#plArea${id})"/>` : ''}
+        ${line ? `<path class="line" d="${line}" stroke="url(#plLine${id})"/>` : ''}
+        <circle class="dot-halo" cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="15" fill="url(#plDot${id})"/>
+        <circle class="dot-core" cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="4.6"/>
+      </svg>`;
+    return { x: last.x, y: last.y, W, H };
+  }
+
+  function renderChartNote(el, text) {
+    if (!el || !text) return;
+    const note = document.createElement('div');
+    note.className = 'chart-note';
+    note.textContent = text;
+    el.appendChild(note);
+  }
+
+  function renderChartTip(el, spot, value, sub) {
+    if (!el || !spot) return;
+    const tip = document.createElement('div');
+    tip.className = 'chart-tip' + (spot.y < 78 ? ' below' : '');
+    tip.style.top = (spot.y < 78 ? spot.y + 12 : spot.y - 8) + 'px';
+    tip.innerHTML = `<div class="t-k">сейчас</div><div class="t-v">${esc(value)}</div>${sub ? `<div class="t-s">${esc(sub)}</div>` : ''}`;
+    el.appendChild(tip);
+  }
+
+  function renderHero() {
+    const s = S.settings;
+    if (!s) return;
+    const cur = S.currency;
+    const rate = cur === 'BTC' ? s.rateBTC : s.rateGRAM;
+    const label = document.getElementById('heroRate');
+    if (label) label.textContent = Math.round(Number(rate) || 0).toLocaleString('ru-RU');
+    const sub = document.getElementById('heroSub');
+    if (sub) sub.innerHTML = `за 1 <b>${cur}</b>`;
+    const upd = document.getElementById('heroUpdated');
+    if (upd) upd.textContent = s.rateUpdatedAt ? fmtAgo(s.rateUpdatedAt) : 'ожидаем обновление';
+
+    const series = (S.history.points || []).map((p) => ({ at: p.at, v: cur === 'BTC' ? p.btc : p.gram }))
+      .filter((p) => Number.isFinite(p.v) && p.v > 0);
+    const chart = document.getElementById('rateChart');
+    const axis = document.getElementById('rateAxis');
+    chart.innerHTML = '';
+    if (axis) axis.innerHTML = '';
+
+    if (series.length >= 2) {
+      const spot = renderChart(chart, series);
+      renderChartTip(chart, spot, (Math.round(series[series.length - 1].v) || 0).toLocaleString('ru-RU') + ' ₽', fmtTime(series[series.length - 1].at));
+      if (axis) {
+        const mid = series[Math.floor((series.length - 1) / 2)];
+        axis.innerHTML = [series[0], mid, series[series.length - 1]]
+          .map((p) => `<span>${fmtTime(p.at)}</span>`).join('');
+      }
+      const a = series[0].v;
+      const b = series[series.length - 1].v;
+      const pct = a > 0 ? ((b - a) / a) * 100 : 0;
+      const cls = Math.abs(pct) < 0.005 ? 'flat' : pct > 0 ? 'up' : 'down';
+      const ar = cls === 'flat' ? '•' : cls === 'up' ? '▲' : '▼';
+      const txt = cls === 'flat' ? 'без изменений' : `${Math.abs(pct).toFixed(2)} %`;
+      const when = spanLabel(series[series.length - 1].at - series[0].at);
+      const d = document.getElementById('heroDelta');
+      if (d) d.innerHTML = `<span class="delta ${cls}"><span class="ar">${ar}</span><span>${txt}</span><span class="when">${when}</span></span>`;
+    } else {
+      renderChart(chart, series.length ? series : [{ at: Date.now(), v: 0 }]);
+      renderChartTip(chart, { x: 0, y: (chart.clientHeight || 158) / 2 }, (Math.round(Number(rate) || 0)).toLocaleString('ru-RU') + ' ₽', 'текущий курс');
+      renderChartNote(chart, 'График курса появится, когда накопится история обновлений');
+      const d = document.getElementById('heroDelta');
+      if (d) d.innerHTML = '<span class="delta flat"><span class="ar">•</span><span>стабильный курс</span></span>';
+    }
+  }
 
   function renderHeader() {
     const s = S.settings;
@@ -145,6 +309,19 @@
     el.textContent = t || '';
   }
 
+  function goTab(tab) {
+    if (tab === S.tab) return;
+    S.tab = tab;
+    document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
+    const view = $('#view-' + tab);
+    if (view) view.classList.remove('hidden');
+    renderNav();
+    if (tab === 'history') renderHistory();
+    if (tab === 'refs') renderRefs();
+    if (tab === 'info') renderInfo();
+    if (tab === 'support') renderSupport();
+  }
+
   function renderNav() {
     const items = [
       ['exchange', 'Обмен', ICONS.swap],
@@ -154,20 +331,13 @@
       ['info', 'Инфо', ICONS.info],
     ];
     $('#nav').innerHTML = items
-      .map(([id, l, ic]) => `<button data-tab="${id}" class="${S.tab === id ? 'on' : ''}">${ic}<span>${l}</span>${id==='support' && S.support.length ? `<span class="badge">${S.support.length>99?'99+':S.support.length}</span>` : ''}</button>`)
+      .map(([id, l, ic]) => `<button data-tab="${id}" class="${S.tab === id ? 'on' : ''}">${ic}<span>${l}</span>${id === 'support' && S.support.length ? `<span class="badge">${S.support.length > 99 ? '99+' : S.support.length}</span>` : ''}</button>`)
       .join('');
     $('#nav').querySelectorAll('button').forEach((b) =>
       b.addEventListener('click', () => {
         if (S.tab === b.dataset.tab) return;
-        S.tab = b.dataset.tab;
         haptic('light');
-        document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
-        $('#view-' + S.tab).classList.remove('hidden');
-        renderNav();
-        if (S.tab === 'history') renderHistory();
-        if (S.tab === 'refs') renderRefs();
-        if (S.tab === 'info') renderInfo();
-        if (S.tab === 'support') renderSupport();
+        goTab(b.dataset.tab);
       })
     );
   }
@@ -175,26 +345,59 @@
   function renderExchange() {
     $('#view-exchange').innerHTML = `
       <div id="exForm" class="${S.order ? 'hidden' : ''}">
-        <div class="card">
-          <div class="card-title">Направление обмена</div>
-          <div class="f-label"><span>Вы отдаёте</span><span id="mmLabel"></span></div>
-          <div class="f-box"><div class="coin-ic rub">₽</div><input id="inRub" type="number" inputmode="decimal" placeholder="5 000" min="0" step="any"></div>
-          <div class="f-sep"><div class="arr">${ICONS.down}</div></div>
-          <div class="f-label"><span>Вы получаете</span><span id="cryptoLimits"></span></div>
-          <div class="seg" id="segCur">
-            <button data-c="BTC" class="${S.currency === 'BTC' ? 'on' : ''}">₿&nbsp;BTC</button>
-            <button data-c="GRAM" class="${S.currency === 'GRAM' ? 'on' : ''}">G&nbsp;GRAM</button>
+        <section class="card card-hero">
+          <div class="hero-top">
+            <div class="kicker">Курс обмена</div>
+            <div class="seg" id="segCur">
+              <button data-c="BTC" class="${S.currency === 'BTC' ? 'on' : ''}">₿ BTC</button>
+              <button data-c="GRAM" class="${S.currency === 'GRAM' ? 'on' : ''}">G GRAM</button>
+            </div>
           </div>
-          <div class="f-box" style="margin-top:10px"><div class="coin-ic" id="getIc">₿</div><input id="inCrypto" type="number" inputmode="decimal" placeholder="0.0005" min="0" step="any"></div>
+          <div class="hero-amount">
+            <div class="metric"><span id="heroRate">—</span><span class="cur">₽</span></div>
+            <div id="heroDelta"></div>
+          </div>
+          <div class="metric-sub" id="heroSub">за 1 <b>${S.currency}</b></div>
+          <div class="chart" id="rateChart"></div>
+          <div class="chart-axis" id="rateAxis"></div>
+          <div class="hero-foot">
+            <div>
+              <div class="k">Курс обновлён</div>
+              <div class="v" id="heroUpdated">—</div>
+            </div>
+            <button class="ghost-pill" id="howItWorks"><span class="q">?</span>Как это работает</button>
+          </div>
+        </section>
+
+        <div class="card">
+          <div class="card-title">Сумма обмена</div>
+          <div class="f-label"><span>Вы отдаёте</span><span id="mmLabel"></span></div>
+          <div class="field">
+            <div class="coin-ic rub">₽</div>
+            <input id="inRub" type="number" inputmode="decimal" placeholder="5 000" min="0" step="any">
+            <span class="suffix">RUB</span>
+          </div>
+          <div class="swap-row"><div class="swap">${ICONS.down}</div></div>
+          <div class="f-label"><span>Вы получаете</span><span id="cryptoLimits"></span></div>
+          <div class="field">
+            <div class="coin-ic" id="getIc">₿</div>
+            <input id="inCrypto" type="number" inputmode="decimal" placeholder="0.0005" min="0" step="any">
+            <span class="suffix" id="curSuffix">BTC</span>
+          </div>
           <div class="f-hint">Введите сумму в любом поле — второе посчитается автоматически</div>
           <div class="f-meta" id="fMeta"></div>
         </div>
+
         <div class="card">
           <div class="card-title">Кошелёк получателя</div>
-          <div class="f-box"><div class="coin-ic" id="walIc">₿</div><input id="inWallet" placeholder="Адрес BTC-кошелька" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
+          <div class="field">
+            <div class="coin-ic" id="walIc">₿</div>
+            <input id="inWallet" placeholder="Адрес BTC-кошелька" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
+          </div>
           <div class="f-err" id="fErr"></div>
         </div>
-        <button class="btn btn-primary" style="margin-top:14px" id="btnGo">${ICONS.bolt}<span>Найти реквизиты</span></button>
+
+        <button class="btn btn-primary mt" id="btnGo">${ICONS.bolt}<span>Найти реквизиты</span></button>
       </div>
       <div id="exOrder" class="${S.order ? '' : 'hidden'}"></div>
     `;
@@ -203,12 +406,15 @@
         S.currency = b.dataset.c;
         haptic('light');
         $('#segCur').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+        renderHero();
         renderFormMeta();
       })
     );
     $('#inRub').addEventListener('input', () => { S.calcFrom = 'rub'; renderFormMeta(); });
     $('#inCrypto').addEventListener('input', () => { S.calcFrom = 'crypto'; renderFormMeta(); });
     $('#btnGo').addEventListener('click', submitOrder);
+    $('#howItWorks').addEventListener('click', () => { haptic('light'); goTab('info'); });
+    renderHero();
     renderFormMeta();
     renderOrderStage();
   }
@@ -238,10 +444,12 @@
     const wi = $('#walIc');
     wi.className = 'coin-ic ' + cur.toLowerCase();
     wi.textContent = cur === 'BTC' ? '₿' : 'G';
+    const sfx = $('#curSuffix');
+    if (sfx) sfx.textContent = cur;
     $('#inWallet').placeholder = cur === 'BTC' ? 'Адрес BTC-кошелька (bc1… / 1… / 3…)' : 'Адрес GRAM-кошелька';
     $('#inCrypto').placeholder = cur === 'BTC' ? '0.0005' : '40';
     $('#fMeta').innerHTML = `
-      <div class="row"><span>Курс</span><b>1 ${cur} = ${fmtRub(rate)}</b></div>
+      <div class="row"><span>Курс обмена</span><b>1 ${cur} = ${fmtRub(rate)}</b></div>
       ${s.rateUpdatedAt ? `<div class="row"><span>Курс обновлён</span><b>${fmtDate(s.rateUpdatedAt)}</b></div>` : ''}
       <div class="row"><span>Обработкой занимается</span><b>оператор PRICELEX</b></div>`;
     const btn = $('#btnGo');
@@ -287,8 +495,8 @@
   }
 
   function chip(st) {
-    const m = STATUS[st] || { label: st, color: '#8aa0b8' };
-    return `<span class="chip" style="color:${m.color};background:${m.color}1a;border:1px solid ${m.color}55">${m.label}</span>`;
+    const m = STATUS[st] || { label: st, cls: 'cancelled' };
+    return `<span class="chip ${m.cls}">${m.label}</span>`;
   }
 
   function renderOrderStage() {
@@ -302,7 +510,7 @@
           <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🔍</div></div>
           <div class="stage-title">Ищем реквизиты для оплаты</div>
           <div class="stage-sub">Заявка <b>#${o.id}</b> передана оператору.<br>Обычно это занимает меньше минуты — не закрывайте приложение.</div>
-          <button class="btn btn-ghost" style="margin-top:18px" id="btnCancel">Отменить заявку</button>
+          <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
         </div>`;
       $('#btnCancel').addEventListener('click', async () => {
         haptic('light');
@@ -324,8 +532,8 @@
             <div class="file-name ${o.receipt ? 'ok' : ''}" id="fileName">${o.receipt ? `✅ ${esc(o.receipt.name)} (${fmtSize(o.receipt.size)})` : 'Без чека оплата не подтвердится'}</div>
           </div>
           <div class="note">Переведите <b>точную сумму</b> по реквизитам выше, прикрепите <b>чек в PDF</b>, затем нажмите кнопку ниже. После подтверждения оператор отправит ${fmtCrypto(o.crypto, o.currency)} на ваш кошелёк.</div>
-          <button class="btn btn-primary" style="margin-top:14px" id="btnPaid">${ICONS.check}<span>Я оплатил</span></button>
-          <button class="btn btn-ghost" style="margin-top:8px" id="btnCancel">Отменить заявку</button>
+          <button class="btn btn-primary mt" id="btnPaid">${ICONS.check}<span>Я оплатил</span></button>
+          <button class="btn btn-ghost" style="margin-top:9px" id="btnCancel">Отменить заявку</button>
         </div>`;
       $('#cpSum').addEventListener('click', () => copyText(String(Math.round(o.payRub || o.rub)), 'Сумма скопирована'));
       $('#cpReq').addEventListener('click', () => copyText(o.requisites || '', 'Реквизиты скопированы'));
@@ -385,10 +593,10 @@
             <div class="tx-box">
               <div class="tx-label">🔗 Транзакция в блокчейне</div>
               <a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a>
-              <button class="btn btn-ghost btn-sm" style="margin-top:10px" id="cpTx">${ICONS.copy}<span>Копировать ссылку</span></button>
+              <button class="btn btn-ghost btn-sm" style="margin-top:11px" id="cpTx">${ICONS.copy}<span>Копировать ссылку</span></button>
             </div>
-          ` : `<div class="note" style="margin-top:12px">Оператор отправит средства вручную. Ссылка на блокчейн появится здесь, если оператор её добавит.</div>`}
-          <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Новый обмен</button>
+          ` : `<div class="note">Оператор отправит средства вручную. Ссылка на блокчейн появится здесь, если оператор её добавит.</div>`}
+          <button class="btn btn-primary mt" id="btnNew">Новый обмен</button>
         </div>`;
       const cpTx = $('#cpTx');
       if (cpTx) cpTx.addEventListener('click', () => copyText(o.txUrl, 'Ссылка скопирована'));
@@ -401,7 +609,7 @@
           <div class="stage-title">${rej ? 'Заявка отклонена' : 'Заявка отменена'}</div>
           <div class="stage-sub">${rej ? 'Оператор отклонил заявку #' + o.id + '. Если это ошибка — напишите в поддержку.' : 'Вы отменили заявку #' + o.id + '.'}</div>
           ${o.txUrl ? `<div class="tx-box"><div class="tx-label">🔗 Блокчейн</div><a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a></div>` : ''}
-          <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Создать заявку</button>
+          <button class="btn btn-primary mt" id="btnNew">Создать заявку</button>
         </div>`;
       $('#btnNew').addEventListener('click', resetToForm);
     }
@@ -489,8 +697,8 @@
   function resetToForm() {
     S.order = null;
     haptic('light');
-    $('#exForm').classList.add('hidden');
-    $('#exOrder').classList.remove('hidden');
+    $('#exForm').classList.remove('hidden');
+    $('#exOrder').classList.add('hidden');
     renderOrderStage();
   }
 
@@ -500,22 +708,75 @@
       v.innerHTML = `<div class="card"><div class="empty"><div class="e-ic">🗂</div>История пока пуста.<br>Совершите первый обмен — он появится здесь.</div></div>`;
       return;
     }
-    v.innerHTML =
-      `<div class="card-title" style="padding:2px 4px 10px">История обменов</div>` +
-      S.orders
-        .map(
-          (o) => `
-        <div class="card h-item">
-          <div class="h-ic ${o.currency.toLowerCase()}">${o.currency === 'BTC' ? '₿' : 'G'}</div>
-          <div class="h-main">
-            <div class="h-top"><span>₽ → ${o.currency}</span><span>${fmtRub(o.payRub || o.rub)}</span></div>
-            <div class="h-sub"><span>#${o.id}${o.receipt ? ' 🧾' : ''}${o.txUrl ? ' 🔗' : ''} · ${fmtDate(o.createdAt)}</span>${chip(o.status)}</div>
-            <div class="h-sub" style="margin-top:2px"><span>${esc(o.wallet.slice(0, 10) + '…' + o.wallet.slice(-6))}</span><b style="color:#9fd8ff">${fmtCrypto(o.crypto, o.currency)}</b></div>
-            ${o.txUrl ? `<div class="h-sub" style="margin-top:6px"><a href="${esc(o.txUrl)}" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;word-break:break-all">🔗 ${esc(o.txUrl.slice(0,50))}…</a></div>` : ''}
+    const done = S.orders.filter((o) => o.status === 'completed');
+    const rubSum = done.reduce((acc, o) => acc + Math.round(o.payRub || o.rub), 0);
+    const byCur = done.reduce((acc, o) => {
+      acc[o.currency] = (acc[o.currency] || 0) + (Number(o.crypto) || 0);
+      return acc;
+    }, {});
+    const cryptoLine = Object.keys(byCur).map((c) => fmtCrypto(byCur[c], c)).join(' · ');
+    const series = done
+      .slice()
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((o) => ({ at: o.createdAt, v: Math.round(o.payRub || o.rub) }));
+
+    v.innerHTML = `
+      <section class="card card-hero">
+        <div class="hero-top">
+          <div class="kicker">Объём обменов</div>
+          <div class="seg" id="histSeg">
+            <button data-h="all" class="on">Все</button>
+            <button data-h="completed">Завершённые</button>
           </div>
-        </div>`
-        )
-        .join('');
+        </div>
+        <div class="hero-amount">
+          <div class="metric">${Number(rubSum).toLocaleString('ru-RU')}<span class="cur">₽</span></div>
+          <div><span class="delta ${done.length ? 'up' : 'flat'}"><span class="ar">${done.length ? '✓' : '•'}</span><span>${done.length} ${done.length === 1 ? 'обмен' : done.length < 5 ? 'обмена' : 'обменов'}</span></span></div>
+        </div>
+        <div class="metric-sub">${cryptoLine ? `${cryptoLine} · всего операций ${S.orders.length}` : `всего операций ${S.orders.length}`}</div>
+        ${done.length >= 3 ? `<div class="chart" id="volChart"></div><div class="chart-axis" id="volAxis"></div>` : ''}
+      </section>
+      <div class="card-title" style="padding:16px 4px 11px">История обменов</div>
+      <div id="histList">${historyItems(S.orders)}</div>`;
+
+    const volChart = $('#volChart');
+    if (volChart && series.length >= 3) {
+      const spot = renderChart(volChart, series);
+      renderChartTip(volChart, spot, fmtRub(series[series.length - 1].v), fmtDate(series[series.length - 1].at));
+      const axis = $('#volAxis');
+      if (axis) {
+        axis.innerHTML = [series[0], series[series.length - 1]]
+          .map((p) => `<span>${fmtDate(p.at)}</span>`).join('');
+      }
+    }
+    $('#histSeg').querySelectorAll('button').forEach((b) =>
+      b.addEventListener('click', () => {
+        haptic('light');
+        $('#histSeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+        $('#histList').innerHTML = historyItems(b.dataset.h === 'all' ? S.orders : S.orders.filter((o) => o.status === 'completed'));
+      })
+    );
+  }
+
+  function historyItems(list) {
+    if (!list.length) return '<div class="card"><div class="empty">В этой подборке пока нет обменов.</div></div>';
+    return list
+      .map(
+        (o) => `
+      <div class="card h-item">
+        <div class="h-ic ${o.currency.toLowerCase()}">${o.currency === 'BTC' ? '₿' : 'G'}</div>
+        <div class="h-main">
+          <div class="h-top"><span>₽ → ${o.currency}</span><span class="sum">${fmtRub(o.payRub || o.rub)}</span></div>
+          <div class="h-sub"><span>#${o.id}${o.receipt ? ' 🧾' : ''} · ${fmtDate(o.createdAt)}</span><span class="crypto">${fmtCrypto(o.crypto, o.currency)}</span></div>
+          <div class="h-sub">
+            <span>${esc(o.wallet.slice(0, 10) + '…' + o.wallet.slice(-6))}</span>
+            ${chip(o.status)}
+          </div>
+          ${o.txUrl ? `<div class="h-sub"><a href="${esc(o.txUrl)}" target="_blank" rel="noopener">🔗 ${esc(o.txUrl.slice(0, 46))}…</a></div>` : ''}
+        </div>
+      </div>`
+      )
+      .join('');
   }
 
   function renderRefs() {
@@ -528,7 +789,7 @@
         ${
           link
             ? `<div class="ref-link" id="refLink">${esc(link)}</div>
-               <button class="btn btn-primary" style="margin-top:10px" id="cpRef">${ICONS.copy}<span>Скопировать ссылку</span></button>`
+               <button class="btn btn-primary" style="margin-top:11px" id="cpRef">${ICONS.copy}<span>Скопировать ссылку</span></button>`
             : `<div class="empty">Реферальная ссылка появится после подключения бота.</div>`
         }
         <div class="ref-stats">
@@ -559,6 +820,15 @@
         </div>
       </div>
       <div class="card">
+        <div class="card-title">Как это работает</div>
+        <div class="steps">
+          <div class="step"><div class="n">1</div>Выберите валюту и введите сумму — калькулятор сразу покажет, сколько получите.</div>
+          <div class="step"><div class="n">2</div>Укажите адрес кошелька и нажмите «Найти реквизиты»: оператор пришлёт точную сумму к оплате.</div>
+          <div class="step"><div class="n">3</div>Переведите сумму, прикрепите PDF-чек и нажмите «Я оплатил».</div>
+          <div class="step"><div class="n">4</div>После подтверждения средства уходят на ваш кошелёк — ссылку на транзакцию увидите в заявке.</div>
+        </div>
+      </div>
+      <div class="card">
         <div class="card-title">Связь с нами</div>
         <div class="contacts">
           <a class="contact" href="${esc(opLink)}" target="_blank" rel="noopener"><span class="ci">🧩</span><span>Оператор<small>${esc(s.operator)}</small></span></a>
@@ -568,18 +838,12 @@
       </div>
       <div class="card">
         <div class="card-title">Поддержка в приложении</div>
-        <div class="about" style="font-size:12.5px;line-height:1.6">Напишите нам прямо здесь — отвечаем в реальном времени. Перейдите во вкладку <b>Чат</b> в нижнем меню.</div>
-        <button class="btn btn-ghost" style="margin-top:10px" id="goSupport">${ICONS.chat}<span>Открыть чат поддержки</span></button>
+        <div class="about" style="font-size:12.5px">Напишите нам прямо здесь — отвечаем в реальном времени. Перейдите во вкладку <b>Чат</b> в нижнем меню.</div>
+        <button class="btn btn-ghost" style="margin-top:12px" id="goSupport">${ICONS.chat}<span>Открыть чат поддержки</span></button>
       </div>
       <div class="card"><div class="about" style="text-align:center;color:var(--mut);font-size:11.5px">PRICELEX — быстро. Надёжно. Выгодно. ✦</div></div>`;
     const go = $('#goSupport');
-    if (go) go.addEventListener('click', () => {
-      S.tab = 'support';
-      document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
-      $('#view-support').classList.remove('hidden');
-      renderNav();
-      renderSupport();
-    });
+    if (go) go.addEventListener('click', () => { haptic('light'); goTab('support'); });
   }
 
   /* ---------- поддержка чат ---------- */
@@ -588,7 +852,7 @@
     v.innerHTML = `
       <div class="card">
         <div class="card-title">Чат поддержки</div>
-        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:10px">Задайте вопрос оператору — отвечаем в реальном времени. Обычно отвечаем за 1–3 минуты.</div>
+        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:12px">Задайте вопрос оператору — отвечаем в реальном времени. Обычно отвечаем за 1–3 минуты.</div>
         <div class="chat-box" id="chatBox">
           <div class="chat-empty" id="chatEmpty"><div class="e-ic">💬</div>Напишите сообщение — мы на связи 24/7</div>
           <div class="chat-list" id="chatList"></div>
@@ -597,7 +861,7 @@
           <textarea id="chatInput" placeholder="Напишите сообщение..." rows="1" maxlength="2000"></textarea>
           <button class="btn btn-primary btn-sm" id="btnSendChat">${ICONS.send}</button>
         </div>
-        <div class="f-hint" style="margin-top:8px">Поддержка отвечает в этом чате и в Telegram. Не делитесь приватными ключами.</div>
+        <div class="f-hint" style="margin-top:9px">Поддержка отвечает в этом чате и в Telegram. Не делитесь приватными ключами.</div>
       </div>
     `;
     const input = $('#chatInput');
@@ -629,7 +893,7 @@
     if (empty) empty.style.display = 'none';
     list.innerHTML = S.support.map((m) => {
       const isMe = m.from === 'user';
-      return `<div class="msg ${isMe ? 'me' : 'them'}"><div class="msg-bubble">${esc(m.text).replace(/\n/g,'<br>')}</div><div class="msg-time">${fmtDate(m.at)} · ${isMe ? 'Вы' : 'Поддержка'}</div></div>`;
+      return `<div class="msg ${isMe ? 'me' : 'them'}"><div class="msg-bubble">${esc(m.text).replace(/\n/g, '<br>')}</div><div class="msg-time">${fmtDate(m.at)} · ${isMe ? 'Вы' : 'Поддержка'}</div></div>`;
     }).join('');
     const box = $('#chatBox');
     if (box) box.scrollTop = box.scrollHeight;
@@ -718,6 +982,17 @@
     $('#syncStatus').classList.toggle('hidden', !message);
   }
 
+  /* ---------- история курса ---------- */
+  async function loadRateHistory() {
+    try {
+      const r = await api('/api/rates/history', { query: { hours: 24 } });
+      S.history.points = Array.isArray(r.points) ? r.points : [];
+      if (S.tab === 'exchange') renderHero();
+    } catch (e) {
+      S.history.points = [];
+    }
+  }
+
   async function pollOrder() {
     const current = S.order;
     if (!current || TERMINAL.includes(current.status)) {
@@ -755,12 +1030,15 @@
   async function pollSettings() {
     const s = await api('/api/settings');
     if (JSON.stringify(s) !== JSON.stringify(S.settings)) {
+      const rateChanged = !S.settings || S.settings.rateUpdatedAt !== s.rateUpdatedAt;
       S.settings = s;
       renderHeader();
       renderAnnounce();
       renderFormMeta();
+      if (S.tab === 'exchange') renderHero();
       if (S.tab === 'refs') renderRefs();
       if (S.tab === 'info') renderInfo();
+      if (rateChanged) loadRateHistory();
     }
   }
 
@@ -797,6 +1075,7 @@
     window.addEventListener('online', refresh);
     window.addEventListener('pageshow', refresh);
     if (tg && tg.onEvent) tg.onEvent('activated', refresh);
+    window.addEventListener('resize', () => { if (S.tab === 'exchange') renderHero(); if (S.tab === 'history') renderHistory(); });
   }
 
   (async () => {
@@ -814,8 +1093,10 @@
         const sup = await api('/api/support/messages');
         S.support = sup.messages || [];
       } catch {}
+      loadRateHistory();
     } catch (e) {
       document.getElementById('announce').textContent = '⚠️ Не удалось подключиться к серверу. Обновите страницу.';
+      document.getElementById('announce').classList.remove('hidden');
       return;
     }
     renderHeader();

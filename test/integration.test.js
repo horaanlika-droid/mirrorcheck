@@ -309,3 +309,41 @@ test('reverse calculator rejects out-of-range and invalid crypto amounts', async
   assert.equal(order.crypto, 5000 / s.rateGRAM);
   await bus.emit('order_event', { order: store.getOrder(order.id), type: 'new' });
 });
+
+test('rate history endpoint serves real observations for the Web App chart', async () => {
+  const port = server.address().port;
+  const base = Date.now() - 6 * 3600 * 1000;
+  store.mutate((db) => { db.rateHistory = []; });
+  // Мусор и неполные точки не попадают в историю.
+  assert.equal(store.pushRatePoint({ btc: 0, gram: 0 }), null);
+  assert.equal(store.pushRatePoint({ btc: 500, gram: NaN }), null);
+  for (let i = 0; i < 12; i += 1) {
+    store.pushRatePoint({ btc: 10_000_000 + i * 1000, gram: 120 + i, at: base + i * 1800_000 });
+  }
+  // Дубль в пределах 30 секунд не создаёт новую точку.
+  const before = store.get().rateHistory.length;
+  store.pushRatePoint({ btc: 10_000_000 + 11_000, gram: 131, at: base + 11 * 1800_000 + 5000 });
+  assert.equal(store.get().rateHistory.length, before);
+
+  const r = await fetch(`http://127.0.0.1:${port}/api/rates/history?hours=24`);
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('cache-control'), /no-store/);
+  const { points, hours } = await r.json();
+  assert.equal(hours, 24);
+  assert.equal(points.length, 12);
+  assert.deepEqual(points[0], { at: base, btc: 10_000_000, gram: 120 });
+  assert.equal(points[points.length - 1].btc, 10_000_000 + 11_000);
+  assert.equal(points[0].btc, 10_000_000);
+
+  // Окно ограничивает историю по времени.
+  const narrow = await (await fetch(`http://127.0.0.1:${port}/api/rates/history?hours=1`)).json();
+  assert.ok(narrow.points.every((p) => p.at >= Date.now() - 3600_000));
+
+  // Прореживание сохраняет последнюю точку — по ней строится маркер «сейчас».
+  store.mutate((db) => {
+    db.rateHistory = Array.from({ length: 400 }, (_, i) => ({ at: base + i * 60_000, btc: 9_000_000 + i, gram: 100 + i }));
+  });
+  const dense = await (await fetch(`http://127.0.0.1:${port}/api/rates/history?hours=24`)).json();
+  assert.ok(dense.points.length <= 181, `ожидалось <= 181 точек, получено ${dense.points.length}`);
+  assert.equal(dense.points[dense.points.length - 1].btc, 9_000_399);
+});
