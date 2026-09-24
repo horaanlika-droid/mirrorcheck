@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#ffffff" />
+    <title>Зеркало</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="mirror-app">
+      <header class="mirror-banner">
+        <p>вот так работает зеркало</p>
+      </header>
+
+      <main class="mirror-surface" aria-label="Зеркало">
+        <div class="mirror-fallback" aria-hidden="true">
+          <span class="mirror-fallback__ring"></span>
+        </div>
+
+        <video
+          class="mirror-camera"
+          id="mirrorCamera"
+          autoplay
+          muted
+          playsinline
+          aria-label="Отражение с камеры"
+        ></video>
+
+        <p class="camera-message" id="cameraMessage" role="status"></p>
+        <button class="camera-retry" id="cameraRetry" type="button" hidden>
+          Включить камеру
+        </button>
+      </main>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
