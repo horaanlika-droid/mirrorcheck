@@ -193,7 +193,9 @@ test('reference stylesheet is applied after the legacy component sheet', () => {
   const reference = html.indexOf('href="/reference.css"');
   assert.ok(base >= 0 && reference > base);
   const css = fs.readFileSync(path.join(__dirname, '../public/reference.css'), 'utf8');
-  assert.match(css, /--bg-1:\s*#091522/i);
+  // Палитра референса IMG_1217: графитовая база и шампанский акцент.
+  assert.match(css, /--bg-1:\s*#080d11/i);
+  assert.match(css, /--sand-3:\s*#c9a87e/i);
   assert.match(css, /grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/);
 });
 
