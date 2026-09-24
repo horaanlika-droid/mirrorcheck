@@ -86,6 +86,8 @@ async function app(t, { orders = completed, points: historyPoints = points, revi
     }
     if (pathname === '/api/reviews') return json({ reviews, stats: { count: reviews.length, avg: 4.5 } });
     if (pathname.startsWith('/api/order/')) return json({ order: orders[0] });
+    if (pathname === '/api/captcha') return json({ id: 'cap1', question: '3 + 4 = ?' });
+    if (pathname === '/api/broker/status') return json({ application: null });
     throw new Error('Unexpected request: ' + pathname);
   };
   window.eval(script);
@@ -168,7 +170,7 @@ test('empty history keeps a friendly state and does not render a chart', async (
 test('navigation has a reviews tab and the help tab uses a clean question-mark icon', async (t) => {
   const a = await app(t);
   const tabs = [...a.document.querySelectorAll('.nav button')].map((b) => b.dataset.tab);
-  assert.deepEqual(tabs, ['exchange', 'history', 'reviews', 'refs', 'support', 'info']);
+  assert.deepEqual(tabs, ['exchange', 'history', 'reviews', 'refs', 'broker', 'support', 'info']);
   const help = a.document.querySelector('.nav button[data-tab="support"] svg');
   assert.ok(help.querySelector('path') && help.querySelector('circle'), 'дуга вопросительного знака + точка');
   assert.equal(help.querySelectorAll('path').length, 1);
@@ -228,7 +230,7 @@ test('info tab carries the founder speech word for word and never mentions a fee
     'PRICELEX — это не просто обменник.',
     'Это экосистема, где каждый сотрудник прошёл непростой путь, но на этом пути он овладевал навыками в мире криптовалют.',
     'И теперь мы экономим ваше время и нервы.',
-    'Мы не обменник. Мы агентство брокеров, которые в реальном времени находят лучшие варианты на рынке.',
+    'Мы не обменник. Мы агентство брокеров — проверенная и быстрая команда профессионалов.',
     'Да, иногда приходится подождать.',
     'Но мы знаем, кто мы. Мы отвечаем за качество репутацией.',
   ]);

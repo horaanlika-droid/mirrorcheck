@@ -68,8 +68,19 @@ async function api(route, { id = 999, method = 'GET', body = {} } = {}) {
   const url = `http://127.0.0.1:${server.address().port}${route}?initData=${encodeURIComponent(signed(id))}`;
   return fetch(url, { method, ...(method === 'POST' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}) });
 }
+// Математическая капча защищает формы: решаем пример из вопроса.
+async function captchaFields(id = 999) {
+  const r = await api('/api/captcha', { id });
+  assert.equal(r.status, 200);
+  const cap = await r.json();
+  const m = cap.question.match(/^(\d+)\s*([+−×])\s*(\d+)/);
+  assert.ok(m, 'captcha question parse: ' + cap.question);
+  const [, a, op, b] = m;
+  const answer = op === '+' ? Number(a) + Number(b) : op === '−' ? Number(a) - Number(b) : Number(a) * Number(b);
+  return { captchaId: cap.id, captchaAnswer: answer };
+}
 async function newOrder() {
-  const r = await api('/api/orders', { method: 'POST', body: { rub: 5000, currency: 'BTC', wallet: 'bc1' + 'a'.repeat(30) } });
+  const r = await api('/api/orders', { method: 'POST', body: { rub: 5000, currency: 'BTC', wallet: 'bc1' + 'a'.repeat(30), ...(await captchaFields()) } });
   assert.equal(r.status, 200);
   const { order } = await r.json();
   // Дожидаемся очереди карточек (HTTP намеренно не ждёт Telegram).
@@ -275,7 +286,7 @@ test('paid notifications reach every admin; stale amount cannot undo payment; co
 test('reverse calculator: crypto amount converts to rubles to pay; fee stays hidden', async () => {
   const s = store.get().settings;
   const wallet = 'bc1' + 'a'.repeat(30);
-  const r = await api('/api/orders', { method: 'POST', body: { cryptoAmount: 0.001, currency: 'BTC', wallet } });
+  const r = await api('/api/orders', { method: 'POST', body: { cryptoAmount: 0.001, currency: 'BTC', wallet, ...(await captchaFields()) } });
   assert.equal(r.status, 200);
   const { order } = await r.json();
   assert.equal(order.crypto, 0.001);
@@ -294,16 +305,16 @@ test('reverse calculator: crypto amount converts to rubles to pay; fee stays hid
 test('reverse calculator rejects out-of-range and invalid crypto amounts', async () => {
   const s = store.get().settings;
   const wallet = 'gram1' + 'a'.repeat(30);
-  const tiny = await api('/api/orders', { method: 'POST', body: { cryptoAmount: s.minRub / s.rateGRAM / 2, currency: 'GRAM', wallet } });
+  const tiny = await api('/api/orders', { method: 'POST', body: { cryptoAmount: s.minRub / s.rateGRAM / 2, currency: 'GRAM', wallet, ...(await captchaFields()) } });
   assert.equal(tiny.status, 400);
-  const huge = await api('/api/orders', { method: 'POST', body: { cryptoAmount: s.maxRub / s.rateGRAM * 2, currency: 'GRAM', wallet } });
+  const huge = await api('/api/orders', { method: 'POST', body: { cryptoAmount: s.maxRub / s.rateGRAM * 2, currency: 'GRAM', wallet, ...(await captchaFields()) } });
   assert.equal(huge.status, 400);
   for (const bad of [0, -1, 'мусор', '', null]) {
-    const res = await api('/api/orders', { method: 'POST', body: { cryptoAmount: bad, currency: 'GRAM', wallet } });
+    const res = await api('/api/orders', { method: 'POST', body: { cryptoAmount: bad, currency: 'GRAM', wallet, ...(await captchaFields()) } });
     assert.equal(res.status, 400);
   }
   // Старый формат (только рубли) продолжает работать.
-  const legacy = await api('/api/orders', { method: 'POST', body: { rub: 5000, currency: 'GRAM', wallet } });
+  const legacy = await api('/api/orders', { method: 'POST', body: { rub: 5000, currency: 'GRAM', wallet, ...(await captchaFields()) } });
   assert.equal(legacy.status, 200);
   const { order } = await legacy.json();
   assert.equal(order.crypto, 5000 / s.rateGRAM);
@@ -428,10 +439,10 @@ test('admin adds a review in the bot and edits name, rating, text, date and time
   assert.equal(store.getReview(r.id), null);
 });
 
-test('public address is never shown; support contact defaults to @stonym0ntana', async () => {
+test('public address is never shown; support contact defaults to empty (чат в приложении)', async () => {
   const s = await (await fetch(`http://127.0.0.1:${server.address().port}/api/settings`)).json();
   assert.ok(!('publicUrl' in s));
-  assert.equal(s.operator, '@stonym0ntana');
+  assert.equal(s.operator, '');
   calls = [];
   await bus.emit('public_url', 'https://secret.example');
   await click(111, 'm:links');
