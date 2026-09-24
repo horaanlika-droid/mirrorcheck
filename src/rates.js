@@ -1,4 +1,4 @@
-// Официальные курсы BTC/LTC к рублю: автообновление с публичных бирж.
+// Официальные курсы BTC/GRAM к рублю: автообновление с публичных бирж.
 // Итоговый курс для клиентов = официальный × (1 + feePercent/100).
 // Комиссию задаёт оператор в админ-панели, официальный курс трогать не нужно.
 const store = require('./store');
@@ -29,30 +29,32 @@ const num = (v) => {
 // CoinGecko: прямые пары к рублю.
 async function fromCoinGecko() {
   const d = await fetchJson(
-    'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,litecoin&vs_currencies=rub'
+    'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,gram&vs_currencies=rub'
   );
-  return { btc: num(d?.bitcoin?.rub), ltc: num(d?.litecoin?.rub) };
+  return { btc: num(d?.bitcoin?.rub), gram: num(d?.gram?.rub) };
 }
 
-// Coinbase: кросс-курсы BTC→RUB и LTC→RUB.
+// Coinbase: кросс-курсы BTC→RUB и GRAM→RUB.
 async function fromCoinbase() {
-  const [btc, ltc] = await Promise.all([
+  const [btc, gram] = await Promise.all([
     fetchJson('https://api.coinbase.com/v2/exchange-rates?currency=BTC'),
-    fetchJson('https://api.coinbase.com/v2/exchange-rates?currency=LTC'),
+    fetchJson('https://api.coinbase.com/v2/exchange-rates?currency=GRAM'),
   ]);
-  return { btc: num(btc?.data?.rates?.RUB), ltc: num(ltc?.data?.rates?.RUB) };
+  return { btc: num(btc?.data?.rates?.RUB), gram: num(gram?.data?.rates?.RUB) };
 }
 
 // Kraken (USD-пары) × курс ЦБ (USD→RUB).
 async function fromKrakenCbr() {
   const [ticker, cbr] = await Promise.all([
-    fetchJson('https://api.kraken.com/0/public/Ticker?pair=XBTUSD,LTCUSD'),
+    fetchJson('https://api.kraken.com/0/public/Ticker?pair=XBTUSD,GRAMUSD'),
     fetchJson('https://www.cbr-xml-daily.ru/daily_json.js'),
   ]);
   const usd = num(cbr?.Valute?.USD?.Value);
   const btcUsd = num(ticker?.result?.XXBTZUSD?.c?.[0]);
-  const ltcUsd = num(ticker?.result?.XLTCZUSD?.c?.[0]);
-  return { btc: btcUsd * usd, ltc: ltcUsd * usd };
+  const gramUsd = num(
+    ticker?.result?.GRAMUSD?.c?.[0] || ticker?.result?.XGRAMZUSD?.c?.[0]
+  );
+  return { btc: btcUsd * usd, gram: gramUsd * usd };
 }
 
 const SOURCES = [
@@ -62,10 +64,12 @@ const SOURCES = [
 ];
 
 // Грубая проверка правдоподобности, чтобы мусор из API не попал в курсы.
-function sane({ btc, ltc }) {
+// У GRAM другой порядок цены, чем у LTC, поэтому диапазон пары шире.
+function sane({ btc, gram }) {
+  const ratio = btc / gram;
   return (
-    Number.isFinite(btc) && Number.isFinite(ltc) &&
-    btc > 10000 && ltc > 100 && btc / ltc > 50 && btc / ltc < 50000
+    Number.isFinite(btc) && Number.isFinite(gram) &&
+    btc > 10000 && gram > 0.01 && ratio > 1000 && ratio < 10000000
   );
 }
 
@@ -74,7 +78,7 @@ async function fetchOfficial() {
   for (const [name, fn] of SOURCES) {
     try {
       const r = await fn();
-      if (sane(r)) return { btc: Math.round(r.btc), ltc: Math.round(r.ltc), source: name };
+      if (sane(r)) return { btc: Math.round(r.btc), gram: Math.round(r.gram), source: name };
       errors.push(`${name}: неправдоподобные значения`);
     } catch (e) {
       errors.push(`${name}: ${e.message}`);
@@ -89,9 +93,9 @@ function applyRates(official) {
   return store.mutate((db) => {
     const fee = Number(db.settings.feePercent) || 0;
     db.settings.baseRateBTC = Math.round(official.btc);
-    db.settings.baseRateLTC = Math.round(official.ltc);
+    db.settings.baseRateGRAM = Math.round(official.gram);
     db.settings.rateBTC = applyFee(official.btc, fee);
-    db.settings.rateLTC = applyFee(official.ltc, fee);
+    db.settings.rateGRAM = applyFee(official.gram, fee);
     db.settings.rateUpdatedAt = Date.now();
     db.settings.rateSource = official.source;
     return db.settings;
@@ -104,7 +108,7 @@ function recomputeWithFee() {
     const s = db.settings;
     const fee = Number(s.feePercent) || 0;
     if (s.baseRateBTC) s.rateBTC = applyFee(s.baseRateBTC, fee);
-    if (s.baseRateLTC) s.rateLTC = applyFee(s.baseRateLTC, fee);
+    if (s.baseRateGRAM) s.rateGRAM = applyFee(s.baseRateGRAM, fee);
     return s;
   });
 }

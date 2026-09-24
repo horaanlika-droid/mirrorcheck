@@ -281,7 +281,7 @@ async function mainMenu(ctx, edit = false) {
   const text =
     `🌌 <b>PRICELEX | Official</b> — пульт оператора\n` +
     `${s.online ? '🟢 Обменник <b>ОНЛАЙН</b>' : '🔴 Обменник <b>ОФФЛАЙН</b>'}\n` +
-    `₿ ${fmtRub(s.rateBTC)} · Ł ${fmtRub(s.rateLTC)} (комиссия ${s.feePercent ?? 0}%)\n` +
+    `₿ ${fmtRub(s.rateBTC)} · G ${fmtRub(s.rateGRAM)} (комиссия ${s.feePercent ?? 0}%)\n` +
     `Официальный курс ${s.rateUpdatedAt ? 'от ' + fmtDate(s.rateUpdatedAt) + ` (${esc(s.rateSource || '?')})` : 'ещё не подтянут — действуют стартовые курсы'}\n` +
     `Активных заявок: ${active} · 💬 Чатов: ${supportCount}`;
   if (edit) await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
@@ -329,14 +329,14 @@ function settingsKb(s) {
 
 function settingsText(s) {
   const base = s.baseRateBTC
-    ? `₿ ${fmtRub(s.baseRateBTC)} · Ł ${fmtRub(s.baseRateLTC)}`
+    ? `₿ ${fmtRub(s.baseRateBTC)} · G ${fmtRub(s.baseRateGRAM)}`
     : 'ещё не подтянут';
   return (
     `⚙️ <b>Настройки</b> (применяются мгновенно)\n\n` +
     `📊 Официальный курс (авто): <b>${base}</b>\n` +
     (s.rateUpdatedAt ? `Обновлён: ${fmtDate(s.rateUpdatedAt)} (${esc(s.rateSource || '?')})\n` : '') +
     `💰 Комиссия: <b>${s.feePercent ?? 0}%</b> поверх официального\n` +
-    `💵 Курс для клиентов: <b>₿ ${fmtRub(s.rateBTC)} · Ł ${fmtRub(s.rateLTC)}</b>\n` +
+    `💵 Курс для клиентов: <b>₿ ${fmtRub(s.rateBTC)} · G ${fmtRub(s.rateGRAM)}</b>\n` +
     `Лимиты: ${fmtRub(s.minRub)} — ${fmtRub(s.maxRub)}\n` +
     `🎁 Реферальный процент: <b>${s.refPercent}%</b>\n` +
     `Статус: ${s.online ? '🟢 Онлайн' : '🔴 Оффлайн'}\n` +
@@ -403,7 +403,7 @@ async function requisitesPrompt(ctx, o, payRub = o.rub) {
 async function txPrompt(ctx, o) {
   flows.set(ctx.from.id, { type: 'tx', orderId: o.id, version: o.version || 0 });
   return ctx.reply(
-    `🔗 Заявка #${o.id} — отправьте ссылку на транзакцию в блокчейне (например https://blockchair.com/bitcoin/transaction/… или https://blockchair.com/litecoin/transaction/…).\n\nСсылка появится у клиента в завершённой заявке. Это опционально — можно оставить пустым, отправив /cancel.\n\nТекущая: ${o.txUrl ? esc(o.txUrl) : '— нет —'}\n/cancel — отмена`,
+    `🔗 Заявка #${o.id} — отправьте ссылку на транзакцию в блокчейне (например https://blockchair.com/bitcoin/transaction/… или https://blockchair.com/gram/transaction/…).\n\nСсылка появится у клиента в завершённой заявке. Это опционально — можно оставить пустым, отправив /cancel.\n\nТекущая: ${o.txUrl ? esc(o.txUrl) : '— нет —'}\n/cancel — отмена`,
     { parse_mode: 'HTML' }
   );
 }
@@ -567,7 +567,7 @@ function register() {
     if (!isAdmin(ctx)) {
       const url = store.get().settings.publicUrl;
       if (url) {
-        return ctx.reply('🌌 PRICELEX — обмен BTC и LTC', {
+        return ctx.reply('🌌 PRICELEX — обмен BTC и GRAM', {
           reply_markup: new InlineKeyboard().webApp('Открыть обменник', url),
         });
       }

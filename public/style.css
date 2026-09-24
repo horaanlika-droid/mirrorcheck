@@ -114,7 +114,7 @@ body {
 }
 .coin-ic.rub { background: linear-gradient(140deg, #3d7dff, #00c8ff); color: #fff; }
 .coin-ic.btc { background: linear-gradient(140deg, #ffab3d, #f7931a); color: #fff; }
-.coin-ic.ltc { background: linear-gradient(140deg, #d7dee8, #8fa1b8); color: #fff; }
+.coin-ic.gram { background: linear-gradient(140deg, #d7dee8, #8fa1b8); color: #fff; }
 
 .f-sep { display: flex; align-items: center; justify-content: center; padding: 9px 0; }
 .f-sep .arr {
@@ -239,7 +239,7 @@ body {
 .h-item + .h-item { margin-top: 10px; }
 .h-ic { width: 40px; height: 40px; border-radius: 13px; flex: none; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; }
 .h-ic.btc { background: rgba(247, 147, 26, 0.15); color: #f7931a; border: 1px solid rgba(247, 147, 26, 0.3); }
-.h-ic.ltc { background: rgba(190, 205, 225, 0.12); color: #c3d2e6; border: 1px solid rgba(190, 205, 225, 0.28); }
+.h-ic.gram { background: rgba(190, 205, 225, 0.12); color: #c3d2e6; border: 1px solid rgba(190, 205, 225, 0.28); }
 .h-main { flex: 1; min-width: 0; }
 .h-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; font-weight: 800; }
 .h-sub { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; font-size: 11.5px; color: var(--mut); }
@@ -549,7 +549,8 @@ body {
 
 .coin-ic.rub { background: linear-gradient(145deg, #8cc6ed, #4286bc); box-shadow: inset 0 1px 1px rgba(255,255,255,.5), 0 5px 10px rgba(66,134,188,.2); }
 .coin-ic.btc { background: linear-gradient(145deg, #f8c96f, #bd7b23); box-shadow: inset 0 1px 1px rgba(255,255,255,.5), 0 5px 10px rgba(189,123,35,.2); }
-.coin-ic.ltc { background: linear-gradient(145deg, #edf4fa, #96aabb); color: #fff; box-shadow: inset 0 1px 1px rgba(255,255,255,.78), 0 5px 10px rgba(111,138,160,.2); }
+.coin-ic.gram { background: linear-gradient(145deg, #a8e7cf, #3ca184); color: #fff; box-shadow: inset 0 1px 1px rgba(255,255,255,.78), 0 5px 10px rgba(60,161,132,.24); }
+.h-ic.gram { background: rgba(82, 177, 145, 0.15); color: #2f9674; border: 1px solid rgba(82, 177, 145, 0.3); }
 
 .f-sep .arr {
   background: linear-gradient(145deg, rgba(255,255,255,.8), rgba(206,228,241,.58));

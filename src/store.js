@@ -9,9 +9,9 @@ const defaults = () => ({
   supportSeq: 1,
   settings: {
     rateBTC: 10250000, // ₽ за 1 BTC (итоговый, с комиссией)
-    rateLTC: 9400, // ₽ за 1 LTC (итоговый, с комиссией)
+    rateGRAM: 125, // ₽ за 1 GRAM (стартовый курс, итоговый с комиссией)
     baseRateBTC: null, // официальный курс BTC без комиссии (авто)
-    baseRateLTC: null, // официальный курс LTC без комиссии (авто)
+    baseRateGRAM: null, // официальный курс GRAM без комиссии (авто)
     feePercent: 2, // комиссия обменника, % поверх официального курса
     rateUpdatedAt: null,
     rateSource: 'manual',
@@ -19,7 +19,7 @@ const defaults = () => ({
     maxRub: 300000,
     online: true,
     announcement:
-      '🚀 PRICELEX официально начинает работу! Принимаем заявки на обмен BTC и LTC. Минимальная сумма обмена — от 3 000 ₽.',
+      '🚀 PRICELEX официально начинает работу! Принимаем заявки на обмен BTC и GRAM. Минимальная сумма обмена — от 3 000 ₽.',
     refPercent: 1,
     operator: '@pricelex_operator',
     channel: 'https://t.me/pricelex_channel',
@@ -44,7 +44,19 @@ function load() {
       const raw = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
       db = Object.assign(defaults(), raw);
       db.settings = Object.assign(defaults().settings, raw.settings || {});
-      // Миграция старых баз
+      // Миграция старых баз и переименование второй валюты LTC → GRAM.
+      if (raw.settings?.rateGRAM == null && raw.settings?.rateLTC != null) {
+        db.settings.rateGRAM = raw.settings.rateLTC;
+      }
+      if (raw.settings?.baseRateGRAM == null && raw.settings?.baseRateLTC != null) {
+        db.settings.baseRateGRAM = raw.settings.baseRateLTC;
+      }
+      delete db.settings.rateLTC;
+      delete db.settings.baseRateLTC;
+      // Старые активные заявки продолжают отображаться уже под новым тикером.
+      for (const o of db.orders || []) {
+        if (o.currency === 'LTC') o.currency = 'GRAM';
+      }
       if (!Array.isArray(db.support)) db.support = [];
       if (!Number.isFinite(db.supportSeq)) db.supportSeq = (db.support?.length || 0) + 1;
       for (const o of db.orders || []) {
@@ -88,7 +100,7 @@ function publicSettings() {
   // feePercent и базовые курсы не светим — это видит только оператор в боте.
   return {
     rateBTC: s.rateBTC,
-    rateLTC: s.rateLTC,
+    rateGRAM: s.rateGRAM,
     rateUpdatedAt: s.rateUpdatedAt,
     minRub: s.minRub,
     maxRub: s.maxRub,

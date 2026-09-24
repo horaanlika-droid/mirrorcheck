@@ -7,7 +7,7 @@ const { JSDOM } = require('jsdom');
 const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
 const script = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
 const settings = {
-  online: true, rateBTC: 10000000, rateLTC: 9000, rateUpdatedAt: 1,
+  online: true, rateBTC: 10000000, rateGRAM: 125, rateUpdatedAt: 1,
   minRub: 3000, maxRub: 300000,
   announcement: 'PRICELEX', refPercent: 1, operator: '@test', channel: 'https://t.me/test', chat: 'https://t.me/test',
 };
@@ -171,7 +171,7 @@ test('calculator converts both ways and never mentions any fee', async (t) => {
   // Смена валюты пересчитывает пассивное поле, активное не трогает.
   a.document.querySelectorAll('#segCur button')[1].click();
   assert.equal(crypto.value, '0.001');
-  assert.equal(rub.value, String(Math.ceil(0.001 * settings.rateLTC - 1e-6)));
-  assert.match(a.document.querySelector('#cryptoLimits').textContent, /LTC/);
+  assert.equal(rub.value, String(Math.ceil(0.001 * settings.rateGRAM - 1e-6)));
+  assert.match(a.document.querySelector('#cryptoLimits').textContent, /GRAM/);
   assert.ok(!/комисси/i.test(a.document.querySelector('#view-exchange').textContent));
 });

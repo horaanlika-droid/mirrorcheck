@@ -1,4 +1,4 @@
-/* PRICELEX | Official — клиентское Web App (BTC & LTC обмен + поддержка + tx) */
+/* PRICELEX | Official — клиентское Web App (BTC & GRAM обмен + поддержка + tx) */
 (() => {
   'use strict';
 
@@ -183,7 +183,7 @@
           <div class="f-label"><span>Вы получаете</span><span id="cryptoLimits"></span></div>
           <div class="seg" id="segCur">
             <button data-c="BTC" class="${S.currency === 'BTC' ? 'on' : ''}">₿&nbsp;BTC</button>
-            <button data-c="LTC" class="${S.currency === 'LTC' ? 'on' : ''}">Ł&nbsp;LTC</button>
+            <button data-c="GRAM" class="${S.currency === 'GRAM' ? 'on' : ''}">G&nbsp;GRAM</button>
           </div>
           <div class="f-box" style="margin-top:10px"><div class="coin-ic" id="getIc">₿</div><input id="inCrypto" type="number" inputmode="decimal" placeholder="0.0005" min="0" step="any"></div>
           <div class="f-hint">Введите сумму в любом поле — второе посчитается автоматически</div>
@@ -217,7 +217,7 @@
     const s = S.settings;
     if (!s) return;
     const cur = S.currency;
-    const rate = cur === 'BTC' ? s.rateBTC : s.rateLTC;
+    const rate = cur === 'BTC' ? s.rateBTC : s.rateGRAM;
     const inRub = $('#inRub');
     const inCrypto = $('#inCrypto');
     if (inRub && inCrypto) {
@@ -234,11 +234,12 @@
     if (cl) cl.textContent = `≈ ${fmtTrim(s.minRub / rate)}–${fmtTrim(s.maxRub / rate)} ${cur}`;
     const ic = $('#getIc');
     ic.className = 'coin-ic ' + cur.toLowerCase();
-    ic.textContent = cur === 'BTC' ? '₿' : 'Ł';
+    ic.textContent = cur === 'BTC' ? '₿' : 'G';
     const wi = $('#walIc');
     wi.className = 'coin-ic ' + cur.toLowerCase();
-    wi.textContent = cur === 'BTC' ? '₿' : 'Ł';
-    $('#inWallet').placeholder = cur === 'BTC' ? 'Адрес BTC-кошелька (bc1… / 1… / 3…)' : 'Адрес LTC-кошелька (ltc1… / L… / M…)';
+    wi.textContent = cur === 'BTC' ? '₿' : 'G';
+    $('#inWallet').placeholder = cur === 'BTC' ? 'Адрес BTC-кошелька (bc1… / 1… / 3…)' : 'Адрес GRAM-кошелька';
+    $('#inCrypto').placeholder = cur === 'BTC' ? '0.0005' : '40';
     $('#fMeta').innerHTML = `
       <div class="row"><span>Курс</span><b>1 ${cur} = ${fmtRub(rate)}</b></div>
       ${s.rateUpdatedAt ? `<div class="row"><span>Курс обновлён</span><b>${fmtDate(s.rateUpdatedAt)}</b></div>` : ''}
@@ -252,7 +253,7 @@
     const s = S.settings;
     const err = $('#fErr');
     err.textContent = '';
-    const rate = S.currency === 'BTC' ? s.rateBTC : s.rateLTC;
+    const rate = S.currency === 'BTC' ? s.rateBTC : s.rateGRAM;
     const rawRub = parseFloat($('#inRub').value);
     const rawCrypto = parseFloat($('#inCrypto').value);
     const useCrypto = S.calcFrom === 'crypto' && isFinite(rawCrypto) && rawCrypto > 0;
@@ -505,7 +506,7 @@
         .map(
           (o) => `
         <div class="card h-item">
-          <div class="h-ic ${o.currency.toLowerCase()}">${o.currency === 'BTC' ? '₿' : 'Ł'}</div>
+          <div class="h-ic ${o.currency.toLowerCase()}">${o.currency === 'BTC' ? '₿' : 'G'}</div>
           <div class="h-main">
             <div class="h-top"><span>₽ → ${o.currency}</span><span>${fmtRub(o.payRub || o.rub)}</span></div>
             <div class="h-sub"><span>#${o.id}${o.receipt ? ' 🧾' : ''}${o.txUrl ? ' 🔗' : ''} · ${fmtDate(o.createdAt)}</span>${chip(o.status)}</div>
@@ -549,7 +550,7 @@
     const opLink = 'https://t.me/' + String(s.operator || '').replace(/^@/, '');
     $('#view-info').innerHTML = `
       <div class="card">
-        <div class="about"><b>PRICELEX</b> — современный сервис обмена Bitcoin и Litecoin. Честность, скорость и выгодные условия: мы создали сервис, которым удобно пользоваться каждый день.</div>
+        <div class="about"><b>PRICELEX</b> — современный сервис обмена Bitcoin и Gram. Честность, скорость и выгодные условия: мы создали сервис, которым удобно пользоваться каждый день.</div>
         <div class="feat">
           <div class="f"><span class="i">✅</span>Выгодный курс — максимум за каждый обмен</div>
           <div class="f"><span class="i">✅</span>Фиксированная сумма к оплате — известна заранее, без доплат</div>

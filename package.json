@@ -1,7 +1,7 @@
 {
   "name": "pricelex-exchange",
   "version": "1.0.0",
-  "description": "PRICELEX — мануальный обменник BTC/LTC: TG Web App + админ-бот",
+  "description": "PRICELEX — мануальный обменник BTC/GRAM: TG Web App + админ-бот",
   "main": "index.js",
   "scripts": {
     "start": "node server.js",

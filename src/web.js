@@ -121,8 +121,8 @@ function startWeb() {
     const currency = req.body.currency;
     const wallet = String(req.body.wallet || '').trim();
     if (!s.online) return res.status(403).json({ error: 'Обмен временно недоступен' });
-    if (!['BTC', 'LTC'].includes(currency)) return res.status(400).json({ error: 'Неизвестная валюта' });
-    const rate = currency === 'BTC' ? s.rateBTC : s.rateLTC;
+    if (!['BTC', 'GRAM'].includes(currency)) return res.status(400).json({ error: 'Неизвестная валюта' });
+    const rate = currency === 'BTC' ? s.rateBTC : s.rateGRAM;
     let rub = Number(req.body.rub);
     let crypto = null;
     const hasRub = req.body.rub !== undefined && req.body.rub !== null && req.body.rub !== '';
