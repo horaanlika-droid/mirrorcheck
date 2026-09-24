@@ -265,6 +265,8 @@
     el.appendChild(lab);
   }
 
+  const DISCLAIMER = '<div class="disclaimer">По фактическим данным курса за период. Не является инвестиционной рекомендацией.</div>';
+
   function marketSignal(series, spot) {
     if (!spot || !spot.dip || series.length < 3) return '';
     const vals = series.map((p) => Number(p.v));
@@ -329,7 +331,10 @@
     if (series.length >= 2) {
       const spot = renderChart(chart, series, { markDip: true });
       renderDipLabel(chart, spot);
-      if (signal) signal.innerHTML = marketSignal(series, spot);
+      if (signal) {
+        const sig = marketSignal(series, spot);
+        signal.innerHTML = sig ? sig + DISCLAIMER : '';
+      }
       renderChartTip(chart, spot, (Math.round(series[series.length - 1].v) || 0).toLocaleString('ru-RU') + ' ₽', fmtTime(series[series.length - 1].at));
       if (axis) {
         const mid = series[Math.floor((series.length - 1) / 2)];
@@ -882,17 +887,21 @@
   function renderInfo() {
     const s = S.settings;
     $('#view-info').innerHTML = `
-      <section class="card editorial manifesto">
-        <div class="ed-art" style="background-image:url('/img/office.jpg')" aria-hidden="true"></div>
-        <div class="ed-body">
-          <div class="kicker gold">Private crypto brokerage</div>
-          <h2 class="display">Мы не обменник.<br><em>Мы агентство брокеров.</em></h2>
+      <section class="card speech" id="speech">
+        <div class="sp-art" style="background-image:url('/img/office.jpg')" aria-hidden="true"></div>
+        <div class="sp-body">
+          <div class="sp-mic"><span class="dot"></span>Слово PRICELEX</div>
+          <p class="sp-line lead">PRICELEX — это не просто обменник.</p>
+          <p class="sp-line">Это экосистема, где каждый сотрудник прошёл непростой путь, но на этом пути он овладевал навыками в мире криптовалют.</p>
+          <p class="sp-line">И теперь мы экономим ваше время и нервы.</p>
+          <p class="sp-line big">Мы не обменник. <em>Мы агентство брокеров,</em> которые в реальном времени находят лучшие варианты на рынке.</p>
+          <p class="sp-line">Да, иногда приходится подождать.</p>
+          <p class="sp-line big">Но мы знаем, кто мы. <em>Мы отвечаем за качество репутацией.</em></p>
+          <div class="sp-sign">PRICELEX</div>
         </div>
       </section>
       <div class="card">
-        <div class="about"><b>PRICELEX</b> — это экосистема. Каждый из нас прошёл непростой путь и на этом пути овладел ремеслом крипторынка.</div>
-        <div class="about" style="margin-top:10px">Теперь за совсем скромную комиссию мы экономим ваше время и нервы: в реальном времени находим лучшие варианты на рынке.</div>
-        <blockquote class="quote">Да, иногда приходится подождать. Но мы знаем, кто мы, — и отвечаем за качество репутацией.</blockquote>
+        <div class="card-title">Почему PRICELEX</div>
         <div class="feat">
           <div class="f"><span class="i">◆</span>Живой поиск лучшей цены — сделку ведёт брокер, а не скрипт</div>
           <div class="f"><span class="i">◆</span>Сумма к оплате известна заранее — без доплат</div>

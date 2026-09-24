@@ -956,3 +956,47 @@ body {
 }
 .chat-input:focus-within { border-color: rgba(216, 180, 106, .45); box-shadow: 0 0 0 4px rgba(216, 180, 106, .1); }
 .chat-input .btn { padding: 0; }
+
+/* ---------- «Слово PRICELEX»: речь перед залом ---------- */
+.speech { padding: 0; border-color: var(--gold-line); background: #05070f; }
+.card > .sp-art {
+  position: absolute; left: 0; right: 0; top: 0; height: 380px; z-index: 0;
+  background-size: cover; background-position: center 26%; background-repeat: no-repeat;
+  filter: saturate(.9) contrast(1.05);
+}
+.card > .sp-art::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(5, 7, 15, 0) 30%, rgba(5, 7, 15, .7) 62%, #05070f 100%);
+}
+.sp-body { padding: 250px 22px 28px; }
+.sp-mic {
+  display: inline-flex; align-items: center; gap: 8px; margin-bottom: 18px;
+  padding: 6px 12px; border-radius: 999px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: var(--gold-2);
+  background: rgba(10, 8, 4, .6); border: 1px solid rgba(216, 180, 106, .4); backdrop-filter: blur(10px);
+}
+.sp-mic .dot { width: 6px; height: 6px; border-radius: 50%; background: #ff5f5f; box-shadow: 0 0 9px #ff5f5f; animation: pulse 1.6s infinite; }
+.sp-line {
+  font-family: var(--serif); font-size: 18px; line-height: 1.45; color: var(--champagne);
+  opacity: 0; transform: translateY(10px); animation: sp-in .8s cubic-bezier(.2, .7, .2, 1) forwards;
+}
+.sp-line + .sp-line { margin-top: 14px; }
+.sp-line.lead { font-size: 24px; line-height: 1.2; color: #fffaf0; text-shadow: 0 2px 22px rgba(0, 0, 0, .7); }
+.sp-line.big { font-size: 23px; line-height: 1.28; color: #fffaf0; }
+.sp-line em { font-style: italic; color: var(--gold-2); }
+.sp-line:nth-of-type(1) { animation-delay: .1s; }
+.sp-line:nth-of-type(2) { animation-delay: .5s; }
+.sp-line:nth-of-type(3) { animation-delay: .9s; }
+.sp-line:nth-of-type(4) { animation-delay: 1.3s; }
+.sp-line:nth-of-type(5) { animation-delay: 1.8s; }
+.sp-line:nth-of-type(6) { animation-delay: 2.2s; }
+@keyframes sp-in { to { opacity: 1; transform: none; } }
+.sp-sign {
+  margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--gold-line);
+  font-family: var(--serif); font-size: 15px; letter-spacing: .34em; color: var(--gold);
+}
+.sp-sign::before { content: '— '; letter-spacing: 0; }
+@media (prefers-reduced-motion: reduce) { .sp-line { opacity: 1; transform: none; animation: none; } }
+
+/* приписка под сигналом графика */
+.disclaimer { margin-top: 8px; padding: 0 4px; font-size: 9.5px; line-height: 1.45; color: var(--dim); letter-spacing: .01em; }

@@ -184,6 +184,7 @@ test('chart marks the dip and calls out the best time to buy when the rate sits 
   assert.ok(a.document.querySelector('#rateChart svg .dip-mark'));
   assert.ok(a.document.querySelector('#rateChart svg .dip-line'));
   assert.match(a.document.querySelector('#rateSignal .signal.buy').textContent, /Лучшее время для покупки/);
+  assert.match(a.document.querySelector('#rateSignal .disclaimer').textContent, /Не является инвестиционной рекомендацией/);
 
   // Когда курс у максимума — сигнала «покупать» нет, но лучшая цена периода названа.
   const b = await app(t);
@@ -216,4 +217,21 @@ test('reviews tab explains that a review needs a completed exchange', async (t) 
   const view = a.document.querySelector('#view-reviews');
   assert.ok(!view.querySelector('.rv-form'));
   assert.match(view.textContent, /после завершённого обмена/);
+});
+
+test('info tab carries the founder speech word for word and never mentions a fee', async (t) => {
+  const a = await app(t);
+  a.document.querySelector('.nav button[data-tab="info"]').click();
+  await tick();
+  const lines = [...a.document.querySelectorAll('#speech .sp-line')].map((p) => p.textContent.replace(/\s+/g, ' ').trim());
+  assert.deepEqual(lines, [
+    'PRICELEX — это не просто обменник.',
+    'Это экосистема, где каждый сотрудник прошёл непростой путь, но на этом пути он овладевал навыками в мире криптовалют.',
+    'И теперь мы экономим ваше время и нервы.',
+    'Мы не обменник. Мы агентство брокеров, которые в реальном времени находят лучшие варианты на рынке.',
+    'Да, иногда приходится подождать.',
+    'Но мы знаем, кто мы. Мы отвечаем за качество репутацией.',
+  ]);
+  assert.ok(!/комисси/i.test(a.document.querySelector('#view-info').textContent));
+  assert.equal(a.document.querySelector('#view-info .contact').href, 'https://t.me/test');
 });
