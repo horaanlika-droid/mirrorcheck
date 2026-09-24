@@ -10,8 +10,8 @@
     try {
       tg.ready();
       tg.expand();
-      tg.setHeaderColor && tg.setHeaderColor('#050506');
-      tg.setBackgroundColor && tg.setBackgroundColor('#050506');
+      tg.setHeaderColor && tg.setHeaderColor('#0A0A09');
+      tg.setBackgroundColor && tg.setBackgroundColor('#0A0A09');
     } catch (e) {}
     initData = tg.initData || '';
     startParam = tg.startParam || '';
@@ -229,16 +229,16 @@
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <linearGradient id="plLine${id}" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stop-color="#8a6a2f"/><stop offset="50%" stop-color="#d8b46a"/><stop offset="100%" stop-color="#fff1cc"/>
+            <stop offset="0%" stop-color="#7a3f18"/><stop offset="50%" stop-color="#d97838"/><stop offset="100%" stop-color="#f2b06c"/>
           </linearGradient>
           <linearGradient id="plArea${id}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(216,180,106,.30)"/><stop offset="100%" stop-color="rgba(216,180,106,0)"/>
+            <stop offset="0%" stop-color="rgba(217,120,56,.26)"/><stop offset="100%" stop-color="rgba(217,120,56,0)"/>
           </linearGradient>
           <radialGradient id="plDot${id}">
-            <stop offset="0%" stop-color="rgba(255,228,170,.55)"/><stop offset="100%" stop-color="rgba(255,228,170,0)"/>
+            <stop offset="0%" stop-color="rgba(255,205,150,.5)"/><stop offset="100%" stop-color="rgba(255,205,150,0)"/>
           </radialGradient>
           <linearGradient id="plDip${id}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(53,224,161,0)"/><stop offset="70%" stop-color="rgba(53,224,161,.10)"/><stop offset="100%" stop-color="rgba(53,224,161,.22)"/>
+            <stop offset="0%" stop-color="rgba(95,186,151,0)"/><stop offset="70%" stop-color="rgba(95,186,151,.10)"/><stop offset="100%" stop-color="rgba(95,186,151,.22)"/>
           </linearGradient>
         </defs>
         ${grid.join('')}
@@ -415,6 +415,7 @@
       <div id="exForm" class="${S.order ? 'hidden' : ''}">
         <section class="card card-hero lux-hero">
           <div class="hero-art" aria-hidden="true"></div>
+          <div class="hero-frame" aria-hidden="true"></div>
           <div class="hero-top">
             <div class="kicker">Курс обмена</div>
             <div class="seg" id="segCur">
@@ -795,7 +796,9 @@
       .map((o) => ({ at: o.createdAt, v: Math.round(o.payRub || o.rub) }));
 
     v.innerHTML = `
-      <section class="card card-hero">
+      <section class="card card-hero hist-hero">
+        <div class="hero-art hist-art" aria-hidden="true"></div>
+        <div class="hero-frame" aria-hidden="true"></div>
         <div class="hero-top">
           <div class="kicker">Объём обменов</div>
           <div class="seg" id="histSeg">
@@ -888,7 +891,7 @@
     const s = S.settings;
     $('#view-info').innerHTML = `
       <section class="card speech" id="speech">
-        <div class="sp-art" style="background-image:url('/img/aurora.jpg')" aria-hidden="true"></div>
+        <div class="sp-art" style="background-image:url('/img/speech.jpg')" aria-hidden="true"></div>
         <div class="sp-body">
           <div class="sp-mic"><span class="dot"></span>Слово PRICELEX</div>
           <p class="sp-line lead">PRICELEX — это не просто обменник.</p>
@@ -1025,7 +1028,7 @@
     const hasCompleted = S.orders.some((o) => o.status === 'completed');
     v.innerHTML = `
       <section class="card editorial rv-hero">
-        <div class="ed-art" style="background-image:url('/img/vault.jpg')" aria-hidden="true"></div>
+        <div class="ed-art" style="background-image:url('/img/reputation.jpg')" aria-hidden="true"></div>
         <div class="ed-body">
           <div class="kicker gold">Репутация</div>
           <div class="rv-score">
@@ -1278,6 +1281,21 @@
     else if (S.tab === 'reviews' && ordersChanged && !isTypingReview()) renderReviews();
   }
 
+  // Микро-параллакс: глобальная переменная --sy гоняет фоновые кадры (CSS).
+  function initParallax() {
+    if (typeof requestAnimationFrame !== 'function') return;
+    const root = document.documentElement;
+    let queued = false;
+    const upd = () => {
+      queued = false;
+      root.style.setProperty('--sy', String(Math.round(window.scrollY || 0)));
+    };
+    window.addEventListener('scroll', () => {
+      if (!queued) { queued = true; requestAnimationFrame(upd); }
+    }, { passive: true });
+    upd();
+  }
+
   function startPolling() {
     const running = new Set();
     const refresh = () => Promise.all([pollOrder, pollSettings, pollProfile, pollReviews, () => pollSupport(false)].map(async (poll) => {
@@ -1329,6 +1347,7 @@
     document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
     $('#view-' + S.tab).classList.remove('hidden');
     renderDemoAdmin();
+    initParallax();
     startPolling();
   })();
 })();
