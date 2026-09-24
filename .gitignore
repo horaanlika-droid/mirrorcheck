@@ -1,5 +1,5 @@
-__pycache__/
-*.py[cod]
-mirror_state.json
-mirror_state.tmp
+node_modules/
+data/
 .env
+*.log
+.DS_Store
