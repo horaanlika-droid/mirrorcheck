@@ -38,4 +38,33 @@ const parseNum = (s) => {
   return isFinite(n) ? n : NaN;
 };
 
-module.exports = { esc, fmtRub, fmtCrypto, fmtDate, fmtSize, plural, parseNum };
+// Даты отзывов оператор видит и вводит по Москве (UTC+3, без перехода на летнее время),
+// независимо от часового пояса сервера.
+const MSK_OFFSET = 3 * 3600 * 1000;
+
+const fmtMsk = (ts) => {
+  const d = new Date(Number(ts) + MSK_OFFSET);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${p(d.getUTCDate())}.${p(d.getUTCMonth() + 1)}.${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+};
+
+// «24.09.2026 14:30», «24.09.2026», «24.09 14:30», «24.09.26 9:05», «сейчас» → timestamp (МСК).
+function parseMsk(input, now = Date.now()) {
+  const s = String(input || '').trim().toLowerCase();
+  if (/^(сейчас|now|сегодня)$/.test(s)) return now;
+  const m = s.match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2}|\d{4}))?(?:[\s,]+(\d{1,2})[:.](\d{2}))?$/);
+  if (!m) return NaN;
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  let year = m[3] ? Number(m[3]) : new Date(now + MSK_OFFSET).getUTCFullYear();
+  if (year < 100) year += 2000;
+  const hh = m[4] != null ? Number(m[4]) : 12;
+  const mm = m[5] != null ? Number(m[5]) : 0;
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hh > 23 || mm > 59 || year < 2000 || year > 2100) return NaN;
+  const ts = Date.UTC(year, month - 1, day, hh, mm) - MSK_OFFSET;
+  const back = new Date(ts + MSK_OFFSET);
+  if (back.getUTCDate() !== day || back.getUTCMonth() !== month - 1) return NaN; // 31.02 и т.п.
+  return ts;
+}
+
+module.exports = { esc, fmtRub, fmtCrypto, fmtDate, fmtSize, plural, parseNum, fmtMsk, parseMsk };

@@ -58,13 +58,19 @@ const completed = [
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const ru = (n) => n.toLocaleString('ru-RU');
 
-async function app(t, { orders = completed, points: historyPoints = points } = {}) {
+const reviewsFixture = [
+  { id: 1, name: 'Алексей К.', rating: 5, text: 'Брокер нашёл лучший курс', createdAt: now - 24 * HOUR },
+  { id: 2, name: 'Марина', rating: 4, text: 'Спокойно и честно', createdAt: now - 48 * HOUR },
+];
+
+async function app(t, { orders = completed, points: historyPoints = points, reviews = reviewsFixture } = {}) {
+  const posted = [];
   const dom = new JSDOM(html, { url: 'https://pricelex.example', runScripts: 'outside-only', pretendToBeVisual: true });
   t.after(() => dom.window.close());
   const { window } = dom;
   window.console.warn = () => {};
   window.setInterval = () => 1;
-  window.fetch = async (url) => {
+  window.fetch = async (url, opts) => {
     const pathname = new URL(url, window.location.href).pathname;
     const json = (data) => ({ ok: true, json: async () => structuredClone(data) });
     if (pathname === '/api/init') return json({ settings, me: { id: 999 }, demo: false });
@@ -72,13 +78,20 @@ async function app(t, { orders = completed, points: historyPoints = points } = {
     if (pathname === '/api/settings') return json(settings);
     if (pathname === '/api/rates/history') return json({ hours: 24, updatedAt: settings.rateUpdatedAt, points: historyPoints });
     if (pathname === '/api/support/messages') return json({ messages: [] });
+    if (pathname === '/api/reviews' && opts && opts.method === 'POST') {
+      const body = JSON.parse(opts.body);
+      posted.push(body);
+      const o = orders.find((x) => x.id === body.orderId);
+      return json({ review: { id: 99, name: 'Клиент', rating: body.rating, text: body.text, createdAt: now, orderId: o.id }, order: { ...o, review: { id: 99 } } });
+    }
+    if (pathname === '/api/reviews') return json({ reviews, stats: { count: reviews.length, avg: 4.5 } });
     if (pathname.startsWith('/api/order/')) return json({ order: orders[0] });
     throw new Error('Unexpected request: ' + pathname);
   };
   window.eval(script);
   await tick();
   await tick();
-  return { window, document: window.document };
+  return { window, document: window.document, posted };
 }
 
 test('hero card shows the live rate, delta and a chart built from real observations', async (t) => {
@@ -150,4 +163,75 @@ test('empty history keeps a friendly state and does not render a chart', async (
   const view = a.document.querySelector('#view-history');
   assert.match(view.textContent, /История пока пуста/);
   assert.ok(!view.querySelector('#volChart'));
+});
+
+test('navigation has a reviews tab and the help tab uses a clean question-mark icon', async (t) => {
+  const a = await app(t);
+  const tabs = [...a.document.querySelectorAll('.nav button')].map((b) => b.dataset.tab);
+  assert.deepEqual(tabs, ['exchange', 'history', 'reviews', 'refs', 'support', 'info']);
+  const help = a.document.querySelector('.nav button[data-tab="support"] svg');
+  assert.ok(help.querySelector('path') && help.querySelector('circle'), 'дуга вопросительного знака + точка');
+  assert.equal(help.querySelectorAll('path').length, 1);
+});
+
+test('chart marks the dip and calls out the best time to buy when the rate sits near the low', async (t) => {
+  const shape = [0, -0.5, -1.4, -2.2, -2.6, -2.1, -1.2, -0.6, -0.4, -0.3, -2.3];
+  const dipPoints = shape.map((d, i) => ({ at: now - (shape.length - i) * HOUR, btc: Math.round(10_000_000 * (1 + d / 100)), gram: 125 }));
+  const a = await app(t, { points: dipPoints });
+  const dip = a.document.querySelector('#rateChart .chart-dip');
+  assert.ok(dip, 'просадка подписана на графике');
+  assert.match(dip.textContent, new RegExp(ru(9_740_000).replace(/\u00a0/g, '\\s')));
+  assert.ok(a.document.querySelector('#rateChart svg .dip-mark'));
+  assert.ok(a.document.querySelector('#rateChart svg .dip-line'));
+  assert.match(a.document.querySelector('#rateSignal .signal.buy').textContent, /Лучшее время для покупки/);
+  assert.match(a.document.querySelector('#rateSignal .disclaimer').textContent, /Не является инвестиционной рекомендацией/);
+
+  // Когда курс у максимума — сигнала «покупать» нет, но лучшая цена периода названа.
+  const b = await app(t);
+  assert.ok(!b.document.querySelector('#rateSignal .signal.buy'));
+  assert.match(b.document.querySelector('#rateSignal .signal').textContent, /Лучшая цена/);
+});
+
+test('reviews tab shows reviews, lets a client review a completed order and never mentions moderation', async (t) => {
+  const a = await app(t);
+  a.document.querySelector('.nav button[data-tab="reviews"]').click();
+  await tick(); await tick();
+  const view = a.document.querySelector('#view-reviews');
+  assert.equal(view.querySelectorAll('.rv-item').length, 2);
+  assert.match(view.querySelector('.rv-score .metric').textContent, /4\.5/);
+  assert.ok(view.querySelector('#tabRvOrder'), 'несколько завершённых обменов — можно выбрать какой оценить');
+  view.querySelectorAll('#tabRvStars button')[3].click();
+  view.querySelector('#tabRvText').value = 'Очень достойный сервис';
+  view.querySelector('#tabRvSend').click();
+  await tick(); await tick();
+  assert.deepEqual(a.posted[0], { orderId: 1, rating: 4, text: 'Очень достойный сервис', startParam: '', initData: '', demo: a.posted[0].demo });
+  assert.match(a.document.querySelector('#toast').textContent, /опубликован/);
+  assert.equal(view.querySelectorAll('.rv-item').length, 3, 'свой отзыв сразу в ленте');
+  assert.ok(!/модерац/i.test(a.document.body.textContent));
+});
+
+test('reviews tab explains that a review needs a completed exchange', async (t) => {
+  const a = await app(t, { orders: [] });
+  a.document.querySelector('.nav button[data-tab="reviews"]').click();
+  await tick(); await tick();
+  const view = a.document.querySelector('#view-reviews');
+  assert.ok(!view.querySelector('.rv-form'));
+  assert.match(view.textContent, /после завершённого обмена/);
+});
+
+test('info tab carries the founder speech word for word and never mentions a fee', async (t) => {
+  const a = await app(t);
+  a.document.querySelector('.nav button[data-tab="info"]').click();
+  await tick();
+  const lines = [...a.document.querySelectorAll('#speech .sp-line')].map((p) => p.textContent.replace(/\s+/g, ' ').trim());
+  assert.deepEqual(lines, [
+    'PRICELEX — это не просто обменник.',
+    'Это экосистема, где каждый сотрудник прошёл непростой путь, но на этом пути он овладевал навыками в мире криптовалют.',
+    'И теперь мы экономим ваше время и нервы.',
+    'Мы не обменник. Мы агентство брокеров, которые в реальном времени находят лучшие варианты на рынке.',
+    'Да, иногда приходится подождать.',
+    'Но мы знаем, кто мы. Мы отвечаем за качество репутацией.',
+  ]);
+  assert.ok(!/комисси/i.test(a.document.querySelector('#view-info').textContent));
+  assert.equal(a.document.querySelector('#view-info .contact').href, 'https://t.me/test');
 });

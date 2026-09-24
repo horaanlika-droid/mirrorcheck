@@ -18,6 +18,10 @@ const clientOrder = (o) => ({
   payRub: o.payRub,
   receipt: o.receipt || null,
   txUrl: o.txUrl || null,
+  review: (() => {
+    const r = store.reviewForOrder(o.id);
+    return r ? { id: r.id } : null; // статус модерации клиенту не раскрываем
+  })(),
   createdAt: o.createdAt,
   updatedAt: o.updatedAt,
 });
@@ -64,7 +68,7 @@ function startWeb() {
           store.mutate((db) => {
             db.settings.publicUrl = url;
           });
-          console.log('[PRICELEX] публичный адрес определён автоматически:', url);
+          // Адрес нигде не показывается: он нужен только для кнопки меню Telegram.
           bus.emit('public_url', url);
         }
       }
@@ -254,6 +258,36 @@ function startWeb() {
     res.json({ order: clientOrder(o) });
   });
 
+  /* ---------- отзывы ---------- */
+  // Посетители видят только одобренные отзывы, автор — ещё и свои (как опубликованные).
+  app.get('/api/reviews', (req, res) => {
+    const a = auth(req);
+    res.json(store.publicReviews(100, a ? a.user.id : null));
+  });
+
+  // Отзыв можно оставить только по своей завершённой заявке — один на заявку.
+  app.post('/api/reviews', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const o = store.getOrder(req.body?.orderId);
+    if (!o || o.userId !== String(a.user.id)) {
+      return res.status(403).json({ error: 'Отзыв можно оставить только после вашего обмена' });
+    }
+    if (o.status !== 'completed') {
+      return res.status(403).json({ error: 'Отзыв доступен после завершения обмена' });
+    }
+    if (store.reviewForOrder(o.id)) return res.status(409).json({ error: 'Отзыв по этой заявке уже оставлен' });
+    const rating = Number(req.body?.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json({ error: 'Поставьте оценку от 1 до 5' });
+    const text = String(req.body?.text || '').trim();
+    if (text.length < 5) return res.status(400).json({ error: 'Напишите хотя бы пару слов (от 5 символов)' });
+    if (text.length > store.REVIEW_TEXT_MAX) return res.status(400).json({ error: `Отзыв слишком длинный (до ${store.REVIEW_TEXT_MAX} символов)` });
+    const user = store.touchUser(a.user, req.body.startParam || '');
+    const review = store.createReview({ userId: user.id, orderId: o.id, name: user.name, rating, text, source: 'user' });
+    bus.emit('review_event', { review, type: 'new' });
+    res.json({ review: { ...store.publicReview(review), orderId: review.orderId }, order: clientOrder(o) });
+  });
+
   /* ---------- support chat ---------- */
   app.get('/api/support/messages', (req, res) => {
     const a = needAuth(req, res);
@@ -314,6 +348,11 @@ function startWeb() {
       const upd = store.updateOrder(o.id, { txUrl: url });
       bus.emit('order_event', { order: upd, type: 'tx' });
       res.json({ order: clientOrder(upd) });
+    });
+    // Демо-модерация: публикует все отзывы, ожидающие проверки.
+    app.post('/api/admin/reviews/approve-pending', (_req, res) => {
+      const list = store.reviewsByStatus('pending').map((r) => store.updateReview(r.id, { status: 'approved' }));
+      res.json({ approved: list.length });
     });
     app.post('/api/admin/support/:userId/reply', (req, res) => {
       const userId = String(req.params.userId);

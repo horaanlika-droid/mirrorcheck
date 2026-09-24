@@ -7,6 +7,7 @@ const DB_FILE = path.join(DATA_DIR, 'db.json');
 const defaults = () => ({
   seq: 1,
   supportSeq: 1,
+  reviewSeq: 1,
   settings: {
     rateBTC: 10250000, // ₽ за 1 BTC (итоговый, с комиссией)
     rateGRAM: 125, // ₽ за 1 GRAM (стартовый курс, итоговый с комиссией)
@@ -21,7 +22,7 @@ const defaults = () => ({
     announcement:
       '🚀 PRICELEX официально начинает работу! Принимаем заявки на обмен BTC и GRAM. Минимальная сумма обмена — от 3 000 ₽.',
     refPercent: 1,
-    operator: '@pricelex_operator',
+    operator: '@stonym0ntana', // поддержка клиентов
     channel: 'https://t.me/pricelex_channel',
     chat: 'https://t.me/pricelex_chat',
     publicUrl: null,
@@ -33,7 +34,12 @@ const defaults = () => ({
   flags: {},
   support: [], // чат поддержки: { id, userId, from: 'user'|'admin', text, at }
   rateHistory: [], // наблюдения курса: { at, btc, gram } — основа графика в приложении
+  // Отзывы: { id, userId, orderId, name, rating 1–5, text, status, source, createdAt, updatedAt, adminMsgIds }
+  // status: 'pending' (модерация) | 'approved' (опубликован) | 'rejected' (скрыт)
+  reviews: [],
 });
+
+const OLD_OPERATOR_DEFAULTS = ['@pricelex_operator'];
 
 // График курса в Web App строится только по реальным наблюдениям:
 // каждое успешное автообновление курса добавляет точку. Храним неделю.
@@ -65,6 +71,12 @@ function load() {
       if (!Array.isArray(db.support)) db.support = [];
       if (!Number.isFinite(db.supportSeq)) db.supportSeq = (db.support?.length || 0) + 1;
       if (!Array.isArray(db.rateHistory)) db.rateHistory = [];
+      if (!Array.isArray(db.reviews)) db.reviews = [];
+      if (!Number.isFinite(db.reviewSeq)) db.reviewSeq = db.reviews.reduce((m, r) => Math.max(m, r.id || 0), 0) + 1;
+      // Поддержка переехала на @stonym0ntana: обновляем только нетронутое старое значение.
+      if (!db.settings.operator || OLD_OPERATOR_DEFAULTS.includes(db.settings.operator)) {
+        db.settings.operator = defaults().settings.operator;
+      }
       db.rateHistory = db.rateHistory.filter(
         (p) => p && Number.isFinite(Number(p.at)) && Number(p.btc) > 0 && Number(p.gram) > 0
       );
@@ -119,7 +131,6 @@ function publicSettings() {
     operator: s.operator,
     channel: s.channel,
     chat: s.chat,
-    publicUrl: s.publicUrl,
     botUsername: s.botUsername,
   };
 }
@@ -307,6 +318,72 @@ function getSupportThreads() {
   return [...map.values()].sort((a, b) => b.lastAt - a.lastAt);
 }
 
+/* ---------- отзывы ---------- */
+const REVIEW_TEXT_MAX = 1000;
+const clampRating = (n) => Math.min(5, Math.max(1, Math.round(Number(n) || 5)));
+
+function createReview(r) {
+  return mutate((d) => {
+    const now = Date.now();
+    const review = {
+      id: d.reviewSeq++,
+      userId: r.userId != null ? String(r.userId) : null,
+      orderId: r.orderId != null ? Number(r.orderId) : null,
+      name: String(r.name || 'Клиент').trim().slice(0, 60) || 'Клиент',
+      rating: clampRating(r.rating),
+      text: String(r.text || '').trim().slice(0, REVIEW_TEXT_MAX),
+      status: r.status || 'pending',
+      source: r.source || 'user', // 'user' | 'admin'
+      createdAt: Number.isFinite(r.createdAt) ? r.createdAt : now,
+      updatedAt: now,
+      adminMsgIds: {},
+    };
+    d.reviews.push(review);
+    return review;
+  });
+}
+
+const getReview = (id) => db.reviews.find((r) => r.id === Number(id)) || null;
+
+function updateReview(id, patch) {
+  return mutate((d) => {
+    const r = d.reviews.find((x) => x.id === Number(id));
+    if (!r) return null;
+    const p = { ...patch };
+    if (p.rating != null) p.rating = clampRating(p.rating);
+    if (p.name != null) p.name = String(p.name).trim().slice(0, 60) || r.name;
+    if (p.text != null) p.text = String(p.text).trim().slice(0, REVIEW_TEXT_MAX);
+    Object.assign(r, p, { updatedAt: Date.now() });
+    return r;
+  });
+}
+
+function deleteReview(id) {
+  return mutate((d) => {
+    const i = d.reviews.findIndex((x) => x.id === Number(id));
+    if (i < 0) return null;
+    return d.reviews.splice(i, 1)[0];
+  });
+}
+
+const reviewsByStatus = (status) =>
+  db.reviews.filter((r) => !status || r.status === status).sort((a, b) => b.createdAt - a.createdAt);
+
+const publicReview = (r) => ({ id: r.id, name: r.name, rating: r.rating, text: r.text, createdAt: r.createdAt });
+
+// Автор всегда видит свои отзывы как опубликованные — о модерации клиент не знает.
+// Остальные видят только одобренные.
+function publicReviews(limit = 100, viewerId = null) {
+  const viewer = viewerId != null ? String(viewerId) : null;
+  const list = reviewsByStatus().filter((r) => r.status === 'approved' || (viewer && r.userId === viewer));
+  const count = list.length;
+  const avg = count ? list.reduce((s, r) => s + r.rating, 0) / count : 0;
+  return { reviews: list.slice(0, limit).map(publicReview), stats: { count, avg: Math.round(avg * 10) / 10 } };
+}
+
+const reviewForOrder = (orderId) => db.reviews.find((r) => r.orderId === Number(orderId)) || null;
+const userReviews = (userId) => reviewsByStatus().filter((r) => r.userId === String(userId));
+
 function countSupportUnread() {
   // для простоты считаем все треды
   return getSupportThreads().length;
@@ -333,4 +410,14 @@ module.exports = {
   getSupportMessages,
   getSupportThreads,
   countSupportUnread,
+  REVIEW_TEXT_MAX,
+  createReview,
+  getReview,
+  updateReview,
+  deleteReview,
+  reviewsByStatus,
+  publicReview,
+  publicReviews,
+  reviewForOrder,
+  userReviews,
 };

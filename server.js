@@ -15,7 +15,7 @@ if (config.publicUrl && store.get().settings.publicUrl !== config.publicUrl) {
   store.mutate((db) => {
     db.settings.publicUrl = config.publicUrl;
   });
-  console.log('[PRICELEX] PUBLIC_URL из окружения:', config.publicUrl);
+  console.log('[PRICELEX] адрес приложения взят из PUBLIC_URL (используется только для кнопки меню бота)');
 }
 
 startWeb();

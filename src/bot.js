@@ -5,7 +5,7 @@ const bus = require('./bus');
 const admins = require('./admins');
 const rates = require('./rates');
 const receipts = require('./receipts');
-const { esc, fmtRub, fmtCrypto, fmtDate, fmtSize, parseNum } = require('./util');
+const { esc, fmtRub, fmtCrypto, fmtDate, fmtSize, parseNum, fmtMsk, parseMsk } = require('./util');
 
 let bot = null;
 const flows = new Map(); // adminId -> { type, orderId?, userId? }
@@ -263,12 +263,262 @@ async function supportThreadView(ctx, userId, edit = true) {
   else await ctx.reply(body, { parse_mode: 'HTML', reply_markup: kb });
 }
 
+/* ---------- отзывы ---------- */
+
+const REVIEW_STATUS = { pending: '🕓 На модерации', approved: '✅ Опубликован', rejected: '🙈 Скрыт' };
+const REVIEW_LISTS = { pending: '🕓 На модерации', approved: '✅ Опубликованные', rejected: '🙈 Скрытые' };
+const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+const REVIEWS_PAGE = 8;
+
+function reviewText(r) {
+  const order = r.orderId ? store.getOrder(r.orderId) : null;
+  const user = r.userId ? store.getUser(r.userId) : null;
+  const author = r.source === 'admin'
+    ? ' · добавлен оператором'
+    : user ? ` · <code>${esc(user.id)}</code>${user.username ? ' @' + esc(user.username) : ''}` : '';
+  return (
+    `⭐ <b>Отзыв #${r.id}</b> · ${REVIEW_STATUS[r.status] || r.status}\n` +
+    `${stars(r.rating)} ${r.rating}/5\n` +
+    `👤 ${esc(r.name)}${author}\n` +
+    (order ? `📥 Заявка #${order.id} · ${fmtRub(order.payRub || order.rub)} → ${esc(order.currency)}\n` : '') +
+    `📅 ${fmtMsk(r.createdAt)} (МСК)\n\n` +
+    `«${esc(r.text)}»`
+  );
+}
+
+function reviewKb(r) {
+  const kb = new InlineKeyboard();
+  if (r.status === 'pending') kb.text('✅ Опубликовать', `rv:${r.id}:approve`).text('🚫 Отклонить', `rv:${r.id}:reject`).row();
+  else if (r.status === 'approved') kb.text('🙈 Снять с публикации', `rv:${r.id}:reject`).row();
+  else kb.text('✅ Опубликовать', `rv:${r.id}:approve`).row();
+  return kb
+    .text('👤 Имя', `rv:${r.id}:name`).text('⭐ Оценка', `rv:${r.id}:rate`).row()
+    .text('✏️ Текст', `rv:${r.id}:text`).text('📅 Дата и время', `rv:${r.id}:date`).row()
+    .text('🗑 Удалить', `rv:${r.id}:del`).text('📋 К списку', `rvl:${r.status}:0`);
+}
+
+// Карточка отзыва у всех админов обновляется после действий любого из них.
+async function syncReviewCards(r, skip = null) {
+  if (!bot || !r) return;
+  const gone = !store.getReview(r.id);
+  await Promise.all(Object.entries(r.adminMsgIds || {}).map(async ([adminId, msgId]) => {
+    if (skip && String(skip.chat) === String(adminId) && skip.msg === msgId) return;
+    const opts = gone ? { parse_mode: 'HTML' } : { parse_mode: 'HTML', reply_markup: reviewKb(r) };
+    const text = gone ? `🗑 Отзыв #${r.id} удалён.` : reviewText(r);
+    await bot.api.editMessageText(adminId, msgId, text, opts).catch(() => {});
+  }));
+}
+
+async function onReviewEvent({ review, type }) {
+  if (!bot || type !== 'new') return;
+  await Promise.all(admins.all().map(async (adminId) => {
+    const r = store.getReview(review.id);
+    if (!r) return;
+    try {
+      const m = await bot.api.sendMessage(adminId, `🆕 <b>Новый отзыв — нужна модерация</b>\n\n${reviewText(r)}`,
+        { parse_mode: 'HTML', reply_markup: reviewKb(r) });
+      store.mutate(() => { (r.adminMsgIds ||= {})[adminId] = m.message_id; });
+    } catch (e) {
+      console.error(`[bot] review #${r.id} → admin ${adminId}:`, e.message);
+    }
+  }));
+}
+
+async function show(ctx, edit, text, kb) {
+  const opts = { parse_mode: 'HTML', reply_markup: kb };
+  if (edit) return ctx.editMessageText(text, opts).catch(() => ctx.reply(text, opts));
+  return ctx.reply(text, opts);
+}
+
+async function reviewsMenu(ctx, edit = true) {
+  const pub = store.publicReviews(0).stats;
+  const pending = store.reviewsByStatus('pending').length;
+  const hidden = store.reviewsByStatus('rejected').length;
+  const text =
+    `⭐ <b>Отзывы</b>\n\n` +
+    `Опубликовано: <b>${pub.count}</b>${pub.count ? ` · средняя оценка <b>${pub.avg.toFixed(1)}</b>` : ''}\n` +
+    `На модерации: <b>${pending}</b> · Скрыто: ${hidden}\n\n` +
+    `Клиент может оставить отзыв только после завершённого обмена — он попадает сюда на модерацию. ` +
+    `Автор всегда видит свой отзыв опубликованным и о модерации не знает; остальным он виден только после одобрения.\n` +
+    `Вы можете добавить отзыв сами и отредактировать любой: имя, оценку, текст, дату и время (по Москве).`;
+  const kb = new InlineKeyboard()
+    .text(`🕓 На модерации${pending ? ` (${pending})` : ''}`, 'rvl:pending:0').row()
+    .text('✅ Опубликованные', 'rvl:approved:0').text('🙈 Скрытые', 'rvl:rejected:0').row()
+    .text('➕ Добавить отзыв', 'rv:add').row()
+    .text('↩️ Назад', 'm:home');
+  return show(ctx, edit, text, kb);
+}
+
+async function reviewsList(ctx, status, page = 0, edit = true) {
+  const list = store.reviewsByStatus(status);
+  const pages = Math.max(1, Math.ceil(list.length / REVIEWS_PAGE));
+  const p = Math.min(Math.max(0, page), pages - 1);
+  const kb = new InlineKeyboard();
+  for (const r of list.slice(p * REVIEWS_PAGE, (p + 1) * REVIEWS_PAGE)) {
+    kb.text(`${'★'.repeat(r.rating)} ${r.name.slice(0, 18)} · ${fmtMsk(r.createdAt).slice(0, 10)}`, `rv:${r.id}`).row();
+  }
+  if (pages > 1) {
+    if (p > 0) kb.text('◀️', `rvl:${status}:${p - 1}`);
+    kb.text(`${p + 1}/${pages}`, `rvl:${status}:${p}`);
+    if (p < pages - 1) kb.text('▶️', `rvl:${status}:${p + 1}`);
+    kb.row();
+  }
+  kb.text('⭐ Все отзывы', 'm:reviews').text('↩️ Меню', 'm:home');
+  const text = `${REVIEW_LISTS[status]} — <b>${list.length}</b>\n\n` +
+    (list.length ? 'Выберите отзыв, чтобы открыть и отредактировать:' : 'Здесь пока пусто.');
+  return show(ctx, edit, text, kb);
+}
+
+function reviewView(ctx, r, edit = true) {
+  return show(ctx, edit, reviewText(r), reviewKb(r));
+}
+
+const REVIEW_ADD_STEPS = {
+  name: 'Шаг 1/4 — <b>имя автора</b> так, как оно будет видно клиентам (например «Алексей К.»).',
+  rate: 'Шаг 2/4 — <b>оценка</b>: нажмите кнопку или пришлите число от 1 до 5.',
+  text: 'Шаг 3/4 — <b>текст отзыва</b> (от 5 до 1000 символов).',
+  date: 'Шаг 4/4 — <b>дата и время</b> по Москве: <code>24.09.2026 14:30</code>, <code>24.09 14:30</code> или «сейчас».',
+};
+
+const rateKb = (prefix, back) => {
+  const kb = new InlineKeyboard();
+  for (let n = 1; n <= 5; n += 1) kb.text('★'.repeat(n), `${prefix}${n}`).row();
+  if (back) kb.text('↩️ Отмена', back);
+  return kb;
+};
+
+function reviewAddPrompt(ctx, draft, step) {
+  flows.set(ctx.from.id, { type: 'rvadd', step, draft });
+  const text = `➕ <b>Новый отзыв</b>\n${REVIEW_ADD_STEPS[step]}\n/cancel — отмена`;
+  if (step === 'rate') return ctx.reply(text, { parse_mode: 'HTML', reply_markup: rateKb('rva:rate:') });
+  if (step === 'date') return ctx.reply(text, { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🕒 Сейчас', 'rva:date:now') });
+  return ctx.reply(text, { parse_mode: 'HTML' });
+}
+
+async function reviewAddStep(ctx, f, value) {
+  const draft = { ...f.draft };
+  if (f.step === 'name') {
+    if (!value || value.length > 60) return ctx.reply('Имя — от 1 до 60 символов.');
+    draft.name = value;
+    return reviewAddPrompt(ctx, draft, 'rate');
+  }
+  if (f.step === 'rate') {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1 || n > 5) return ctx.reply('Оценка — целое число от 1 до 5.');
+    draft.rating = n;
+    return reviewAddPrompt(ctx, draft, 'text');
+  }
+  if (f.step === 'text') {
+    if (value.length < 5 || value.length > store.REVIEW_TEXT_MAX) return ctx.reply(`Текст — от 5 до ${store.REVIEW_TEXT_MAX} символов.`);
+    draft.text = value;
+    return reviewAddPrompt(ctx, draft, 'date');
+  }
+  if (f.step === 'date') {
+    const ts = parseMsk(value);
+    if (!Number.isFinite(ts)) return ctx.reply('Не понял дату. Формат: 24.09.2026 14:30 (по Москве) или «сейчас».');
+    flows.delete(ctx.from.id);
+    const r = store.createReview({ ...draft, createdAt: ts, status: 'approved', source: 'admin' });
+    await ctx.reply(`✅ Отзыв #${r.id} добавлен и опубликован. Его можно отредактировать или скрыть:`);
+    return reviewView(ctx, r, false);
+  }
+}
+
+const REVIEW_EDIT = {
+  name: 'новое <b>имя автора</b> (до 60 символов)',
+  text: `новый <b>текст отзыва</b> (5–${store.REVIEW_TEXT_MAX} символов)`,
+  date: 'новую <b>дату и время</b> по Москве: <code>24.09.2026 14:30</code>, <code>24.09 14:30</code> или «сейчас»',
+};
+
+async function reviewEditText(ctx, f, value) {
+  const r = store.getReview(f.reviewId);
+  if (!r) {
+    flows.delete(ctx.from.id);
+    return ctx.reply('Отзыв не найден — возможно, его удалили.', { reply_markup: homeKb() });
+  }
+  let patch;
+  if (f.field === 'name') {
+    if (!value || value.length > 60) return ctx.reply('Имя — от 1 до 60 символов.');
+    patch = { name: value };
+  } else if (f.field === 'text') {
+    if (value.length < 5 || value.length > store.REVIEW_TEXT_MAX) return ctx.reply(`Текст — от 5 до ${store.REVIEW_TEXT_MAX} символов.`);
+    patch = { text: value };
+  } else if (f.field === 'date') {
+    const ts = parseMsk(value);
+    if (!Number.isFinite(ts)) return ctx.reply('Не понял дату. Формат: 24.09.2026 14:30 (по Москве) или «сейчас».');
+    patch = { createdAt: ts };
+  }
+  flows.delete(ctx.from.id);
+  const upd = store.updateReview(r.id, patch);
+  await syncReviewCards(upd);
+  await ctx.reply('✅ Отзыв обновлён — изменения уже на сайте.');
+  return reviewView(ctx, upd, false);
+}
+
+async function onReviewCallback(ctx, d, prevFlow) {
+  if (d === 'm:reviews') return reviewsMenu(ctx, true);
+  let m = d.match(/^rvl:(pending|approved|rejected):(\d+)$/);
+  if (m) return reviewsList(ctx, m[1], Number(m[2]), true);
+  if (d === 'rv:add') return reviewAddPrompt(ctx, {}, 'name');
+  m = d.match(/^rva:(rate|date):(\w+)$/);
+  if (m) {
+    if (!prevFlow || prevFlow.type !== 'rvadd' || prevFlow.step !== m[1]) {
+      return ctx.reply('Этот шаг уже неактуален. Начните заново: ⭐ Отзывы → ➕ Добавить отзыв.', { reply_markup: homeKb() });
+    }
+    return reviewAddStep(ctx, prevFlow, m[1] === 'date' ? 'сейчас' : m[2]);
+  }
+  m = d.match(/^rv:(\d+)(?::(\w+))?(?::(\w+))?$/);
+  if (!m) return false;
+  const r = store.getReview(m[1]);
+  if (!r) return ctx.editMessageText('Отзыв не найден — возможно, его удалили.', { reply_markup: new InlineKeyboard().text('⭐ Отзывы', 'm:reviews') }).catch(() => {});
+  const act = m[2];
+  const arg = m[3];
+  const here = { chat: ctx.chat?.id, msg: ctx.callbackQuery?.message?.message_id };
+  if (!act) return reviewView(ctx, r, true);
+  if (act === 'approve' || act === 'reject') {
+    const upd = store.updateReview(r.id, { status: act === 'approve' ? 'approved' : 'rejected', moderatedBy: String(ctx.from.id) });
+    await reviewView(ctx, upd, true);
+    await syncReviewCards(upd, here);
+    return;
+  }
+  if (act === 'rate') {
+    if (arg) {
+      const upd = store.updateReview(r.id, { rating: Number(arg) });
+      await reviewView(ctx, upd, true);
+      return syncReviewCards(upd, here);
+    }
+    return show(ctx, true, `⭐ Отзыв #${r.id} — выберите новую оценку (сейчас ${r.rating}/5):`, rateKb(`rv:${r.id}:rate:`, `rv:${r.id}`));
+  }
+  if (act === 'date' && arg === 'now') {
+    const upd = store.updateReview(r.id, { createdAt: Date.now() });
+    await reviewView(ctx, upd, true);
+    return syncReviewCards(upd, here);
+  }
+  if (REVIEW_EDIT[act]) {
+    flows.set(ctx.from.id, { type: 'rvedit', field: act, reviewId: r.id });
+    const current = act === 'date' ? fmtMsk(r.createdAt) + ' (МСК)' : act === 'name' ? esc(r.name) : `«${esc(r.text)}»`;
+    const kb = act === 'date' ? new InlineKeyboard().text('🕒 Сейчас', `rv:${r.id}:date:now`) : undefined;
+    return ctx.reply(`✏️ Отзыв #${r.id}. Отправьте ${REVIEW_EDIT[act]}.\n\nСейчас: ${current}\n/cancel — отмена`,
+      { parse_mode: 'HTML', ...(kb ? { reply_markup: kb } : {}) });
+  }
+  if (act === 'del') {
+    return show(ctx, true, `🗑 Удалить отзыв #${r.id} от ${esc(r.name)} безвозвратно?`,
+      new InlineKeyboard().text('🗑 Да, удалить', `rv:${r.id}:delok`).text('↩️ Отмена', `rv:${r.id}`));
+  }
+  if (act === 'delok') {
+    const gone = store.deleteReview(r.id);
+    await syncReviewCards(gone, here);
+    return show(ctx, true, `🗑 Отзыв #${r.id} удалён.`, new InlineKeyboard().text('⭐ Отзывы', 'm:reviews').text('↩️ Меню', 'm:home'));
+  }
+  return false;
+}
+
 /* ---------- меню ---------- */
 
 async function mainMenu(ctx, edit = false) {
   const s = store.get().settings;
   const active = store.activeOrders().length;
   const supportCount = store.getSupportThreads().length;
+  const pendingReviews = store.reviewsByStatus('pending').length;
   const kb = new InlineKeyboard()
     .text(`📥 Заявки${active ? ` (${active})` : ''}`, 'm:orders')
     .text('📊 Статистика', 'm:stats')
@@ -277,13 +527,16 @@ async function mainMenu(ctx, edit = false) {
     .text('🔗 Ссылки', 'm:links')
     .row()
     .text(`💬 Поддержка${supportCount ? ` (${supportCount})` : ''}`, 'm:support')
+    .text(`⭐ Отзывы${pendingReviews ? ` (${pendingReviews})` : ''}`, 'm:reviews')
+    .row()
     .text('👥 Админы', 'm:admins');
   const text =
     `🌌 <b>PRICELEX | Official</b> — пульт оператора\n` +
     `${s.online ? '🟢 Обменник <b>ОНЛАЙН</b>' : '🔴 Обменник <b>ОФФЛАЙН</b>'}\n` +
     `₿ ${fmtRub(s.rateBTC)} · G ${fmtRub(s.rateGRAM)} (комиссия ${s.feePercent ?? 0}%)\n` +
     `Официальный курс ${s.rateUpdatedAt ? 'от ' + fmtDate(s.rateUpdatedAt) + ` (${esc(s.rateSource || '?')})` : 'ещё не подтянут — действуют стартовые курсы'}\n` +
-    `Активных заявок: ${active} · 💬 Чатов: ${supportCount}`;
+    `Активных заявок: ${active} · 💬 Чатов: ${supportCount}` +
+    (pendingReviews ? `\n⭐ Отзывов на модерации: <b>${pendingReviews}</b>` : '');
   if (edit) await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
   else await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
 }
@@ -319,7 +572,7 @@ function settingsKb(s) {
     .text('🎁 Реф. %', 's:ref')
     .row()
     .text('📢 Объявление', 's:ann')
-    .text('📇 Оператор', 's:op')
+    .text('🛟 Поддержка', 's:op')
     .row()
     .text('📣 Канал', 's:ch')
     .text('💬 Чат', 's:chat')
@@ -341,7 +594,7 @@ function settingsText(s) {
     `🎁 Реферальный процент: <b>${s.refPercent}%</b>\n` +
     `Статус: ${s.online ? '🟢 Онлайн' : '🔴 Оффлайн'}\n` +
     `📢 ${esc(s.announcement)}\n` +
-    `📇 ${esc(s.operator)} · 📣 ${esc(s.channel)}\n💬 ${esc(s.chat)}`
+    `🛟 Поддержка: ${esc(s.operator)} · 📣 ${esc(s.channel)}\n💬 ${esc(s.chat)}`
   );
 }
 
@@ -368,12 +621,10 @@ async function statsMenu(ctx, edit = true) {
 
 async function linksMenu(ctx, edit = true) {
   const s = store.get().settings;
-  const url = s.publicUrl || '(появится автоматически после первого открытия сайта)';
   const text =
     `🔗 <b>Ссылки</b>\n\n` +
-    `🌐 Сайт обменника:\n${esc(url)}\n\n` +
-    `Адрес определяется автоматически при первом открытии сайта и сразу прописывается в кнопку меню Telegram.\n\n` +
-    `📇 Оператор: ${esc(s.operator)}\n📣 Канал: ${esc(s.channel)}\n💬 Чат: ${esc(s.chat)}`;
+    `🛟 Поддержка: ${esc(s.operator)}\n📣 Канал: ${esc(s.channel)}\n💬 Чат: ${esc(s.chat)}\n\n` +
+    `Приложение открывается кнопкой меню этого бота.`;
   const kb = new InlineKeyboard().text('↩️ Назад', 'm:home');
   if (edit) await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
   else await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
@@ -387,7 +638,7 @@ const SET_FIELDS = {
   max: { label: 'максимальную сумму обмена (₽)', num: true, key: 'maxRub' },
   ref: { label: 'реферальный процент (например 1)', num: true, key: 'refPercent' },
   ann: { label: 'текст объявления для сайта' },
-  op: { label: 'юзернейм оператора (например @pricelex_operator)' },
+  op: { label: 'юзернейм поддержки (например @stonym0ntana)' },
   ch: { label: 'ссылку на канал' },
   chat: { label: 'ссылку на чат' },
 };
@@ -425,6 +676,8 @@ async function handleAdminText(ctx) {
     flows.delete(ctx.from.id);
     return ctx.reply('❌ Ввод отменён.', { reply_markup: homeKb() });
   }
+  if (f.type === 'rvadd') return reviewAddStep(ctx, f, text);
+  if (f.type === 'rvedit') return reviewEditText(ctx, f, text);
   if (f.type === 'support') {
     if (!text || text.length > 2000) return ctx.reply('Сообщение должно содержать от 1 до 2000 символов.');
     flows.delete(ctx.from.id);
@@ -521,6 +774,8 @@ function homeKb() {
     .text('🔗 Ссылки', 'm:links')
     .row()
     .text('💬 Поддержка', 'm:support')
+    .text('⭐ Отзывы', 'm:reviews')
+    .row()
     .text('👥 Админы', 'm:admins');
 }
 
@@ -539,6 +794,11 @@ function register() {
     if (!isAdmin(ctx)) return;
     flows.delete(ctx.from.id);
     return adminsMenu(ctx);
+  });
+  bot.command('reviews', (ctx) => {
+    if (!isAdmin(ctx)) return;
+    flows.delete(ctx.from.id);
+    return reviewsMenu(ctx, false);
   });
   bot.command('support', (ctx) => {
     if (!isAdmin(ctx)) return;
@@ -567,11 +827,11 @@ function register() {
     if (!isAdmin(ctx)) {
       const url = store.get().settings.publicUrl;
       if (url) {
-        return ctx.reply('🌌 PRICELEX — обмен BTC и GRAM', {
-          reply_markup: new InlineKeyboard().webApp('Открыть обменник', url),
+        return ctx.reply('🌌 PRICELEX — агентство криптоброкеров. BTC и GRAM по лучшей цене рынка.', {
+          reply_markup: new InlineKeyboard().webApp('Открыть PRICELEX', url),
         });
       }
-      return ctx.reply('🌌 PRICELEX — обменник скоро будет доступен. Откройте сайт по ссылке из панели оператора.');
+      return ctx.reply('🌌 PRICELEX — агентство криптоброкеров. Приложение откроется кнопкой меню, как только будет готово.');
     }
     flows.delete(ctx.from.id);
     await mainMenu(ctx, false);
@@ -587,7 +847,13 @@ function register() {
     const d = ctx.callbackQuery.data;
     await ctx.answerCallbackQuery().catch(() => {});
     if (!isAdmin(ctx)) return;
+    const prevFlow = flows.get(ctx.from.id);
     flows.delete(ctx.from.id);
+
+    if (d === 'm:reviews' || d.startsWith('rv')) {
+      const handled = await onReviewCallback(ctx, d, prevFlow);
+      if (handled !== false) return;
+    }
 
     if (d === 'm:home') return mainMenu(ctx, true);
     if (d === 'm:orders') return ordersMenu(ctx, true);
@@ -695,6 +961,7 @@ function createBot(options = {}) {
   register();
   bus.on('order_event', onOrderEvent);
   bus.on('support_message', onSupportMessage);
+  bus.on('review_event', onReviewEvent);
   return bot;
 }
 
@@ -713,6 +980,7 @@ async function startBot() {
       { command: 'start', description: 'Главное меню' },
       { command: 'menu', description: 'Показать меню' },
       { command: 'support', description: 'Чаты поддержки' },
+      { command: 'reviews', description: 'Отзывы и модерация' },
     ])
     .catch(() => {});
 
@@ -723,25 +991,25 @@ async function startBot() {
     if (store.get().flags.onboardedAdmins?.[id]) return;
     try {
       await bot.api.sendMessage(id,
-        `🚀 <b>PRICELEX запущен!</b>\n🤖 @${esc(bot.botInfo.username)}\n/start — пульт оператора\n/admins — список админов\n/support — чаты поддержки\nНовые заявки будут приходить всем операторам.`,
+        `🚀 <b>PRICELEX запущен!</b>\n🤖 @${esc(bot.botInfo.username)}\n/start — пульт оператора\n/admins — список админов\n/support — чаты поддержки\n/reviews — отзывы и модерация\nНовые заявки будут приходить всем операторам.`,
         { parse_mode: 'HTML' });
       store.mutate((db) => { (db.flags.onboardedAdmins ||= {})[id] = true; });
     } catch (e) { console.error(`[bot] onboarding ${id}:`, e.message); }
   }));
   for (const order of store.activeOrders()) await sendOrUpdateOrderAdmin(order);
 
-  const applyPublicUrl = async (url, notifyAdmin = true) => {
+  // Адрес приложения нигде не публикуется: он только прописывается в кнопку меню бота.
+  const applyPublicUrl = async (url) => {
     try {
-      await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Открыть обменник', web_app: { url } } });
-      console.log('[PRICELEX] кнопка меню Telegram настроена на', url);
+      await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'PRICELEX', web_app: { url } } });
+      console.log('[PRICELEX] кнопка меню Telegram настроена');
     } catch (e) {
       console.error('[PRICELEX] setChatMenuButton:', e.message);
     }
-    if (notifyAdmin) await broadcast(`🔗 Публичный адрес обменника:\n${url}`);
   };
-  bus.on('public_url', (url) => applyPublicUrl(url, true));
+  bus.on('public_url', (url) => applyPublicUrl(url));
   if (store.get().settings.publicUrl) {
-    applyPublicUrl(store.get().settings.publicUrl, false).catch(() => {});
+    applyPublicUrl(store.get().settings.publicUrl).catch(() => {});
   }
 
   bot.catch((e) => console.error('[bot error]', e.message));

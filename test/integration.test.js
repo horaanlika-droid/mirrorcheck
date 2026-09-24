@@ -347,3 +347,93 @@ test('rate history endpoint serves real observations for the Web App chart', asy
   assert.ok(dense.points.length <= 181, `ожидалось <= 181 точек, получено ${dense.points.length}`);
   assert.equal(dense.points[dense.points.length - 1].btc, 9_000_399);
 });
+
+test('reviews: only after a completed own order, one per order, hidden until moderated by any admin', async () => {
+  const o = await newOrder();
+  const send = (body, id = 999) => api('/api/reviews', { id, method: 'POST', body: { orderId: o.id, rating: 5, text: 'Всё прошло отлично', ...body } });
+  assert.equal((await send({})).status, 403, 'до завершения обмена отзыв недоступен');
+  store.updateOrder(o.id, { status: 'completed' });
+  assert.equal((await send({}, 1234)).status, 403, 'чужая заявка');
+  assert.equal((await send({ rating: 6 })).status, 400);
+  assert.equal((await send({ text: 'ok' })).status, 400);
+
+  calls = [];
+  const r = await send({ text: 'Брокер нашёл лучший курс <b>спасибо</b>' });
+  assert.equal(r.status, 200);
+  const { review, order } = await r.json();
+  assert.equal(store.getReview(review.id).status, 'pending');
+  assert.ok(!('status' in review), 'клиенту статус модерации не отдаётся');
+  assert.deepEqual(order.review, { id: review.id });
+  assert.equal((await send({})).status, 409, 'второй отзыв по той же заявке');
+
+  // Карточка модерации ушла всем админам, HTML клиента экранирован.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const cards = calls.filter((c) => c.method === 'sendMessage' && /Новый отзыв/.test(c.text));
+  assert.deepEqual(cards.map((c) => String(c.chat_id)).sort(), admins.all().sort());
+  assert.ok(cards.every((c) => c.text.includes('&lt;b&gt;спасибо&lt;/b&gt;')));
+
+  const pub = async () => (await (await fetch(`http://127.0.0.1:${server.address().port}/api/reviews`)).json());
+  const asAuthor = async () => (await (await api('/api/reviews')).json());
+  const asStranger = async () => (await (await api('/api/reviews', { id: 4321 })).json());
+  assert.ok(!(await pub()).reviews.some((x) => x.id === review.id), 'до модерации гости отзыв не видят');
+  assert.ok(!(await asStranger()).reviews.some((x) => x.id === review.id), 'другие клиенты — тоже');
+  const mine = (await asAuthor()).reviews.find((x) => x.id === review.id);
+  assert.ok(mine, 'автор сразу видит свой отзыв опубликованным');
+  assert.ok(!('status' in mine));
+
+  await click(999, `rv:${review.id}:approve`); // посторонний не может модерировать
+  assert.equal(store.getReview(review.id).status, 'pending');
+
+  calls = [];
+  await click(222, `rv:${review.id}:approve`);
+  assert.equal(store.getReview(review.id).status, 'approved');
+  assert.ok((await pub()).reviews.some((x) => x.id === review.id));
+  assert.ok(!calls.some((c) => c.method === 'sendMessage' && String(c.chat_id) === '999'), 'клиенту ничего не сообщаем о модерации');
+  assert.ok(calls.some((c) => c.method === 'editMessageText' && String(c.chat_id) === '111'), 'карточки других админов синхронизированы');
+
+  await click(111, `rv:${review.id}:reject`);
+  assert.equal(store.getReview(review.id).status, 'rejected');
+  assert.ok(!(await pub()).reviews.some((x) => x.id === review.id));
+  assert.ok((await asAuthor()).reviews.some((x) => x.id === review.id), 'даже скрытый отзыв автор продолжает видеть');
+});
+
+test('admin adds a review in the bot and edits name, rating, text, date and time (MSK)', async () => {
+  await click(111, 'rv:add');
+  await text(111, 'Алексей К.');
+  await click(111, 'rva:rate:4');
+  await text(111, 'Сделка прошла спокойно и быстро');
+  await text(111, '01.09.2026 14:30');
+  const r = store.reviewsByStatus().find((x) => x.name === 'Алексей К.');
+  assert.ok(r, 'отзыв создан');
+  assert.equal(r.status, 'approved');
+  assert.equal(r.source, 'admin');
+  assert.equal(r.rating, 4);
+  assert.equal(r.createdAt, Date.UTC(2026, 8, 1, 11, 30), '14:30 по Москве = 11:30 UTC');
+
+  await click(222, `rv:${r.id}:name`);
+  await text(222, 'Алексей');
+  await click(222, `rv:${r.id}:rate:5`);
+  await click(222, `rv:${r.id}:text`);
+  await text(222, 'Новый текст отзыва');
+  await click(222, `rv:${r.id}:date`);
+  await text(222, '31.02.2026 10:00'); // несуществующая дата — отклоняется, ввод продолжается
+  await text(222, '15.08.2025 09:05');
+  const upd = store.getReview(r.id);
+  assert.equal(upd.name, 'Алексей');
+  assert.equal(upd.rating, 5);
+  assert.equal(upd.text, 'Новый текст отзыва');
+  assert.equal(upd.createdAt, Date.UTC(2025, 7, 15, 6, 5));
+
+  await click(111, `rv:${r.id}:delok`);
+  assert.equal(store.getReview(r.id), null);
+});
+
+test('public address is never shown; support contact defaults to @stonym0ntana', async () => {
+  const s = await (await fetch(`http://127.0.0.1:${server.address().port}/api/settings`)).json();
+  assert.ok(!('publicUrl' in s));
+  assert.equal(s.operator, '@stonym0ntana');
+  calls = [];
+  await bus.emit('public_url', 'https://secret.example');
+  await click(111, 'm:links');
+  assert.ok(!calls.some((c) => /secret\.example|Публичный адрес/.test(c.text || '')));
+});
