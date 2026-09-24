@@ -167,13 +167,47 @@ test('empty history keeps a friendly state and does not render a chart', async (
   assert.ok(!view.querySelector('#volChart'));
 });
 
-test('navigation has a reviews tab and the help tab uses a clean question-mark icon', async (t) => {
+test('five-tab navigation opens profile, info and support as secondary screens', async (t) => {
   const a = await app(t);
   const tabs = [...a.document.querySelectorAll('.nav button')].map((b) => b.dataset.tab);
-  assert.deepEqual(tabs, ['exchange', 'history', 'reviews', 'refs', 'broker', 'support', 'info']);
-  const help = a.document.querySelector('.nav button[data-tab="support"] svg');
-  assert.ok(help.querySelector('path') && help.querySelector('circle'), 'дуга вопросительного знака + точка');
-  assert.equal(help.querySelectorAll('path').length, 1);
+  assert.deepEqual(tabs, ['exchange', 'history', 'reviews', 'refs', 'profile']);
+  assert.equal(a.document.querySelector('#appHeader .hdr-logo').textContent, 'PRICELEX');
+
+  a.document.querySelector('.nav button[data-tab="profile"]').click();
+  assert.ok(a.document.querySelector('#view-profile .profile-identity'));
+  assert.ok(a.document.querySelector('.nav').classList.contains('hidden'));
+  a.document.querySelector('#view-profile [data-go="info"]').click();
+  assert.equal(a.document.querySelector('#appHeader .hdr-page-title').textContent, 'Инфо');
+  assert.deepEqual([...a.document.querySelectorAll('.nav button')].map((b) => b.dataset.tab), ['exchange', 'history', 'reviews', 'refs', 'info']);
+  a.document.querySelector('#headerBack').click();
+  assert.ok(!a.document.querySelector('#view-profile').classList.contains('hidden'));
+  a.document.querySelector('#view-profile [data-go="support"]').click();
+  assert.equal(a.document.querySelector('#appHeader .hdr-page-title').textContent, 'Помощь');
+  assert.ok(a.document.querySelector('.nav').classList.contains('hidden'));
+  a.document.querySelector('#headerBack').click();
+  assert.ok(!a.document.querySelector('#view-profile').classList.contains('hidden'));
+});
+
+test('reference stylesheet is applied after the legacy component sheet', () => {
+  const base = html.indexOf('href="/style.css"');
+  const reference = html.indexOf('href="/reference.css"');
+  assert.ok(base >= 0 && reference > base);
+  const css = fs.readFileSync(path.join(__dirname, '../public/reference.css'), 'utf8');
+  assert.match(css, /--bg-1:\s*#091522/i);
+  assert.match(css, /grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/);
+});
+
+test('active order is a back-navigable subpage with a resume card on exchange', async (t) => {
+  const active = order(99, 'new', 'BTC', 5000, 0, 0.0005);
+  const a = await app(t, { orders: [active] });
+  assert.equal(a.document.querySelector('#appHeader .hdr-page-title').textContent, 'Заявка');
+  assert.ok(a.document.querySelector('.nav').classList.contains('hidden'));
+  a.document.querySelector('#headerBack').click();
+  assert.equal(a.document.querySelector('#appHeader .hdr-logo').textContent, 'PRICELEX');
+  assert.ok(a.document.querySelector('#activeOrder'));
+  assert.ok(!a.document.querySelector('#exForm').classList.contains('hidden'));
+  a.document.querySelector('#activeOrder').click();
+  assert.equal(a.document.querySelector('#appHeader .hdr-page-title').textContent, 'Заявка');
 });
 
 test('chart marks the dip and calls out the best time to buy when the rate sits near the low', async (t) => {
@@ -223,7 +257,8 @@ test('reviews tab explains that a review needs a completed exchange', async (t) 
 
 test('info tab carries the founder speech word for word and never mentions a fee', async (t) => {
   const a = await app(t);
-  a.document.querySelector('.nav button[data-tab="info"]').click();
+  a.document.querySelector('.nav button[data-tab="profile"]').click();
+  a.document.querySelector('#view-profile [data-go="info"]').click();
   await tick();
   const lines = [...a.document.querySelectorAll('#speech .sp-line')].map((p) => p.textContent.replace(/\s+/g, ' ').trim());
   assert.deepEqual(lines, [

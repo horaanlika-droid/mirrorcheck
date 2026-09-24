@@ -10,8 +10,8 @@
     try {
       tg.ready();
       tg.expand();
-      tg.setHeaderColor && tg.setHeaderColor('#0A0A09');
-      tg.setBackgroundColor && tg.setBackgroundColor('#0A0A09');
+      tg.setHeaderColor && tg.setHeaderColor('#091522');
+      tg.setBackgroundColor && tg.setBackgroundColor('#091522');
     } catch (e) {}
     initData = tg.initData || '';
     startParam = tg.startParam || '';
@@ -32,6 +32,7 @@
   const TERMINAL = ['completed', 'rejected', 'cancelled'];
   const S = {
     settings: null, me: null, orders: [], order: null, tab: 'exchange',
+    returnTab: 'exchange', orderOpen: false,
     currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [],
     history: { points: [], updatedFor: null },
     reviews: { list: [], stats: { count: 0, avg: 0 }, loaded: false },
@@ -157,6 +158,11 @@
     bolt: '<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>',
     send: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>',
     case: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.5" width="18" height="12.5" rx="2.5"/><path d="M8.5 7.5V6a2.5 2.5 0 0 1 2.5-2.5h2A2.5 2.5 0 0 1 15.5 6v1.5"/><path d="M3 13h18"/></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
+    user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.8-3.4 3.3-5.2 7.5-5.2s6.7 1.8 7.5 5.2"/></svg>',
+    menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
+    bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>',
+    chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
   };
 
   /* ---------- график (реальная история курса и сумм) ---------- */
@@ -232,13 +238,13 @@
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <linearGradient id="plLine${id}" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stop-color="#7a3f18"/><stop offset="50%" stop-color="#d97838"/><stop offset="100%" stop-color="#f2b06c"/>
+            <stop offset="0%" stop-color="#a07a32"/><stop offset="50%" stop-color="#dfbb65"/><stop offset="100%" stop-color="#f5d98e"/>
           </linearGradient>
           <linearGradient id="plArea${id}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(217,120,56,.26)"/><stop offset="100%" stop-color="rgba(217,120,56,0)"/>
+            <stop offset="0%" stop-color="rgba(237,201,110,.22)"/><stop offset="100%" stop-color="rgba(237,201,110,0)"/>
           </linearGradient>
           <radialGradient id="plDot${id}">
-            <stop offset="0%" stop-color="rgba(255,205,150,.5)"/><stop offset="100%" stop-color="rgba(255,205,150,0)"/>
+            <stop offset="0%" stop-color="rgba(255,226,151,.45)"/><stop offset="100%" stop-color="rgba(255,226,151,0)"/>
           </radialGradient>
           <linearGradient id="plDip${id}" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="rgba(95,186,151,0)"/><stop offset="70%" stop-color="rgba(95,186,151,.10)"/><stop offset="100%" stop-color="rgba(95,186,151,.22)"/>
@@ -362,13 +368,59 @@
     }
   }
 
+  function isOrderPage() {
+    return S.tab === 'exchange' && Boolean(S.order && S.orderOpen);
+  }
+
+  function isSubpage() {
+    return ['profile', 'broker', 'support', 'desk'].includes(S.tab) || isOrderPage();
+  }
+
   function renderHeader() {
-    const s = S.settings;
-    let html = s.online
-      ? '<span class="pill"><span class="dot"></span>ОНЛАЙН</span>'
-      : '<span class="pill off"><span class="dot"></span>ОФФЛАЙН</span>';
-    if (S.isDemo) html += ' <span class="pill demo">ДЕМО</span>';
-    $('#hdrStatus').innerHTML = html;
+    const header = $('#appHeader');
+    if (!header) return;
+    const s = S.settings || {};
+    const home = S.tab === 'exchange' && !isOrderPage();
+    const status = s.online
+      ? '<span class="pill"><span class="dot"></span>Live</span>'
+      : '<span class="pill off"><span class="dot"></span>Offline</span>';
+    const demoTag = S.isDemo ? '<span class="pill demo">ДЕМО</span>' : '';
+
+    if (home) {
+      header.innerHTML = `
+        <div class="hdr-home">
+          <div class="hdr-brand"><span class="hdr-logo">PRICELEX</span><span class="hdr-sub">PRIVATE CRYPTO BROKERAGE</span></div>
+          <div class="hdr-actions"><div class="hdr-status">${status}${demoTag}</div><button class="icon-button" id="profileMenu" type="button" aria-label="Открыть профиль">${ICONS.menu}</button></div>
+        </div>`;
+      $('#profileMenu').addEventListener('click', () => { haptic('light'); goTab('profile'); });
+      return;
+    }
+
+    const titles = {
+      history: 'История', reviews: 'Отзывы', refs: 'Рефералы', profile: 'Профиль',
+      broker: 'Стать брокером', support: 'Помощь', desk: 'Деск', info: 'Инфо',
+    };
+    const title = isOrderPage() ? 'Заявка' : (titles[S.tab] || 'PRICELEX');
+    header.innerHTML = `
+      <div class="hdr-page">
+        <button class="icon-button back-button" id="headerBack" type="button" aria-label="Назад">${ICONS.back}</button>
+        <div class="hdr-page-title">${title}</div>
+        <div class="hdr-page-spacer" aria-hidden="true"></div>
+      </div>`;
+    $('#headerBack').addEventListener('click', goBack);
+  }
+
+  function goBack() {
+    if (isOrderPage()) {
+      S.orderOpen = false;
+      renderExchange();
+      renderHeader();
+      renderNav();
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      return;
+    }
+    goTab(S.returnTab || 'exchange');
   }
 
   function renderAnnounce() {
@@ -380,18 +432,24 @@
 
   function goTab(tab) {
     if (tab === S.tab) return;
+    S.returnTab = S.tab;
     S.tab = tab;
     document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
     const view = $('#view-' + tab);
     if (view) view.classList.remove('hidden');
+    $('.app').classList.toggle('subpage', isSubpage());
+    renderHeader();
     renderNav();
     if (tab === 'history') renderHistory();
     if (tab === 'refs') renderRefs();
+    if (tab === 'profile') renderProfile();
     if (tab === 'broker') { renderBroker(); loadBrokerStatus(); }
     if (tab === 'desk') renderDesk();
     if (tab === 'info') renderInfo();
     if (tab === 'support') renderSupport();
     if (tab === 'reviews') { renderReviews(); loadReviews(); }
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
   }
 
   /* ---------- страница брокера для клиента: минимум — только скорость ---------- */
@@ -424,40 +482,54 @@
   }
 
   function renderNav() {
+    const nav = $('#nav');
+    const visible = ['exchange', 'history', 'reviews', 'refs', 'info'].includes(S.tab) && !isOrderPage();
+    nav.classList.toggle('hidden', !visible);
+    $('.app').classList.toggle('subpage', isSubpage());
+    if (!visible) { nav.innerHTML = ''; return; }
+
+    const last = S.tab === 'info'
+      ? ['info', 'Инфо', ICONS.info]
+      : ['profile', 'Профиль', ICONS.user];
     const items = [
       ['exchange', 'Обмен', ICONS.swap],
       ['history', 'История', ICONS.clock],
       ['reviews', 'Отзывы', ICONS.star],
       ['refs', 'Рефералы', ICONS.users],
-      ['broker', 'Брокер', ICONS.case],
-      ['support', 'Помощь', ICONS.chat],
-      ['info', 'Инфо', ICONS.info],
+      last,
     ];
-    $('#nav').innerHTML = items
-      .map(([id, l, ic]) => `<button data-tab="${id}" class="${S.tab === id ? 'on' : ''}">${ic}<span>${l}</span>${id === 'support' && S.support.length ? `<span class="badge">${S.support.length > 99 ? '99+' : S.support.length}</span>` : ''}</button>`)
+    nav.innerHTML = items
+      .map(([id, label, icon]) => `<button type="button" data-tab="${id}" class="${S.tab === id ? 'on' : ''}">${icon}<span>${label}</span></button>`)
       .join('');
-    $('#nav').querySelectorAll('button').forEach((b) =>
-      b.addEventListener('click', () => {
-        if (S.tab === b.dataset.tab) return;
+    nav.querySelectorAll('button').forEach((button) =>
+      button.addEventListener('click', () => {
+        if (S.tab === button.dataset.tab) return;
         haptic('light');
-        goTab(b.dataset.tab);
+        goTab(button.dataset.tab);
       })
     );
   }
 
   function renderExchange() {
+    const hasOpenOrder = S.order && !TERMINAL.includes(S.order.status);
     $('#view-exchange').innerHTML = `
-      <div id="exForm" class="${S.order ? 'hidden' : ''}">
+      <div class="exchange-heading ${S.order && S.orderOpen ? 'hidden' : ''}">
+        <div><h1>Обмен</h1><p>RUB <span>→</span> BTC / GRAM</p></div>
+      </div>
+      ${hasOpenOrder && !S.orderOpen ? `
+        <button class="active-order" id="activeOrder" type="button">
+          <span class="active-order-mark">${ICONS.clock}</span>
+          <span class="active-order-copy"><b>У вас есть активная заявка</b><small>#${S.order.id} · ${STATUS[S.order.status]?.label || 'В работе'}</small></span>
+          ${ICONS.chevron}
+        </button>` : ''}
+      <div id="exForm" class="${S.order && S.orderOpen ? 'hidden' : ''}">
+        <div class="seg block currency-segment" id="segCur">
+          <button type="button" data-c="BTC" class="${S.currency === 'BTC' ? 'on' : ''}">₿ BTC</button>
+          <button type="button" data-c="GRAM" class="${S.currency === 'GRAM' ? 'on' : ''}">G GRAM</button>
+        </div>
         <section class="card card-hero lux-hero">
           <div class="hero-art" aria-hidden="true"></div>
-          <div class="hero-frame" aria-hidden="true"></div>
-          <div class="hero-top">
-            <div class="kicker">Курс обмена</div>
-            <div class="seg" id="segCur">
-              <button data-c="BTC" class="${S.currency === 'BTC' ? 'on' : ''}">₿ BTC</button>
-              <button data-c="GRAM" class="${S.currency === 'GRAM' ? 'on' : ''}">G GRAM</button>
-            </div>
-          </div>
+          <div class="hero-top"><div class="kicker">Текущий курс</div></div>
           <div class="hero-amount">
             <div class="metric"><span id="heroRate">—</span><span class="cur">₽</span></div>
             <div id="heroDelta"></div>
@@ -467,15 +539,12 @@
           <div class="chart-axis" id="rateAxis"></div>
           <div id="rateSignal"></div>
           <div class="hero-foot">
-            <div>
-              <div class="k">Курс обновлён</div>
-              <div class="v" id="heroUpdated">—</div>
-            </div>
+            <div><div class="k">Курс обновлён</div><div class="v" id="heroUpdated">—</div></div>
             <button class="ghost-pill" id="howItWorks"><span class="q">?</span>Как это работает</button>
           </div>
         </section>
 
-        <div class="card">
+        <div class="card exchange-form-card">
           <div class="card-title">Сумма обмена</div>
           <div class="f-label"><span>Вы отдаёте</span><span id="mmLabel"></span></div>
           <div class="field">
@@ -494,7 +563,7 @@
           <div class="f-meta" id="fMeta"></div>
         </div>
 
-        <div class="card">
+        <div class="card wallet-card">
           <div class="card-title">Кошелёк получателя</div>
           <div class="field">
             <div class="coin-ic" id="walIc">₿</div>
@@ -506,7 +575,7 @@
 
         <button class="btn btn-primary mt" id="btnGo">${ICONS.bolt}<span>Найти реквизиты</span></button>
       </div>
-      <div id="exOrder" class="${S.order ? '' : 'hidden'}"></div>
+      <div id="exOrder" class="${S.order && S.orderOpen ? '' : 'hidden'}"></div>
     `;
     $('#segCur').querySelectorAll('button').forEach((b) =>
       b.addEventListener('click', () => {
@@ -517,6 +586,13 @@
         renderFormMeta();
       })
     );
+    const activeOrder = $('#activeOrder');
+    if (activeOrder) activeOrder.addEventListener('click', () => {
+      S.orderOpen = true;
+      renderExchange();
+      renderHeader();
+      renderNav();
+    });
     $('#inRub').addEventListener('input', () => { S.calcFrom = 'rub'; renderFormMeta(); });
     $('#inCrypto').addEventListener('input', () => { S.calcFrom = 'crypto'; renderFormMeta(); });
     $('#btnGo').addEventListener('click', submitOrder);
@@ -563,8 +639,11 @@
     const yb = $('#yourBroker');
     if (yb) yb.addEventListener('click', () => { haptic('light'); goTab('desk'); });
     const btn = $('#btnGo');
-    btn.disabled = !s.online;
-    btn.querySelector('span').textContent = s.online ? 'Найти реквизиты' : '⛔ Обмен временно недоступен';
+    const hasOpenOrder = S.order && !TERMINAL.includes(S.order.status);
+    btn.disabled = !s.online || Boolean(hasOpenOrder);
+    btn.querySelector('span').textContent = !s.online
+      ? 'Обмен временно недоступен'
+      : hasOpenOrder ? 'Сначала завершите текущую заявку' : 'Найти реквизиты';
   }
 
   async function submitOrder() {
@@ -593,11 +672,14 @@
         : { rub, currency: S.currency, wallet, startParam, ...cap };
       const r = await api('/api/orders', { method: 'POST', body });
       S.order = r.order;
+      S.orderOpen = true;
       S.orders.unshift(r.order);
       haptic('heavy');
       refreshCaptcha(); // пара сгорела — сразу новая для следующей заявки
       $('#exForm').classList.add('hidden');
       $('#exOrder').classList.remove('hidden');
+      renderHeader();
+      renderNav();
       renderOrderStage();
     } catch (e) {
       err.textContent = e.message;
@@ -814,10 +896,11 @@
 
   function resetToForm() {
     S.order = null;
+    S.orderOpen = false;
     haptic('light');
-    $('#exForm').classList.remove('hidden');
-    $('#exOrder').classList.add('hidden');
-    renderOrderStage();
+    renderExchange();
+    renderHeader();
+    renderNav();
   }
 
   function renderHistory() {
@@ -931,6 +1014,85 @@
       </div>`;
     const cp = $('#cpRef');
     if (cp) cp.addEventListener('click', () => copyText(link, 'Ссылка скопирована'));
+  }
+
+  function renderProfile() {
+    const view = $('#view-profile');
+    const me = S.me || {};
+    const name = String(me.name || 'Клиент PRICELEX').trim();
+    const username = me.username ? '@' + String(me.username).replace(/^@/, '') : `ID ${me.id || '—'}`;
+    const initial = name.charAt(0).toUpperCase() || 'P';
+    const hasOpenOrder = S.order && !TERMINAL.includes(S.order.status);
+
+    view.innerHTML = `
+      <section class="profile-identity card">
+        <div class="profile-avatar" aria-hidden="true">${esc(initial)}</div>
+        <div class="profile-user"><h1>${esc(name)}</h1><span>${esc(username)}</span></div>
+        <div class="profile-member">Клиент PRICELEX</div>
+      </section>
+      ${hasOpenOrder ? `
+        <button class="active-order profile-active-order" id="profileActiveOrder" type="button">
+          <span class="active-order-mark">${ICONS.clock}</span>
+          <span class="active-order-copy"><b>Активная заявка</b><small>#${S.order.id} · ${STATUS[S.order.status]?.label || 'В работе'}</small></span>
+          ${ICONS.chevron}
+        </button>` : ''}
+      <section class="card profile-settings" aria-label="Настройки">
+        <div class="profile-section-title">Настройки</div>
+        <button class="profile-row" type="button" id="profileNotifications">
+          <span class="profile-row-icon">${ICONS.bell}</span>
+          <span class="profile-row-copy"><b>Уведомления</b><small>Статус и сообщения по заявкам</small></span>
+          <span class="profile-toggle" aria-hidden="true"><i></i></span>
+        </button>
+        <div class="profile-row static-row">
+          <span class="profile-row-icon">${ICONS.info}</span>
+          <span class="profile-row-copy"><b>Тема</b></span>
+          <span class="profile-value">Тёмная ${ICONS.chevron}</span>
+        </div>
+        <div class="profile-row static-row">
+          <span class="profile-row-icon language-icon">А</span>
+          <span class="profile-row-copy"><b>Язык</b></span>
+          <span class="profile-value">Русский ${ICONS.chevron}</span>
+        </div>
+      </section>
+      <section class="card profile-links" aria-label="Разделы">
+        <button class="profile-link" type="button" data-go="support">
+          <span class="profile-row-icon">${ICONS.chat}</span><span class="profile-row-copy"><b>Поддержка</b><small>Написать команде PRICELEX</small></span>${ICONS.chevron}
+        </button>
+        <button class="profile-link" type="button" data-go="info">
+          <span class="profile-row-icon">${ICONS.info}</span><span class="profile-row-copy"><b>О приложении</b><small>Правила и информация о сервисе</small></span>${ICONS.chevron}
+        </button>
+        <button class="profile-link" type="button" data-go="broker">
+          <span class="profile-row-icon">${ICONS.case}</span><span class="profile-row-copy"><b>Стать брокером</b><small>Присоединиться к команде</small></span>${ICONS.chevron}
+        </button>
+      </section>
+      <button class="profile-logout" id="profileLogout" type="button">Выйти из приложения</button>
+    `;
+
+    view.querySelectorAll('[data-go]').forEach((button) => button.addEventListener('click', () => {
+      haptic('light');
+      goTab(button.dataset.go);
+    }));
+    const active = $('#profileActiveOrder');
+    if (active) active.addEventListener('click', () => {
+      S.orderOpen = true;
+      goTab('exchange');
+      renderHeader();
+      renderNav();
+    });
+    $('#profileNotifications').addEventListener('click', () => {
+      if (tg && typeof tg.requestWriteAccess === 'function') {
+        try {
+          tg.requestWriteAccess((allowed) => toast(allowed ? 'Уведомления Telegram включены' : 'Telegram не разрешил отправку уведомлений'));
+        } catch { toast('Не удалось открыть настройки уведомлений Telegram'); }
+      } else {
+        toast('Уведомления доступны при запуске приложения в Telegram');
+      }
+    });
+    $('#profileLogout').addEventListener('click', () => {
+      haptic('light');
+      if (tg && typeof tg.close === 'function') tg.close();
+      else toast('Демо-сеанс сохранён в этом браузере');
+    });
   }
 
   /* ---------- капча ---------- */
@@ -1264,6 +1426,11 @@
     const { list, stats, loaded } = S.reviews;
     const eligible = reviewableOrders();
     const hasCompleted = S.orders.some((o) => o.status === 'completed');
+    const distribution = [5, 4, 3, 2, 1].map((rating) => {
+      const count = list.filter((review) => Number(review.rating) === rating).length;
+      const percent = list.length ? Math.round((count / list.length) * 100) : 0;
+      return `<div class="rv-dist-row"><span class="rv-dist-score">${rating} ${ICONS.starFill}</span><span class="rv-dist-track"><i style="width:${percent}%"></i></span><span class="rv-dist-percent">${percent}%</span></div>`;
+    }).join('');
     v.innerHTML = `
       <section class="card editorial rv-hero">
         <div class="ed-art" style="background-image:url('/img/reputation.jpg')" aria-hidden="true"></div>
@@ -1273,6 +1440,7 @@
             <div class="metric">${stats.count ? stats.avg.toFixed(1) : '—'}</div>
             <div>${starsHtml(stats.avg || 0, 'lg')}<div class="metric-sub">${stats.count ? `${stats.count} ${stats.count % 10 === 1 && stats.count % 100 !== 11 ? 'отзыв' : [2, 3, 4].includes(stats.count % 10) && ![12, 13, 14].includes(stats.count % 100) ? 'отзыва' : 'отзывов'} · только после реального обмена` : 'Отзывы только от клиентов, завершивших обмен'}</div></div>
           </div>
+          <div class="rv-breakdown" aria-label="Распределение оценок">${distribution}</div>
         </div>
       </section>
       ${eligible.length ? `<div class="card"><div class="card-title">Ваш отзыв</div>${reviewFormHtml('tabRv', eligible)}</div>` : ''}
@@ -1458,6 +1626,7 @@
             const i = S.orders.findIndex((o) => o.id === order.id);
             if (i >= 0) S.orders[i] = order; else S.orders.unshift(order);
             renderOrderStage();
+            if (S.tab === 'exchange' && !S.orderOpen) renderExchange();
           }
         } catch {}
       }
@@ -1472,6 +1641,7 @@
         const i = S.orders.findIndex((o) => o.id === order.id);
         if (i >= 0) S.orders[i] = order; else S.orders.unshift(order);
         renderOrderStage();
+        if (S.tab === 'exchange' && !S.orderOpen) renderExchange();
         if (order.status === 'completed') haptic('heavy');
       }
     } catch (e) {
@@ -1500,7 +1670,7 @@
   }
 
   async function pollProfile() {
-    if (S.tab !== 'history' && S.tab !== 'refs' && S.tab !== 'reviews') return;
+    if (!['history', 'refs', 'reviews', 'profile'].includes(S.tab)) return;
     const m = await api('/api/me');
     const ordersChanged = JSON.stringify(m.orders) !== JSON.stringify(S.orders);
     S.orders = m.orders;
@@ -1509,6 +1679,7 @@
       const act = S.orders.find((o) => !TERMINAL.includes(o.status));
       if (act) {
         S.order = act;
+        S.orderOpen = true;
         $('#exForm').classList.add('hidden');
         $('#exOrder').classList.remove('hidden');
         renderOrderStage();
@@ -1516,6 +1687,7 @@
     }
     if (S.tab === 'history') renderHistory();
     else if (S.tab === 'refs') renderRefs();
+    else if (S.tab === 'profile') renderProfile();
     else if (S.tab === 'reviews' && ordersChanged && !isTypingReview()) renderReviews();
   }
 
@@ -1563,6 +1735,7 @@
       S.orders = m.orders;
       S.me = m.me;
       S.order = S.orders.find((o) => !TERMINAL.includes(o.status)) || null;
+      S.orderOpen = Boolean(S.order);
       // preload support
       try {
         const sup = await api('/api/support/messages');
