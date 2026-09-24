@@ -3,7 +3,8 @@
 // Комиссию задаёт оператор в админ-панели, официальный курс трогать не нужно.
 const store = require('./store');
 
-// Курс обновляется каждые 10 секунд (переопределяется RATES_INTERVAL_MS).
+// Курс обновляется каждые 10 секунд: клиент видит живую цену, график плотнеет.
+// Источники ротируются, чтобы ни один API не получал больше ~2 запросов/мин.
 const INTERVAL_MS = Number(process.env.RATES_INTERVAL_MS) || 10 * 1000;
 const DISABLED = process.env.RATES_DISABLED === '1';
 
@@ -74,12 +75,19 @@ function sane({ btc, gram }) {
   );
 }
 
+let sourceCursor = 0;
+
 async function fetchOfficial() {
   const errors = [];
-  for (const [name, fn] of SOURCES) {
+  // Начинаем каждый цикл со следующего источника: нагрузка распределяется равномерно.
+  const order = SOURCES.map((_, i) => SOURCES[(sourceCursor + i) % SOURCES.length]);
+  for (const [name, fn] of order) {
     try {
       const r = await fn();
-      if (sane(r)) return { btc: Math.round(r.btc), gram: Math.round(r.gram), source: name };
+      if (sane(r)) {
+        sourceCursor = (sourceCursor + 1) % SOURCES.length;
+        return { btc: Math.round(r.btc), gram: Math.round(r.gram), source: name };
+      }
       errors.push(`${name}: неправдоподобные значения`);
     } catch (e) {
       errors.push(`${name}: ${e.message}`);

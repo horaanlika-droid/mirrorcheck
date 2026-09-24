@@ -8,6 +8,8 @@ const defaults = () => ({
   seq: 1,
   supportSeq: 1,
   reviewSeq: 1,
+  brokerSeq: 1,
+  payoutSeq: 1,
   settings: {
     rateBTC: 10250000, // ₽ за 1 BTC (итоговый, с комиссией)
     rateGRAM: 125, // ₽ за 1 GRAM (стартовый курс, итоговый с комиссией)
@@ -22,12 +24,24 @@ const defaults = () => ({
     announcement:
       '🚀 PRICELEX официально начинает работу! Принимаем заявки на обмен BTC и GRAM. Минимальная сумма обмена — от 3 000 ₽.',
     refPercent: 1,
-    brokerPercent: 10, // доля брокера от крипто-суммы завершённой сделки, %
-    operator: '@pricelex_support', // внутренний контакт операторов (клиентам не показываем)
+    operator: '', // поддержка клиентов: пусто → только чат в приложении
     channel: 'https://t.me/pricelex_channel',
     chat: 'https://t.me/pricelex_chat',
     publicUrl: null,
     botUsername: null,
+    // Доступ брокера: логин/пароль регулируются в админ-панели бота,
+    // стартовые значения можно задать через BROKER_LOGIN / BROKER_PASSWORD.
+    brokerLogin: String(process.env.BROKER_LOGIN || '').trim(),
+    brokerPassword: String(process.env.BROKER_PASSWORD || '').trim(),
+    brokerActive: true,
+    brokerSharePercent: 70, // брокеру 70% спреда сделки, площадке 30%
+    opsExpensesRub: 50, // операционные расходы площадки со сделки, ₽
+    brokerMinPayoutBtc: 0.0002, // минимальная сумма выплаты брокеру
+    brokerDepositUsd: 20, // возвратный депозит стажёра, в $ (для текстов)
+    brokerDepositBtc: 0.0002, // эквивалент депозита в BTC
+    brokerDepositAddress: '', // куда брокер вносит депозит (задаёт админ)
+    internMaxRub: 5000, // стажёр работает только с заявками до этой суммы, ₽
+    internDays: 7, // длительность стажировки в днях
   },
   admins: [], // дополнительные операторы; владельцы задаются через окружение
   users: {},
@@ -38,27 +52,30 @@ const defaults = () => ({
   // Отзывы: { id, userId, orderId, name, rating 1–5, text, status, source, createdAt, updatedAt, adminMsgIds }
   // status: 'pending' (модерация) | 'approved' (опубликован) | 'rejected' (скрыт)
   reviews: [],
-  // Брокеры площадки: логин/пароль выдаёт администрация в боте.
-  // { id, login, pass, name, tgId, active, earnedBTC, pendingBTC, paidBTC, createdAt }
-  brokers: [],
-  brokerSeq: 1,
-  // Заявки клиентов «Стать брокером» из приложения:
-  // { id, userId, name, username, contact, experience, status, createdAt, processedAt }
+  // Заявки «стать брокером»: { id, userId, name, username, experience, contact, status, createdAt, updatedAt, adminMsgIds }
+  // status: 'pending' | 'approved' | 'rejected'
   brokerApps: [],
-  brokerAppSeq: 1,
-  // Заявки брокеров на выплату: { id, brokerId, amountBTC, address, status, createdAt, paidAt }
+  brokerSessions: {}, // tgId -> { login, at }
+  // Профиль брокера по логину: { name, username, depositBtc, depositAt, internUntil }
+  brokerProfiles: {},
+  // Леджер брокера: { id, login, orderId, rub, btc, at, type: 'earn' }
+  brokerLedger: [],
+  // Заявки на ввод депозита стажёра: { id, login, tgId, btc, status, createdAt, updatedAt, adminMsgIds }
+  // status: 'pending' | 'confirmed' | 'declined'
+  brokerDeposits: [],
+  depositSeq: 1,
+  // Выплаты брокерам: { id, login, btc, address, kind, status, createdAt, updatedAt, adminMsgIds }
+  // kind: 'earning' (доход) | 'deposit' (возврат депозита); status: 'pending' | 'paid' | 'declined'
   payouts: [],
-  payoutSeq: 1,
 });
 
 const OLD_OPERATOR_DEFAULTS = ['@pricelex_operator', '@stonym0ntana'];
 
-// Выплата брокеру доступна от этой суммы BTC (в любое время, через бота).
-const BROKER_MIN_PAYOUT = 0.0002;
-
 // График курса в Web App строится только по реальным наблюдениям:
-// каждое успешное автообновление курса добавляет точку. Храним неделю.
-const RATE_HISTORY_MAX = 2016;
+// каждое успешное автообновление курса обновляет точку. Курс обновляется
+// раз в 10 секунд, но точку графика плотнее минуты не храним — для недельной
+// истории достаточно минутного разрешения.
+const RATE_HISTORY_MAX = 10080;
 
 let db = null;
 let saveTimer = null;
@@ -88,17 +105,38 @@ function load() {
       if (!Array.isArray(db.rateHistory)) db.rateHistory = [];
       if (!Array.isArray(db.reviews)) db.reviews = [];
       if (!Number.isFinite(db.reviewSeq)) db.reviewSeq = db.reviews.reduce((m, r) => Math.max(m, r.id || 0), 0) + 1;
-      // Брокерская подсистема: аккаунты, заявки кандидатов, выплаты.
-      if (!Array.isArray(db.brokers)) db.brokers = [];
       if (!Array.isArray(db.brokerApps)) db.brokerApps = [];
+      if (!Number.isFinite(db.brokerSeq)) db.brokerSeq = db.brokerApps.reduce((m, a) => Math.max(m, a.id || 0), 0) + 1;
+      if (!db.brokerSessions || typeof db.brokerSessions !== 'object') db.brokerSessions = {};
+      if (!Array.isArray(db.brokerLedger)) db.brokerLedger = [];
       if (!Array.isArray(db.payouts)) db.payouts = [];
-      if (!Number.isFinite(db.brokerSeq)) db.brokerSeq = db.brokers.reduce((m, b) => Math.max(m, b.id || 0), 0) + 1;
-      if (!Number.isFinite(db.brokerAppSeq)) db.brokerAppSeq = db.brokerApps.reduce((m, a) => Math.max(m, a.id || 0), 0) + 1;
       if (!Number.isFinite(db.payoutSeq)) db.payoutSeq = db.payouts.reduce((m, p) => Math.max(m, p.id || 0), 0) + 1;
-      if (db.settings.brokerPercent == null) db.settings.brokerPercent = 10;
-      // Поддержка уехала из клиентских контактов: обновляем нетронутое старое значение.
-      if (!db.settings.operator || OLD_OPERATOR_DEFAULTS.includes(db.settings.operator)) {
+      // Личного оператора убрали: поддержка ведётся в чате приложения.
+      // Обновляем устаревшие дефолтные контакты, пользовательское значение не трогаем.
+      if (db.settings.operator == null || OLD_OPERATOR_DEFAULTS.includes(db.settings.operator)) {
         db.settings.operator = defaults().settings.operator;
+      }
+      const bs = db.settings;
+      // Доля брокера больше не плоская: платформа делит с ним спред сделки.
+      if (bs.brokerPercent !== undefined) delete bs.brokerPercent;
+      if (bs.brokerLogin === undefined) bs.brokerLogin = String(process.env.BROKER_LOGIN || '').trim();
+      if (bs.brokerPassword === undefined) bs.brokerPassword = String(process.env.BROKER_PASSWORD || '').trim();
+      if (bs.brokerActive === undefined) bs.brokerActive = true;
+      if (bs.brokerSharePercent === undefined) bs.brokerSharePercent = 70; // брокеру 70% спреда, площадке 30%
+      if (bs.opsExpensesRub === undefined) bs.opsExpensesRub = 50; // операционные расходы со сделки, ₽
+      if (bs.brokerMinPayoutBtc === undefined) bs.brokerMinPayoutBtc = 0.0002;
+      if (bs.avgExchangeMin === undefined) bs.avgExchangeMin = 0;
+      if (bs.brokerDepositUsd === undefined) bs.brokerDepositUsd = 20;
+      if (bs.brokerDepositBtc === undefined) bs.brokerDepositBtc = 0.0002;
+      if (bs.brokerDepositAddress === undefined) bs.brokerDepositAddress = '';
+      if (bs.internMaxRub === undefined) bs.internMaxRub = 5000;
+      if (bs.internDays === undefined) bs.internDays = 7;
+      if (!db.brokerProfiles || typeof db.brokerProfiles !== 'object') db.brokerProfiles = {};
+      if (!Array.isArray(db.brokerDeposits)) db.brokerDeposits = [];
+      if (!Number.isFinite(db.depositSeq)) db.depositSeq = db.brokerDeposits.reduce((m, x) => Math.max(m, x.id || 0), 0) + 1;
+      for (const o of db.orders || []) {
+        if (o.broker === undefined) o.broker = null;
+        if (o.officialRate === undefined) o.officialRate = null;
       }
       db.rateHistory = db.rateHistory.filter(
         (p) => p && Number.isFinite(Number(p.at)) && Number(p.btc) > 0 && Number(p.gram) > 0
@@ -155,6 +193,10 @@ function publicSettings() {
     channel: s.channel,
     chat: s.chat,
     botUsername: s.botUsername,
+    brokerMinPayoutBtc: s.brokerMinPayoutBtc,
+    brokerSharePercent: s.brokerSharePercent,
+    // Среднее время обмена: ручное значение, иначе — вычисленное по сделкам.
+    avgExchangeMin: Number(s.avgExchangeMin) > 0 ? Number(s.avgExchangeMin) : avgExchangeMinutesComputed(),
   };
 }
 
@@ -214,6 +256,8 @@ function createOrder(o) {
       currency: o.currency,
       wallet: o.wallet,
       rate: o.rate,
+      officialRate: o.officialRate || null, // официальный курс на момент заявки — из него считается спред брокера
+      broker: null, // логин брокера, взявшего заявку
       crypto: o.crypto,
       status: 'new',
       requisites: null,
@@ -258,6 +302,17 @@ const userOrders = (userId) =>
 
 const activeOrders = () => db.orders.filter((o) => ['new', 'details', 'paid'].includes(o.status));
 
+// Среднее время обмена: по 30 последним завершённым сделкам (от создания до завершения).
+function avgExchangeMinutesComputed() {
+  const done = db.orders
+    .filter((o) => o.status === 'completed')
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 30);
+  if (!done.length) return null;
+  const mins = done.map((o) => Math.max(0, (o.updatedAt - o.createdAt) / 60000));
+  return Math.max(1, Math.round(mins.reduce((s, x) => s + x, 0) / mins.length));
+}
+
 function stats() {
   const by = (s) => db.orders.filter((o) => o.status === s);
   const done = by('completed');
@@ -284,6 +339,11 @@ function pushRatePoint({ btc, gram, at = Date.now() } = {}) {
     if (!Array.isArray(d.rateHistory)) d.rateHistory = [];
     const last = d.rateHistory[d.rateHistory.length - 1];
     if (last && last.btc === b && last.gram === g && at - last.at < 30000) return last;
+    // Обновления чаще минуты не плодят точки: свежая точка заменяет предыдущую.
+    if (last && at - last.at < 60000) {
+      last.at = at; last.btc = b; last.gram = g;
+      return last;
+    }
     const point = { at, btc: b, gram: g };
     d.rateHistory.push(point);
     if (d.rateHistory.length > RATE_HISTORY_MAX) d.rateHistory.splice(0, d.rateHistory.length - RATE_HISTORY_MAX);
@@ -412,146 +472,250 @@ function countSupportUnread() {
   return getSupportThreads().length;
 }
 
-/* ---------- брокеры ---------- */
+/* ---------- брокеры: заявки, сессии, заработок, выплаты ---------- */
 
-const roundBtc = (n) => Math.round(Number(n) * 1e8) / 1e8;
-
-function createBroker({ login, pass, name }) {
-  login = String(login || '').trim();
+function createBrokerApp(a) {
   return mutate((d) => {
-    if (d.brokers.some((b) => b.login.toLowerCase() === login.toLowerCase())) return null;
-    const broker = {
-      id: d.brokerSeq++,
-      login,
-      pass: String(pass),
-      name: String(name || login).trim().slice(0, 60) || login,
-      tgId: null, // привязывается при первом входе /broker
-      active: true,
-      earnedBTC: 0, // начислено всего
-      pendingBTC: 0, // запрошено к выплате
-      paidBTC: 0, // выплачено администрацией
-      createdAt: Date.now(),
-    };
-    d.brokers.push(broker);
-    return broker;
-  });
-}
-
-const getBroker = (id) => db.brokers.find((b) => b.id === Number(id)) || null;
-const getBrokerByLogin = (login) =>
-  db.brokers.find((b) => b.login.toLowerCase() === String(login || '').trim().toLowerCase()) || null;
-const getBrokerByTg = (tgId) => db.brokers.find((b) => b.active && String(b.tgId) === String(tgId)) || null;
-
-function updateBroker(id, patch) {
-  return mutate((d) => {
-    const b = d.brokers.find((x) => x.id === Number(id));
-    if (!b) return null;
-    Object.assign(b, patch);
-    return b;
-  });
-}
-
-// Доступно к выводу = начислено − на выплате − выплачено.
-const brokerAvailable = (b) => roundBtc((b.earnedBTC || 0) - (b.pendingBTC || 0) - (b.paidBTC || 0));
-
-// Начисление вознаграждения брокеру за завершённую им сделку (однократно на заявку).
-// Сумма в валюте сделки × brokerPercent; GRAM конвертируется в BTC по текущему курсу.
-function accrueCompletedOrder(orderId) {
-  return mutate((d) => {
-    const o = d.orders.find((x) => x.id === Number(orderId));
-    if (!o || o.status !== 'completed' || !o.brokerId || o.brokerAccrued != null) return null;
-    const b = d.brokers.find((x) => x.id === Number(o.brokerId));
-    if (!b) return null;
-    const pct = Number(d.settings.brokerPercent) || 0;
-    const inCur = (Number(o.crypto) || 0) * pct / 100;
-    const btc = o.currency === 'BTC'
-      ? inCur
-      : (inCur * (Number(o.rate) || 0)) / Math.max(1, Number(d.settings.rateBTC) || 1);
-    const earned = roundBtc(btc);
-    o.brokerAccrued = earned;
-    o.updatedAt = Date.now();
-    b.earnedBTC = roundBtc((b.earnedBTC || 0) + earned);
-    return { broker: b, order: o, earnedBTC: earned };
-  });
-}
-
-/* ---------- заявки «стать брокером» ---------- */
-
-function createBrokerApp({ userId, name, username, contact, experience }) {
-  return mutate((d) => {
+    const now = Date.now();
     const app = {
-      id: d.brokerAppSeq++,
-      userId: String(userId),
-      name: String(name || 'Клиент').slice(0, 60),
-      username: username ? String(username).slice(0, 60) : null,
-      contact: String(contact).slice(0, 120),
-      experience: String(experience).slice(0, 2000),
-      status: 'new', // 'new' | 'done'
-      createdAt: Date.now(),
-      processedAt: null,
+      id: d.brokerSeq++,
+      userId: String(a.userId),
+      name: String(a.name || 'Кандидат').trim().slice(0, 80) || 'Кандидат',
+      username: a.username ? String(a.username).replace(/^@/, '').slice(0, 40) : null,
+      experience: String(a.experience || '').trim().slice(0, 1500),
+      contact: String(a.contact || '').trim().slice(0, 200),
+      status: 'pending',
+      createdAt: now,
+      updatedAt: now,
+      adminMsgIds: {},
     };
     d.brokerApps.push(app);
     return app;
   });
 }
 
-const pendingBrokerApp = (userId) =>
-  db.brokerApps.find((a) => a.userId === String(userId) && a.status === 'new') || null;
-const latestBrokerApp = (userId) =>
-  db.brokerApps.filter((a) => a.userId === String(userId)).sort((a, b) => b.createdAt - a.createdAt)[0] || null;
-const brokerAppsByStatus = (status) =>
-  db.brokerApps.filter((a) => !status || a.status === status).sort((a, b) => b.createdAt - a.createdAt);
+const getBrokerApp = (id) => db.brokerApps.find((a) => a.id === Number(id)) || null;
 
 function updateBrokerApp(id, patch) {
   return mutate((d) => {
     const a = d.brokerApps.find((x) => x.id === Number(id));
     if (!a) return null;
-    Object.assign(a, patch);
+    Object.assign(a, patch, { updatedAt: Date.now() });
     return a;
   });
 }
 
-/* ---------- выплаты брокерам ---------- */
+// Последняя заявка пользователя — статус показываем в приложении.
+const brokerAppFor = (userId) =>
+  db.brokerApps
+    .filter((a) => a.userId === String(userId))
+    .sort((x, y) => y.createdAt - x.createdAt)[0] || null;
 
-function createPayout({ brokerId, amountBTC, address }) {
+const brokerAppsByStatus = (status) =>
+  db.brokerApps.filter((a) => !status || a.status === status).sort((a, b) => b.createdAt - a.createdAt);
+
+const brokerCreds = () => {
+  const s = db.settings;
+  return {
+    login: String(s.brokerLogin || ''),
+    password: String(s.brokerPassword || ''),
+    active: s.brokerActive !== false && !!(s.brokerLogin && s.brokerPassword),
+  };
+};
+
+const brokerSession = (tgId) => {
+  const s = db.brokerSessions[String(tgId)];
+  return s && s.login ? s : null;
+};
+
+function setBrokerSession(tgId, login) {
   return mutate((d) => {
-    const b = d.brokers.find((x) => x.id === Number(brokerId));
-    if (!b) return null;
-    const amount = roundBtc(amountBTC);
+    d.brokerSessions[String(tgId)] = { login: String(login), at: Date.now() };
+    return d.brokerSessions[String(tgId)];
+  });
+}
+
+function dropBrokerSession(tgId) {
+  return mutate((d) => {
+    delete d.brokerSessions[String(tgId)];
+  });
+}
+
+// Сессии конкретного брокера и все активные сессии — для уведомлений.
+const brokerSessionsByLogin = (login) =>
+  Object.entries(db.brokerSessions)
+    .filter(([, s]) => s && s.login === String(login))
+    .map(([tgId]) => tgId);
+const allBrokerSessions = () =>
+  Object.entries(db.brokerSessions).filter(([, s]) => s && s.login).map(([tgId, s]) => ({ tgId, login: s.login }));
+
+// Начисление брокеру за завершённую сделку: разница между клиентским и
+// официальным курсом (спред) минус операционные расходы площадки делится
+// 70/30 — бо́льшая часть брокеру (доля настраивается). Идемпотентно по orderId.
+function accrueBroker(order) {
+  if (!order || !order.broker || order.status !== 'completed') return null;
+  return mutate((d) => {
+    if (d.brokerLedger.some((e) => e.orderId === order.id)) return null;
+    const s = d.settings;
+    const official = Number(order.officialRate) || (order.rate / (1 + (Number(s.feePercent) || 0) / 100));
+    const payRub = Number(order.payRub) || Number(order.rub) || 0;
+    const grossSpread = Math.max(0, Math.round(payRub - (Number(order.crypto) || 0) * official));
+    const ops = Math.min(grossSpread, Math.max(0, Number(s.opsExpensesRub) || 0));
+    const net = grossSpread - ops;
+    const sharePct = Math.min(100, Math.max(0, Number(s.brokerSharePercent) ?? 70));
+    const rubShare = Math.round(net * sharePct / 100);
+    const rateBTC = Number(s.baseRateBTC) || Number(s.rateBTC) || order.rate || 1;
+    const btc = Math.round((rubShare / rateBTC) * 1e8) / 1e8;
+    const entry = {
+      id: d.brokerLedger.length ? d.brokerLedger[d.brokerLedger.length - 1].id + 1 : 1,
+      login: order.broker,
+      orderId: order.id,
+      rub: rubShare,
+      btc,
+      type: 'earn',
+      spread: grossSpread, // гросс-спред сделки (наценка над официальным курсом)
+      ops,                 // вычет операционных расходов площадки
+      sharePct,
+      at: Date.now(),
+    };
+    d.brokerLedger.push(entry);
+    return entry;
+  });
+}
+
+const brokerLedgerFor = (login) => db.brokerLedger.filter((e) => e.login === String(login));
+const brokerEarnedBtc = (login) =>
+  brokerLedgerFor(login).reduce((s, e) => s + (Number(e.btc) || 0), 0);
+
+function createPayout(p) {
+  return mutate((d) => {
+    const now = Date.now();
     const payout = {
       id: d.payoutSeq++,
-      brokerId: b.id,
-      login: b.login,
-      name: b.name,
-      amountBTC: amount,
-      address: String(address).slice(0, 128),
-      status: 'requested', // 'requested' | 'paid'
-      createdAt: Date.now(),
-      paidAt: null,
+      login: String(p.login),
+      btc: Math.round(Number(p.btc) * 1e8) / 1e8,
+      address: String(p.address || '').trim().slice(0, 128),
+      kind: p.kind === 'deposit' ? 'deposit' : 'earning', // возврат депозита или вывод дохода
+      status: 'pending',
+      createdAt: now,
+      updatedAt: now,
+      adminMsgIds: {},
     };
     d.payouts.push(payout);
-    b.pendingBTC = roundBtc((b.pendingBTC || 0) + amount);
     return payout;
   });
 }
 
 const getPayout = (id) => db.payouts.find((p) => p.id === Number(id)) || null;
+
+function updatePayout(id, patch) {
+  return mutate((d) => {
+    const p = d.payouts.find((x) => x.id === Number(id));
+    if (!p) return null;
+    Object.assign(p, patch, { updatedAt: Date.now() });
+    return p;
+  });
+}
+
+const payoutsByLogin = (login) =>
+  db.payouts.filter((p) => p.login === String(login)).sort((a, b) => b.createdAt - a.createdAt);
 const payoutsByStatus = (status) =>
   db.payouts.filter((p) => !status || p.status === status).sort((a, b) => b.createdAt - a.createdAt);
 
-function markPayoutPaid(id) {
+/* ---------- брокер: профиль, депозит, стажировка ---------- */
+
+const brokerProfile = (login) => db.brokerProfiles[String(login)] || null;
+
+function upsertBrokerProfile(login, patch) {
   return mutate((d) => {
-    const p = d.payouts.find((x) => x.id === Number(id));
-    if (!p || p.status !== 'requested') return null;
-    p.status = 'paid';
-    p.paidAt = Date.now();
-    const b = d.brokers.find((x) => x.id === Number(p.brokerId));
-    if (b) {
-      b.pendingBTC = roundBtc(Math.max(0, (b.pendingBTC || 0) - p.amountBTC));
-      b.paidBTC = roundBtc((b.paidBTC || 0) + p.amountBTC);
-    }
-    return { payout: p, broker: b };
+    const key = String(login);
+    d.brokerProfiles[key] = Object.assign(
+      { name: '', username: null, depositBtc: 0, depositAt: 0, internUntil: 0 },
+      d.brokerProfiles[key] || {},
+      patch
+    );
+    return d.brokerProfiles[key];
   });
+}
+
+// Стажировка идёт от даты подтверждения депозита internDays дней.
+const brokerIsIntern = (login) => {
+  const p = brokerProfile(login);
+  if (!p || !p.internUntil) return true; // без депозита — стажёр по умолчанию
+  return Date.now() < p.internUntil;
+};
+const brokerInternLeft = (login) => {
+  const p = brokerProfile(login);
+  if (!p || !p.internUntil) return null;
+  return Math.max(0, Math.ceil((p.internUntil - Date.now()) / 86400000));
+};
+
+// Лимит заявки: стажёрам — только малые суммы.
+function brokerCanTake(login, rub) {
+  const s = db.settings;
+  if (!brokerIsIntern(login)) return { ok: true };
+  const p = brokerProfile(login);
+  if (!p || !p.depositBtc) {
+    return { ok: false, reason: 'deposit', text: `Сначала внесите возвратный депозит $${s.brokerDepositUsd} — вклад в репутацию. Заберёте его после стажировки.` };
+  }
+  const limit = Number(s.internMaxRub) || 5000;
+  if (Number(rub) > limit) {
+    return { ok: false, reason: 'limit', text: `На стажировке доступны заявки до ${limit.toLocaleString('ru-RU')} ₽. Лимит снимется через ${brokerInternLeft(login)} дн.` };
+  }
+  return { ok: true };
+}
+
+function createBrokerDeposit(dep) {
+  return mutate((d) => {
+    const now = Date.now();
+    const row = {
+      id: d.depositSeq++,
+      login: String(dep.login),
+      tgId: String(dep.tgId),
+      btc: Math.round(Number(dep.btc) * 1e8) / 1e8,
+      status: 'pending',
+      createdAt: now,
+      updatedAt: now,
+      adminMsgIds: {},
+    };
+    d.brokerDeposits.push(row);
+    return row;
+  });
+}
+
+const getBrokerDeposit = (id) => db.brokerDeposits.find((x) => x.id === Number(id)) || null;
+
+function updateBrokerDeposit(id, patch) {
+  return mutate((d) => {
+    const row = d.brokerDeposits.find((x) => x.id === Number(id));
+    if (!row) return null;
+    Object.assign(row, patch, { updatedAt: Date.now() });
+    return row;
+  });
+}
+
+const brokerDepositsByStatus = (status) =>
+  db.brokerDeposits.filter((x) => !status || x.status === status).sort((a, b) => b.createdAt - a.createdAt);
+
+// Депозит можно забрать после стажировки (и когда он ещё не выведен).
+function brokerDepositRefundable(login) {
+  const p = brokerProfile(login);
+  if (!p || !p.depositBtc) return { ok: false, reason: 'none' };
+  if (brokerIsIntern(login)) {
+    return { ok: false, reason: 'intern', left: brokerInternLeft(login) };
+  }
+  const dup = db.payouts.find((x) => x.login === String(login) && x.kind === 'deposit' && ['pending', 'paid'].includes(x.status));
+  if (dup) return { ok: false, reason: 'dup', status: dup.status };
+  return { ok: true, btc: p.depositBtc };
+}
+
+// Доступный остаток: начисленное минус выплаты дохода (запрошенные и исполненные).
+// Возврат депозита из заработанного не вычитается — это свои деньги.
+function brokerAvailableBtc(login) {
+  const reserved = db.payouts
+    .filter((p) => p.login === String(login) && p.kind !== 'deposit' && ['pending', 'paid'].includes(p.status))
+    .reduce((s, p) => s + (Number(p.btc) || 0), 0);
+  return Math.max(0, Math.round((brokerEarnedBtc(login) - reserved) * 1e8) / 1e8);
 }
 
 load();
@@ -585,21 +749,35 @@ module.exports = {
   publicReviews,
   reviewForOrder,
   userReviews,
-  BROKER_MIN_PAYOUT,
-  createBroker,
-  getBroker,
-  getBrokerByLogin,
-  getBrokerByTg,
-  updateBroker,
-  brokerAvailable,
-  accrueCompletedOrder,
+  avgExchangeMinutesComputed,
   createBrokerApp,
-  pendingBrokerApp,
-  latestBrokerApp,
-  brokerAppsByStatus,
+  getBrokerApp,
   updateBrokerApp,
+  brokerAppFor,
+  brokerAppsByStatus,
+  brokerCreds,
+  brokerSession,
+  setBrokerSession,
+  dropBrokerSession,
+  brokerSessionsByLogin,
+  allBrokerSessions,
+  brokerProfile,
+  upsertBrokerProfile,
+  brokerIsIntern,
+  brokerInternLeft,
+  brokerCanTake,
+  createBrokerDeposit,
+  getBrokerDeposit,
+  updateBrokerDeposit,
+  brokerDepositsByStatus,
+  brokerDepositRefundable,
+  accrueBroker,
+  brokerLedgerFor,
+  brokerEarnedBtc,
   createPayout,
   getPayout,
+  updatePayout,
+  payoutsByLogin,
   payoutsByStatus,
-  markPayoutPaid,
+  brokerAvailableBtc,
 };

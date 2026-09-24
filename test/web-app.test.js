@@ -42,6 +42,8 @@ async function app(t, order = initial) {
     if (pathname === '/api/me') return json({ orders: [order], me: { id: 999 } });
     if (pathname === '/api/settings') return json(settings);
     if (pathname === '/api/order/1') return json({ order });
+    if (pathname === '/api/captcha') return json({ id: 'cap1', question: '3 + 4 = ?' });
+    if (pathname === '/api/broker/status') return json({ application: null });
     throw new Error('Unexpected request: ' + pathname);
   };
   window.eval(script);
@@ -52,7 +54,7 @@ async function app(t, order = initial) {
 
 test('renders requisites on poll even when settings request fails; fetch bypasses cache', async (t) => {
   const a = await app(t);
-  assert.match(a.document.querySelector('#exOrder').textContent, /Ищем реквизиты/);
+  assert.match(a.document.querySelector('#exOrder').textContent, /Заявку ведёт брокер/);
   a.handle((url) => {
     if (url === '/api/settings') return Promise.reject(new Error('offline'));
     if (url === '/api/order/1') return a.json({ order: details });

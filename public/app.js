@@ -32,10 +32,12 @@
   const TERMINAL = ['completed', 'rejected', 'cancelled'];
   const S = {
     settings: null, me: null, orders: [], order: null, tab: 'exchange',
-    currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [], brokerApp: null,
+    currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [],
     history: { points: [], updatedFor: null },
     reviews: { list: [], stats: { count: 0, avg: 0 }, loaded: false },
     reviewDraft: { orderId: null, rating: 5, text: '' },
+    brokerApp: null, // последняя заявка «стать брокером»
+    captcha: null, // { id, question } — активная математическая капча
   };
 
   const STATUS = {
@@ -154,6 +156,7 @@
     check: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 12.5 5 5 10-11"/></svg>',
     bolt: '<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>',
     send: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>',
+    case: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.5" width="18" height="12.5" rx="2.5"/><path d="M8.5 7.5V6a2.5 2.5 0 0 1 2.5-2.5h2A2.5 2.5 0 0 1 15.5 6v1.5"/><path d="M3 13h18"/></svg>',
   };
 
   /* ---------- график (реальная история курса и сумм) ---------- */
@@ -384,9 +387,40 @@
     renderNav();
     if (tab === 'history') renderHistory();
     if (tab === 'refs') renderRefs();
+    if (tab === 'broker') { renderBroker(); loadBrokerStatus(); }
+    if (tab === 'desk') renderDesk();
     if (tab === 'info') renderInfo();
     if (tab === 'support') renderSupport();
     if (tab === 'reviews') { renderReviews(); loadReviews(); }
+  }
+
+  /* ---------- страница брокера для клиента: минимум — только скорость ---------- */
+
+  function renderDesk() {
+    const v = $('#view-desk');
+    const s = S.settings || {};
+    const avg = Number(s.avgExchangeMin);
+    v.innerHTML = `
+      <section class="card editorial">
+        <div class="ed-art" style="background-image:url('/img/broker.jpg')" aria-hidden="true"></div>
+        <div class="ed-body">
+          <div class="kicker">Ваш брокер — <em>команда PRICELEX</em></div>
+          <div class="display">Среднее время<br>обмена — <em>${avg > 0 ? `${avg} мин` : 'минуты'}</em></div>
+        </div>
+      </section>
+      <div class="card desk-metric">
+        <div class="dm-num">${avg > 0 ? `${avg}<span>мин</span>` : '—'}</div>
+        <div class="dm-label">${avg > 0 ? 'среднее время обмена по последним сделкам' : 'статистика появится после первых сделок'}</div>
+      </div>
+      <div class="card">
+        <div class="feat">
+          <div class="f"><span class="i">◆</span>Сделку ведёт живой брокер из проверенной команды — быстро и вручную</div>
+          <div class="f"><span class="i">◆</span>Средства на время сделки лежат на гарантийном счёте и размораживаются после подтверждения оплаты</div>
+        </div>
+        <button class="btn btn-primary mt" id="deskGo">${ICONS.bolt}<span>Обменять сейчас</span></button>
+      </div>
+      <div class="signature">PRICELEX<span>— быстро · надёжно · по-честному —</span></div>`;
+    $('#deskGo').addEventListener('click', () => { haptic('light'); goTab('exchange'); });
   }
 
   function renderNav() {
@@ -395,6 +429,7 @@
       ['history', 'История', ICONS.clock],
       ['reviews', 'Отзывы', ICONS.star],
       ['refs', 'Рефералы', ICONS.users],
+      ['broker', 'Брокер', ICONS.case],
       ['support', 'Помощь', ICONS.chat],
       ['info', 'Инфо', ICONS.info],
     ];
@@ -465,6 +500,7 @@
             <div class="coin-ic" id="walIc">₿</div>
             <input id="inWallet" placeholder="Адрес BTC-кошелька" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
           </div>
+          ${captchaHtml('capOrder')}
           <div class="f-err" id="fErr"></div>
         </div>
 
@@ -485,6 +521,7 @@
     $('#inCrypto').addEventListener('input', () => { S.calcFrom = 'crypto'; renderFormMeta(); });
     $('#btnGo').addEventListener('click', submitOrder);
     $('#howItWorks').addEventListener('click', () => { haptic('light'); goTab('info'); });
+    renderCaptchaBoxes();
     renderHero();
     renderFormMeta();
     renderOrderStage();
@@ -522,7 +559,9 @@
     $('#fMeta').innerHTML = `
       <div class="row"><span>Курс обмена</span><b>1 ${cur} = ${fmtRub(rate)}</b></div>
       ${s.rateUpdatedAt ? `<div class="row"><span>Курс обновлён</span><b>${fmtDate(s.rateUpdatedAt)}</b></div>` : ''}
-      <div class="row"><span>Сделку ведёт</span><b>брокер PRICELEX</b></div>`;
+      <div class="row"><span>Сделку ведёт</span><button class="f-link" id="yourBroker"><b>брокер PRICELEX</b>${ICONS.info}</button></div>`;
+    const yb = $('#yourBroker');
+    if (yb) yb.addEventListener('click', () => { haptic('light'); goTab('desk'); });
     const btn = $('#btnGo');
     btn.disabled = !s.online;
     btn.querySelector('span').textContent = s.online ? 'Найти реквизиты' : '⛔ Обмен временно недоступен';
@@ -543,23 +582,27 @@
     if (!isFinite(rub) || rub < s.minRub) return (err.textContent = `Минимальная сумма обмена — ${fmtRub(s.minRub)} (≈ ${fmtTrim(cryptoFromRub(s.minRub, rate))} ${S.currency}).`);
     if (rub > s.maxRub) return (err.textContent = `Максимальная сумма обмена — ${fmtRub(s.maxRub)} (≈ ${fmtTrim(cryptoFromRub(s.maxRub, rate))} ${S.currency}).`);
     if (!/^[a-zA-Z0-9]{26,90}$/.test(wallet)) return (err.textContent = 'Проверьте адрес кошелька — он выглядит некорректно.');
+    const cap = captchaPayload('capOrder');
+    if (!cap.captchaAnswer) return (err.textContent = 'Решите проверочный пример — это защита от ботов.');
     const btn = $('#btnGo');
     btn.disabled = true;
     haptic('medium');
     try {
       const body = useCrypto
-        ? { cryptoAmount, currency: S.currency, wallet, startParam }
-        : { rub, currency: S.currency, wallet, startParam };
+        ? { cryptoAmount, currency: S.currency, wallet, startParam, ...cap }
+        : { rub, currency: S.currency, wallet, startParam, ...cap };
       const r = await api('/api/orders', { method: 'POST', body });
       S.order = r.order;
       S.orders.unshift(r.order);
       haptic('heavy');
+      refreshCaptcha(); // пара сгорела — сразу новая для следующей заявки
       $('#exForm').classList.add('hidden');
       $('#exOrder').classList.remove('hidden');
       renderOrderStage();
     } catch (e) {
       err.textContent = e.message;
       toast(e.message);
+      await refreshCaptcha();
     } finally {
       btn.disabled = !S.settings.online;
     }
@@ -580,8 +623,8 @@
       box.innerHTML = `
         <div class="card stage stage-broker">
           <div class="stage-art" aria-hidden="true"><span class="live"><span class="dot"></span>Брокер на линии</span></div>
-          <div class="stage-title">Ищем реквизиты по лучшей цене</div>
-          <div class="stage-sub">Заявка <b>#${o.id}</b> у брокера. В реальном времени сравниваем предложения рынка и выбираем лучшее.<br>Иногда приходится немного подождать — за качество мы отвечаем репутацией.</div>
+          <div class="stage-title">Заявку ведёт брокер</div>
+          <div class="stage-sub">Заявка <b>#${o.id}</b> у проверенного брокера — команда профессионалов работает быстро.<br>Иногда нужно немного подождать: за качество мы отвечаем репутацией.</div>
           <div class="progress" aria-hidden="true"><span></span></div>
           <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
         </div>`;
@@ -682,7 +725,7 @@
         <div class="card stage">
           <div class="failmark">${rej ? '🔴' : '⚪'}</div>
           <div class="stage-title">${rej ? 'Заявка отклонена' : 'Заявка отменена'}</div>
-          <div class="stage-sub">${rej ? `Заявка #${o.id} отклонена. Если это ошибка — напишите в поддержку в разделе «Помощь».` : 'Вы отменили заявку #' + o.id + '.'}</div>
+          <div class="stage-sub">${rej ? `Заявка #${o.id} отклонена. Если это ошибка — напишите в поддержку ${supportLinkHtml()}.` : 'Вы отменили заявку #' + o.id + '.'}</div>
           ${o.txUrl ? `<div class="tx-box"><div class="tx-label">🔗 Блокчейн</div><a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a></div>` : ''}
           <button class="btn btn-primary mt" id="btnNew">Создать заявку</button>
         </div>`;
@@ -861,8 +904,14 @@
     const v = $('#view-refs');
     const link = s.botUsername ? `https://t.me/${s.botUsername}?startapp=ref${S.me.id}` : null;
     v.innerHTML = `
-      <div class="card ref-card">
-        <div class="ref-art" style="background-image:url('/img/ref.jpg')" aria-hidden="true"><span class="ref-tag" aria-hidden="true">PLX / PARTNERS</span></div>
+      <section class="card editorial">
+        <div class="ed-art" style="background-image:url('/img/refs.jpg')" aria-hidden="true"></div>
+        <div class="ed-body">
+          <div class="kicker">Приведи друга — <em>заработай вместе</em></div>
+          <div class="display">${s.refPercent}% с каждого<br>обмена друга</div>
+        </div>
+      </section>
+      <div class="card">
         <div class="card-title">Реферальная программа</div>
         ${
           link
@@ -884,72 +933,167 @@
     if (cp) cp.addEventListener('click', () => copyText(link, 'Ссылка скопирована'));
   }
 
-  const RULES = [
-    ['Предмет соглашения', 'PRICELEX (далее — «Площадка») — цифровой сервис аренды профессионального опыта независимых брокеров. Брокер сопровождает Пользователя при приобретении цифровых активов с той же заботой, с какой близкий человек помогает установить приложение.'],
-    ['Стороны и роли', 'Пользователь поручает Брокеру подбор условий и сопровождение сделки. Площадка обеспечивает учёт заявок, гарантийный счёт и контроль расчётов, не выступая биржей, банком или платёжным институтом.'],
-    ['Порядок операции', 'Пользователь оформляет заявку в приложении, Брокер подбирает условия и выдаёт реквизиты. Курс фиксируется на момент выдачи реквизитов и не изменяется в течение действия заявки.'],
-    ['Гарантийный счёт', 'Денежные средства Пользователя зачисляются на гарантийный счёт Площадки. Администрация проверяет платёж по приложенному чеку, после чего средства разблокируются, а цифровые активы перечисляются на указанный Пользователем кошелёк.'],
-    ['Стоимость услуг', 'Вознаграждение Площадки и Брокера уже учтено в курсе обмена, который отображается до оплаты. Доплат сверх указанной к оплате суммы не требуется.'],
-    ['Вознаграждение Брокера', 'Начисляется за каждую завершённую Брокером операцию и выплачивается по его требованию в любое время через официального бота Площадки при достижении минимальной суммы вывода 0.0002 BTC.'],
-    ['Доступ Брокера', 'Панель Брокера доступна в официальном боте по персональным логину и паролю, которые выдаются, изменяются и отзываются Администрацией Площадки. Передача учётных данных третьим лицам влечёт отзыв доступа.'],
-    ['Честность сторон', 'Пользователь подтверждает правомерность происхождения средств и достоверность чека оплаты. Сведения о курсе носят информационный характер и не являются инвестиционной рекомендацией. Споры рассматривает Администрация через чат поддержки.'],
-  ];
-
-  function rulesCardHtml() {
-    return `
-      <div class="card">
-        <div class="card-title">Правила площадки</div>
-        <div class="rules">
-          ${RULES.map(([t, x], i) => `<div class="rule"><span class="rn">${String(i + 1).padStart(2, '0')}</span><div><b>${t}.</b> ${x}</div></div>`).join('')}
-        </div>
-      </div>`;
+  /* ---------- капча ---------- */
+  // Одна активная пара «вопрос-ответ» на клиенте; сервер выдаёт новую на
+  // каждую отправку формы (создание обмена, заявка брокера).
+  async function refreshCaptcha() {
+    try {
+      const r = await api('/api/captcha');
+      S.captcha = r;
+    } catch { S.captcha = null; }
+    renderCaptchaBoxes();
   }
 
-  function applyBodyHtml() {
-    if (S.brokerApp) {
-      return `
-        <div class="apply-done">
-          <div class="ad-ic">${ICONS.check}</div>
-          <div class="ad-t">Заявка №${S.brokerApp.id} у администрации</div>
-          <div class="ad-s">Мы изучим ваш опыт и свяжемся по указанному контакту. Доступ к панели брокера выдаётся логином и паролем через бота.</div>
-        </div>`;
+  const captchaHtml = (boxId) => `<div class="captcha" id="${boxId}"></div>`;
+
+  function renderCaptchaBoxes() {
+    for (const boxId of ['capOrder', 'capBroker']) {
+      const box = document.getElementById(boxId);
+      if (!box) continue;
+      box.innerHTML = S.captcha
+        ? `<label class="cap-label" for="${boxId}In">Проверка: ${esc(S.captcha.question)}</label>
+           <input id="${boxId}In" inputmode="numeric" autocomplete="off" placeholder="Ответ">`
+        : '';
+      const inp = document.getElementById(boxId + 'In');
+      if (inp) inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });
     }
-    return `
-      <div class="apply-form">
-        <label class="f-label"><span>Расскажите про свой опыт</span></label>
-        <textarea id="applyExp" class="rv-text" rows="4" maxlength="2000" placeholder="Крипта, обменники, P2P, OTC — что уже умеете и как давно?"></textarea>
-        <label class="f-label"><span>Контакт для связи</span></label>
-        <div class="field"><input id="applyContact" placeholder="@username или +7 900 000-00-00" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
-        <div class="f-err" id="applyErr"></div>
-        <button class="btn btn-primary" id="applySend">${ICONS.send}<span>Подать заявку</span></button>
-        <div class="f-hint">Доступ к панели брокера выдаётся логином и паролем через бота после личного общения с администрацией.</div>
-      </div>`;
   }
 
-  function wireApplyForm() {
-    const btn = $('#applySend');
-    if (!btn) return;
-    btn.addEventListener('click', async () => {
-      const err = $('#applyErr');
-      err.textContent = '';
-      const experience = ($('#applyExp').value || '').trim();
-      const contact = ($('#applyContact').value || '').trim();
-      if (experience.length < 20) return (err.textContent = 'Расскажите про опыт чуть подробнее — от 20 символов.');
-      if (contact.length < 3) return (err.textContent = 'Оставьте контакт для связи.');
-      btn.disabled = true;
-      haptic('medium');
-      try {
-        const r = await api('/api/broker/apply', { method: 'POST', body: { experience, contact, startParam } });
-        S.brokerApp = r.application;
-        haptic('heavy');
-        toast('Заявка отправлена — мы свяжемся с вами');
-        renderInfo();
-      } catch (e) {
-        err.textContent = e.message;
-        btn.disabled = false;
-      }
-    });
+  const captchaPayload = (boxId) => {
+    const inp = document.getElementById(boxId + 'In');
+    const answer = inp ? inp.value.trim() : '';
+    return { captchaId: S.captcha ? S.captcha.id : '', captchaAnswer: answer };
+  };
+
+  /* ---------- брокер: заявка ---------- */
+
+  const brokerPayoutMin = () => {
+    const v = S.settings && S.settings.brokerMinPayoutBtc;
+    return Number.isFinite(Number(v)) ? String(Number(v)) : '0.0002';
+  };
+
+  const fmtBtcUi = (v) => (Math.round(Number(v) * 1e8) / 1e8).toFixed(8).replace(/\.?0+$/, '');
+
+  function renderBroker() {
+    const v = $('#view-broker');
+    const app = S.brokerApp;
+    const s = S.settings;
+    const kb = s && s.botUsername ? `https://t.me/${s.botUsername}` : null;
+    const features = `
+      <div class="feat">
+        <div class="f"><span class="i">◆</span>Сопровождаете сделки клиентов — помогаете человеку пройти путь до конца, как помогаете бабушке установить MAX: объясняете шаги, проверяете реквизиты, доводите до результата</div>
+        <div class="f"><span class="i">◆</span>Работа ведётся через гарантийный счёт площадки: средства клиента заморожены до подтверждения оплаты администрацией</div>
+        <div class="f"><span class="i">◆</span>Ваша доля — ${s && s.brokerSharePercent ? s.brokerSharePercent : 70}% спреда каждой завершённой сделки, начисляется в BTC мгновенно</div>
+        <div class="f"><span class="i">◆</span>Выплата в любое время из бота при накоплении от ${fmtBtcUi(brokerPayoutMin())} BTC</div>
+        <div class="f"><span class="i">◆</span>Старт — возвратный депозит стажёра и неделя на малых суммах; обучение анонсируем отдельно</div>
+      </div>`;
+    const statusHtml = app ? `
+      <div class="card">
+        <div class="card-title">Ваша заявка</div>
+        <div class="order-meta">
+          <div class="mrow"><span>Статус</span><b>${app.status === 'pending' ? '⏳ На проверке у администрации' : app.status === 'approved' ? '✅ Одобрена — ждите сообщение в Telegram' : '❌ Отклонена — подайте новую, доработав описание опыта'}</b></div>
+          <div class="mrow"><span>Опыт</span><b>${esc(app.experience)}</b></div>
+          <div class="mrow"><span>Контакт</span><b>${esc(app.contact)}</b></div>
+        </div>
+        ${app.status === 'approved' && kb ? `<a class="btn btn-primary mt" href="${kb}" target="_blank" rel="noopener">${ICONS.bolt}<span>Открыть бота → /broker</span></a>` : ''}
+        ${app.status === 'rejected' ? `<button class="btn btn-outline mt" id="brokerAgain">Подать заявку снова</button>` : ''}
+      </div>` : `
+      <div class="card">
+        <div class="card-title">Анкета кандидата</div>
+        <div class="field">
+          <label class="f-hint" for="brokerExp">Опыт: сделки, объёмы, направления (10–1500 символов)</label>
+          <textarea id="brokerExp" rows="4" maxlength="1500" placeholder="Например: два года сопровождаю P2P-сделки, личный оборот — …"></textarea>
+        </div>
+        <div class="field">
+          <label class="f-hint" for="brokerContact">Контакт для связи — Telegram, телефон или e-mail</label>
+          <input id="brokerContact" maxlength="200" placeholder="@username или +7…">
+        </div>
+        ${captchaHtml('capBroker')}
+        <button class="btn btn-primary mt" id="brokerApply">${ICONS.bolt}<span>Отправить заявку</span></button>
+        <div class="f-err" id="brokerErr"></div>
+      </div>`;
+    v.innerHTML = `
+      <section class="card editorial br-hero">
+        <div class="ed-art" style="background-image:url('/img/apply.jpg')" aria-hidden="true"></div>
+        <div class="ed-body">
+          <div class="kicker gold">Станьте брокером PRICELEX</div>
+          <div class="display">Ваш опыт —<br><em>ваш доход</em></div>
+        </div>
+      </section>
+      <div class="card">
+        <div class="card-title">Как это устроено</div>
+        ${features}
+      </div>
+      ${statusHtml}`;
+    const exp = $('#brokerExp');
+    if (exp) {
+      exp.addEventListener('input', () => {
+        exp.style.height = 'auto';
+        exp.style.height = Math.min(exp.scrollHeight, 200) + 'px';
+      });
+      renderCaptchaBoxes();
+    }
+    const again = $('#brokerAgain');
+    if (again) again.addEventListener('click', () => { S.brokerApp = null; renderBroker(); });
+    const apply = $('#brokerApply');
+    if (apply) apply.addEventListener('click', submitBrokerApply);
   }
+
+  const isTypingBroker = () => {
+    const el = document.activeElement;
+    return el && ['brokerExp', 'brokerContact', 'capBrokerIn'].includes(el.id);
+  };
+
+  async function loadBrokerStatus() {
+    // Фоновая проверка: одна заявка на пользователя.
+    if (isTypingBroker()) return;
+    try {
+      const r = await api('/api/broker/status');
+      S.brokerApp = r.application;
+    } catch { /* не критично */ }
+  }
+
+  async function submitBrokerApply() {
+    const err = $('#brokerErr');
+    err.textContent = '';
+    const experience = $('#brokerExp').value.trim();
+    const contact = $('#brokerContact').value.trim();
+    if (experience.length < 10) return (err.textContent = 'Расскажите про опыт чуть подробнее (от 10 символов).');
+    if (contact.length < 3) return (err.textContent = 'Оставьте контакт для связи.');
+    const cap = captchaPayload('capBroker');
+    if (!cap.captchaAnswer) return (err.textContent = 'Решите проверочный пример.');
+    const btn = $('#brokerApply');
+    btn.disabled = true;
+    haptic('medium');
+    try {
+      const r = await api('/api/broker/apply', {
+        method: 'POST',
+        body: { experience, contact, startParam, ...cap },
+      });
+      S.brokerApp = r.application;
+      haptic('heavy');
+      toast('Заявка отправлена администрации');
+      renderBroker();
+    } catch (e) {
+      err.textContent = e.message;
+      toast(e.message);
+      await refreshCaptcha();
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // Дежурного Telegram-оператора больше нет: поддержка — в чате приложения.
+  // Если администрация задаст контакт в настройках — покажем ссылку.
+  const supportHandle = () => {
+    const op = String((S.settings && S.settings.operator) || '').trim();
+    return op ? '@' + op.replace(/^@/, '') : '';
+  };
+  const supportUrl = () => 'https://t.me/' + supportHandle().slice(1);
+  const supportLinkHtml = () =>
+    supportHandle()
+      ? `<a class="inline-link" href="${esc(supportUrl())}" target="_blank" rel="noopener">${esc(supportHandle())}</a>`
+      : '';
 
   function renderInfo() {
     const s = S.settings;
@@ -961,7 +1105,7 @@
           <p class="sp-line lead">PRICELEX — это не просто обменник.</p>
           <p class="sp-line">Это экосистема, где каждый сотрудник прошёл непростой путь, но на этом пути он овладевал навыками в мире криптовалют.</p>
           <p class="sp-line">И теперь мы экономим ваше время и нервы.</p>
-          <p class="sp-line big">Мы не обменник. <em>Мы агентство брокеров,</em> которые в реальном времени находят лучшие варианты на рынке.</p>
+          <p class="sp-line big">Мы не обменник. <em>Мы агентство брокеров</em> — проверенная и быстрая команда профессионалов.</p>
           <p class="sp-line">Да, иногда приходится подождать.</p>
           <p class="sp-line big">Но мы знаем, кто мы. <em>Мы отвечаем за качество репутацией.</em></p>
           <div class="sp-sign">PRICELEX</div>
@@ -970,9 +1114,9 @@
       <div class="card">
         <div class="card-title">Почему PRICELEX</div>
         <div class="feat">
-          <div class="f"><span class="i">◆</span>Живой поиск лучшей цены — сделку ведёт брокер, а не скрипт</div>
+          <div class="f"><span class="i">◆</span>Проверенная и быстрая команда — сделку ведёт брокер, а не скрипт</div>
           <div class="f"><span class="i">◆</span>Сумма к оплате известна заранее — без доплат</div>
-          <div class="f"><span class="i">◆</span>Просадки курса отмечены на графике — видно лучшую точку входа</div>
+          <div class="f"><span class="i">◆</span>Просадки курса отмечены на графике — видно хорошую точку входа</div>
           <div class="f"><span class="i">◆</span>Отзывы только от реальных клиентов — после завершённого обмена</div>
         </div>
       </div>
@@ -980,33 +1124,53 @@
         <div class="card-title">Как это работает</div>
         <div class="steps">
           <div class="step"><div class="n">1</div>Выберите валюту и сумму — калькулятор сразу покажет, сколько получите.</div>
-          <div class="step"><div class="n">2</div>Укажите кошелёк и нажмите «Найти реквизиты»: брокер подберёт лучший вариант и пришлёт точную сумму.</div>
+          <div class="step"><div class="n">2</div>Укажите кошелёк и нажмите «Найти реквизиты»: брокер быстро подтвердит сделку и пришлёт точную сумму.</div>
           <div class="step"><div class="n">3</div>Переведите сумму, прикрепите PDF-чек и нажмите «Я оплатил».</div>
           <div class="step"><div class="n">4</div>После подтверждения средства уходят на ваш кошелёк — ссылку на транзакцию увидите в заявке.</div>
         </div>
       </div>
-      ${rulesCardHtml()}
-      <section class="card apply-hero">
-        <div class="apply-art" style="background-image:url('/img/apply.jpg')" aria-hidden="true"></div>
-        <div class="ed-body">
-          <div class="kicker gold">Команда брокеров</div>
-          <div class="display">Станьте брокером <em>PRICELEX</em></div>
-          <p class="apply-lead">Умеете спокойно объяснять сложное — так, как объяснили бы бабушке установку приложения? Ведите сделки клиентов через гарантийный счёт площадки, зарабатывайте на каждой завершённой заявке и выводите BTC в любое время.</p>
-        </div>
-        <div class="apply-body">${applyBodyHtml()}</div>
-      </section>
       <div class="card">
         <div class="card-title">Связь с нами</div>
         <div class="contacts">
+          ${supportHandle() ? `<a class="contact" href="${esc(supportUrl())}" target="_blank" rel="noopener"><span class="ci">${ICONS.chat}</span><span>Поддержка<small>${esc(supportHandle())} · отвечаем лично</small></span></a>` : ''}
           <a class="contact" href="${esc(s.channel)}" target="_blank" rel="noopener"><span class="ci">📣</span><span>Официальный канал<small>новости и курсы</small></span></a>
           <a class="contact" href="${esc(s.chat)}" target="_blank" rel="noopener"><span class="ci">💬</span><span>Чат PRICELEX<small>общение с клиентами</small></span></a>
         </div>
         <button class="btn btn-ghost" style="margin-top:12px" id="goSupport">${ICONS.chat}<span>Написать в поддержку из приложения</span></button>
       </div>
+      <div class="card">
+        <details class="rules">
+          <summary><span class="card-title" style="margin:0">Правила платформы</span><span class="rules-toggle">${ICONS.info}<span>Читать</span></span></summary>
+          <div class="rules-body">
+            <div class="rule"><div class="r-n">1. Общие положения</div>
+              <p>PRICELEX (далее — «Платформа») выступает посредником, предоставляющим Пользователю доступ к профессиональному опыту независимых брокеров на условиях временной аренды их экспертизы. Брокер сопровождает сделку Пользователя так же, как Пользователь помогает своей бабушке установить мессенджер: объясняет шаги, проверяет реквизиты и доводит операцию до результата. Платформа не является банком, платёжной системой или оператором электронных денежных средств.</p></div>
+            <div class="rule"><div class="r-n">2. Заявки и сопровождение</div>
+              <p>2.1. Сделка оформляется Заявкой, в которой Пользователь указывает сумму, валюту и адрес получения. Заявку сопровождает Брокер, принявший её в работу через панель в официальном боте Платформы.</p>
+              <p>2.2. Брокер действует от своего имени как независимый исполнитель. Платформа обеспечивает инфраструктуру, контроль исполнения и разрешение споров.</p>
+              <p>2.3. Реквизиты для оплаты сообщает только Брокер внутри защищённой сессии. Любые реквизиты, полученные из сторонних источников, Платформой не признаются.</p></div>
+            <div class="rule"><div class="r-n">3. Гарантийный (эскроу) счёт</div>
+              <p>3.1. Средства Пользователя по активной Заявке считаются размещёнными на гарантийном счёте Платформы: они замораживаются на время исполнения и не могут быть использованы ни Брокером, ни третьими лицами.</p>
+              <p>3.2. Администрация Платформы проверяет факт поступления оплаты. Только после подтверждения оплаты средства размораживаются, и Покупателю перечисляется приобретённый актив в полном объёме по условиям Заявки.</p>
+              <p>3.3. Если оплата не поступила в разумный срок, Заявка аннулируется, а заморозка средств снимается без каких-либо удержаний с Пользователя.</p></div>
+            <div class="rule"><div class="r-n">4. Вознаграждение</div>
+              <p>4.1. Вознаграждение Брокера уже учтено в курсе сделки, который Пользователь видит до создания Заявки. Дополнительных скрытых удержаний с Пользователя нет.</p>
+              <p>4.2. Начисленное вознаграждение Брокер вправе запросить к выплате в любое время через официального бота Платформы при накоплении суммы не менее 0,0002 BTC. Выплаты подтверждает Администрация.</p></div>
+            <div class="rule"><div class="r-n">5. Ответственность сторон</div>
+              <p>5.1. Пользователь гарантирует законное происхождение средств и самостоятельно несёт ответственность за достоверность указанных реквизитов.</p>
+              <p>5.2. Платформа отвечает за работу гарантийного счёта и хранение данных в пределах, необходимых для исполнения Заявок. Споры между Пользователем и Брокером разрешает Администрация; её решение по результатам проверки оплаты является окончательным.</p>
+              <p>5.3. Платформа не даёт инвестиционных рекомендаций и не гарантирует доходность каких-либо активов.</p></div>
+            <div class="rule"><div class="r-n">6. Брокеры</div>
+              <p>6.1. Статус Брокера присваивается Администрацией по итогам рассмотрения заявки с описанием опыта и контактных данных кандидата.</p>
+              <p>6.2. Брокер обязуется соблюдать конфиденциальность, исполнять Заявки добросовестно и не выводить общение за пределы инфраструктуры Платформы.</p>
+              <p>6.3. Администрация вправе приостановить или прекратить сотрудничество с Брокером при нарушении настоящих Правил.</p></div>
+            <div class="rule"><div class="r-n">7. Заключительные положения</div>
+              <p>Используя Платформу, Пользователь и Брокер подтверждают, что ознакомлены с настоящими Правилами и принимают их в полном объёме. Актуальная редакция всегда доступна в этом разделе.</p></div>
+          </div>
+        </details>
+      </div>
       <div class="signature">PRICELEX<span>— быстро · надёжно · выгодно —</span></div>`;
     const go = $('#goSupport');
     if (go) go.addEventListener('click', () => { haptic('light'); goTab('support'); });
-    wireApplyForm();
   }
 
   /* ---------- отзывы ---------- */
@@ -1132,7 +1296,7 @@
     v.innerHTML = `
       <div class="card">
         <div class="card-title">Чат поддержки</div>
-        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:12px">Задайте вопрос брокеру прямо здесь — обычно отвечаем за 1–3 минуты. На связи 24/7.</div>
+        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:12px">Задайте вопрос брокеру прямо здесь — обычно отвечаем за 1–3 минуты.${supportHandle() ? ` Или напишите напрямую в Telegram: ${supportLinkHtml()}.` : ''}</div>
         <div class="chat-box" id="chatBox">
           <div class="chat-empty" id="chatEmpty"><div class="e-ic">💬</div>Напишите сообщение — мы на связи 24/7</div>
           <div class="chat-list" id="chatList"></div>
@@ -1141,7 +1305,7 @@
           <textarea id="chatInput" placeholder="Напишите сообщение..." rows="1" maxlength="2000"></textarea>
           <button class="btn btn-primary btn-sm" id="btnSendChat">${ICONS.send}</button>
         </div>
-        <div class="f-hint" style="margin-top:9px">Поддержка отвечает в этом чате и в Telegram. Не делитесь приватными ключами.</div>
+        <div class="f-hint" style="margin-top:9px">Поддержка отвечает в этом чате${supportHandle() ? ' и в Telegram' : ''}. Не делитесь приватными ключами.</div>
       </div>
     `;
     const input = $('#chatInput');
@@ -1372,7 +1536,8 @@
 
   function startPolling() {
     const running = new Set();
-    const refresh = () => Promise.all([pollOrder, pollSettings, pollProfile, pollReviews, () => pollSupport(false)].map(async (poll) => {
+    const pollBroker = () => (S.tab === 'broker' && S.brokerApp && S.brokerApp.status === 'pending' ? loadBrokerStatus() : Promise.resolve());
+    const refresh = () => Promise.all([pollOrder, pollSettings, pollProfile, pollReviews, () => pollSupport(false), pollBroker].map(async (poll) => {
       if (typeof poll !== 'function') return;
       if (running.has(poll)) return;
       running.add(poll);
@@ -1403,11 +1568,6 @@
         const sup = await api('/api/support/messages');
         S.support = sup.messages || [];
       } catch {}
-      // статус заявки «стать брокером» (если подавалась)
-      try {
-        const br = await api('/api/broker/application');
-        S.brokerApp = br.application || null;
-      } catch {}
       loadRateHistory();
     } catch (e) {
       document.getElementById('announce').textContent = '⚠️ Не удалось подключиться к серверу. Обновите страницу.';
@@ -1422,6 +1582,9 @@
     renderRefs();
     renderSupport();
     renderInfo();
+    renderBroker();
+    loadBrokerStatus();
+    refreshCaptcha();
     // show correct initial tab
     document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
     $('#view-' + S.tab).classList.remove('hidden');
