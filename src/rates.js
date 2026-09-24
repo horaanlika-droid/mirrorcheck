@@ -90,7 +90,7 @@ async function fetchOfficial() {
 const applyFee = (base, fee) => Math.max(1, Math.round(base * (1 + fee / 100)));
 
 function applyRates(official) {
-  return store.mutate((db) => {
+  const settings = store.mutate((db) => {
     const fee = Number(db.settings.feePercent) || 0;
     db.settings.baseRateBTC = Math.round(official.btc);
     db.settings.baseRateGRAM = Math.round(official.gram);
@@ -100,17 +100,23 @@ function applyRates(official) {
     db.settings.rateSource = official.source;
     return db.settings;
   });
+  // Точка для графика курса в Web App — только реальные наблюдения.
+  store.pushRatePoint({ btc: settings.rateBTC, gram: settings.rateGRAM, at: settings.rateUpdatedAt });
+  return settings;
 }
 
 // Пересчёт итоговых курсов после смены комиссии (официальные не трогаем).
 function recomputeWithFee() {
-  return store.mutate((db) => {
-    const s = db.settings;
-    const fee = Number(s.feePercent) || 0;
-    if (s.baseRateBTC) s.rateBTC = applyFee(s.baseRateBTC, fee);
-    if (s.baseRateGRAM) s.rateGRAM = applyFee(s.baseRateGRAM, fee);
-    return s;
+  const s = store.mutate((db) => {
+    const set = db.settings;
+    const fee = Number(set.feePercent) || 0;
+    if (set.baseRateBTC) set.rateBTC = applyFee(set.baseRateBTC, fee);
+    if (set.baseRateGRAM) set.rateGRAM = applyFee(set.baseRateGRAM, fee);
+    return set;
   });
+  // Оператор изменил курс для клиентов — это тоже точка на графике.
+  store.pushRatePoint({ btc: s.rateBTC, gram: s.rateGRAM });
+  return s;
 }
 
 async function refreshRates() {
