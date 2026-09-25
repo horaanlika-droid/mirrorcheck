@@ -229,7 +229,7 @@ test('active order is a back-navigable subpage with a resume card on exchange', 
   assert.equal(a.document.querySelector('#appHeader .hdr-page-title').textContent, 'Заявка');
 });
 
-test('депозит брокеров вписан тихой строкой: 0.02 стоит, все знаки после него живут', async (t) => {
+test('депозит брокеров вписан тихой строкой: 0.0200 стоит, живут только последние четыре знака — пошагово, ± несколько сатоши', async (t) => {
   const clock = { t: now };
   const a = await app(t, { clock });
   const exchange = a.document.querySelector('#view-exchange');
@@ -246,30 +246,57 @@ test('депозит брокеров вписан тихой строкой: 0.
     'внутри строки выделена только цифра, и та же строкой');
 
   const amountOf = () => lineOf().querySelector('.dep-btc').textContent.trim();
+  const sat = (value) => Math.round(Number(value) * 1e8);
   const first = amountOf();
-  // Начало суммы — как задал оператор (0.02); все шесть знаков после него свободны.
-  assert.match(first, /^0\.02\d{6}$/, 'после 0.02 видны все знаки');
+  // Начало суммы — как задал оператор (0.0200); живут только последние четыре знака.
+  assert.match(first, /^0\.0200\d{4}$/, 'после 0.02 первые два знака стоят, живут последние четыре');
   assert.ok(Number(first) >= settings.guaranteeFundBtc, 'фонд не показывается меньше заданного');
-  assert.ok(Number(first) <= settings.guaranteeFundBtc * 1.16, 'и не уходит далеко вверх');
+  assert.ok(sat(first) < settings.guaranteeFundBtc * 1e8 + 10000, 'хвост не выходит за четыре знака');
 
-  // Смотрим час шагом 3 минуты: живут не только последние четыре знака, а весь
-  // хвост после 0.02 — первый знак после него тоже успевает смениться.
-  const tails = new Set([first.slice(4)]);
-  for (let i = 1; i <= 20; i += 1) {
-    clock.t = now + i * 3 * 60000;
+  // Один и тот же момент времени — одна и та же цифра: число не разыгрывается заново.
+  await a.showTab('reviews');
+  await a.showTab('exchange');
+  assert.equal(amountOf(), first, 'перерисовка в тот же момент не меняет сумму');
+
+  // Десять минут шагом 4.5 с (так тикают живые числа в приложении): каждое движение —
+  // небольшой шаг вверх или вниз от предыдущего значения, а не прыжок к случайной цифре.
+  let prev = sat(first);
+  let ups = 0;
+  let downs = 0;
+  let biggest = 0;
+  const seen = new Set([prev]);
+  for (let i = 1; i <= 133; i += 1) {
+    clock.t = now + i * 4500;
     await a.showTab('reviews');
     await a.showTab('exchange');
     const value = amountOf();
-    assert.match(value, /^0\.02\d{6}$/, `сумма остаётся в формате фонда: ${value}`);
-    tails.add(value.slice(4));
+    assert.match(value, /^0\.0200\d{4}$/, `начало суммы не трогается: ${value}`);
+    const cur = sat(value);
+    const delta = cur - prev;
+    biggest = Math.max(biggest, Math.abs(delta));
+    if (delta > 0) ups += 1;
+    else if (delta < 0) downs += 1;
+    seen.add(cur);
+    prev = cur;
   }
-  assert.ok(tails.size >= 3, 'значения не замирают на одном числе');
-  const firstDigits = new Set([...tails].map((tail) => tail[0]));
-  const secondDigits = new Set([...tails].map((tail) => tail[1]));
-  const middleDigits = new Set([...tails].map((tail) => tail[2] + tail[3]));
-  assert.ok(firstDigits.size >= 2, 'меняется и первый знак после 0.02, а не только последние четыре');
-  assert.ok(secondDigits.size >= 3, 'второй знак хвоста тоже живёт');
-  assert.ok(middleDigits.size >= 4, 'середина хвоста дышит');
+  assert.ok(biggest >= 1 && biggest <= 20, `шаг остаётся небольшим: самый крупный ${biggest} сатоши`);
+  assert.ok(seen.size >= 20, `сумма не замирает: ${seen.size} значений за десять минут`);
+  assert.ok(ups >= 3 && downs >= 3, `ход идёт и вверх, и вниз: +${ups} / −${downs}`);
+
+  // За сутки хвост уходит и в другие тысячи — живут все четыре знака, но только они:
+  // «0.0200» впереди не меняется никогда.
+  const heads = new Set();
+  const thousands = new Set();
+  for (let h = 0; h <= 24; h += 1) {
+    clock.t = now + h * 3600 * 1000;
+    await a.showTab('reviews');
+    await a.showTab('exchange');
+    const value = amountOf();
+    heads.add(value.slice(0, 6));
+    thousands.add(value[6]);
+  }
+  assert.deepEqual([...heads], ['0.0200'], 'первые два знака после 0.02 стоят на месте');
+  assert.ok(thousands.size >= 2, 'за сутки меняется и четвёртый знак с конца');
 
   // Оформление строки — приглушённый текст без плашки, подложки и акцента: строка
   // не выделяется ни цветом, ни иконкой, ни отдельным блоком.
