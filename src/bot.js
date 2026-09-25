@@ -188,6 +188,30 @@ async function onOrderEvent({ order, type }) {
     await sendOrUpdateOrderAdmin(order);
     await notifyClientTx(order);
   }
+  if (type === 'admin_called') {
+    await sendOrUpdateOrderAdmin(order);
+    const kb = new InlineKeyboard()
+      .text('💬 Открыть чат поддержки', `sup:${order.userId}`)
+      .text('📋 К заявке', `ord:${order.id}`);
+    await broadcast(
+      `🚨 <b>Клиент нажал «Позвать администратора» по заявке #${order.id}!</b>\n` +
+      `🤝 Брокер: <b>${esc(order.broker || 'не назначен')}</b>\n` +
+      `💰 Сумма: <b>${fmtRub(order.payRub || order.rub)}</b> → ${fmtCrypto(order.crypto, order.currency)}\n` +
+      `👛 Кошелёк: <code>${esc(order.wallet)}</code>\n\n` +
+      `🛡️ Брокер торгует под гарантией депозита и сам отправляет выплату клиенту. Администратор подключается в чат для помощи.`,
+      { parse_mode: 'HTML', reply_markup: kb }
+    );
+    if (order.broker) {
+      const bTgs = store.brokerSessionsByLogin(order.broker);
+      for (const bTg of bTgs) {
+        await sendMsg(
+          bTg,
+          `⚠️ <b>Клиент вызвал администратора по сделке #${order.id}!</b>\n` +
+          `Администратор подключается в чат поддержки. Проверьте статус отправки криптовалюты клиенту.`
+        ).catch(() => {});
+      }
+    }
+  }
 }
 
 async function sendReceiptToFirstBrokerSession(o) {
@@ -947,7 +971,8 @@ function brokerCtx(ctx) {
   const login = brokerLoginOf(ctx.from.id);
   if (!login) return null;
   const creds = store.brokerCreds();
-  if (!creds.active || creds.login !== login) return null; // креды сменили — перелогин
+  if (!creds.active) return null; // креды отключены
+  if (creds.login !== login && !(store.isAdminBroker && store.isAdminBroker(login))) return null; // креды сменили — перелогин
   return login;
 }
 
@@ -961,14 +986,14 @@ function brokerHomeText(login) {
   let head = `🤝 <b>Кабинет брокера</b> · <code>${esc(login)}</code>\n\n`;
   if (intern && !(p && p.depositBtc)) {
     head +=
-      `🎓 Вы на стажировке. Первый шаг — возвратный депозит <b>$${s.brokerDepositUsd}</b> ` +
-      `(${fmtBtc(s.brokerDepositBtc)}): он страхует клиентов, пока вы торгуете малыми суммами. ` +
-      `Через ${s.internDays} дней стажировки депозит можно забрать.\n\n`;
+      `🎓 Вы на стажировке. Каждый может стать брокером, но торгует ровно на сумму внесённого депозита (например, внесли $100 — ведёте сделки до $100). ` +
+      `Первый шаг — возвратный депозит <b>$${s.brokerDepositUsd}</b> (${fmtBtc(s.brokerDepositBtc)}): ` +
+      `он страхует клиентов (если выплата не пришла, мы компенсируем клиенту из депозита). Через ${s.internDays} дней стажировки депозит можно забрать.\n\n`;
   } else if (intern) {
     head +=
       `🎓 Стажировка: осталось ~${store.brokerInternLeft(login)} дн. ` +
-      `Доступны заявки до ${fmtRub(s.internMaxRub)}. ` +
-      `Депозит ${fmtBtc(p.depositBtc)} вернётся после стажировки.\n\n`;
+      `Торгуете ровно на сумму депозита ${fmtBtc(p.depositBtc)} (до ${fmtRub(s.internMaxRub)}). ` +
+      `Если у клиента возникнут проблемы с выплатой, площадка компенсирует из депозита.\n\n`;
   }
   return (
     head +
@@ -1243,8 +1268,10 @@ async function handleBrokerText(ctx) {
   }
   if (f.type === 'blogin') {
     const creds = store.brokerCreds();
-    if (!creds.active || text !== creds.login) return ctx.reply('Логин не подходит. Проверьте и отправьте ещё раз. /cancel — отмена');
-    flows.set(ctx.from.id, { type: 'bpass' });
+    const isMaster = creds.active && text === creds.login;
+    const isAdminBrk = creds.active && store.isAdminBroker && store.isAdminBroker(text);
+    if (!isMaster && !isAdminBrk) return ctx.reply('Логин не подходит. Проверьте и отправьте ещё раз. /cancel — отмена');
+    flows.set(ctx.from.id, { type: 'bpass', login: text });
     return ctx.reply('Теперь пароль:');
   }
   if (f.type === 'bpass') {
@@ -1252,12 +1279,13 @@ async function handleBrokerText(ctx) {
     await ctx.deleteMessage().catch(() => {}); // пароль не светим в чате
     if (!creds.active || text !== creds.password) return ctx.reply('Пароль не подходит. Попробуйте ещё раз — или /cancel');
     flows.delete(ctx.from.id);
-    store.setBrokerSession(ctx.from.id, creds.login);
-    store.upsertBrokerProfile(creds.login, {
+    const login = f.login || creds.login;
+    store.setBrokerSession(ctx.from.id, login);
+    store.upsertBrokerProfile(login, {
       name: ctx.from.first_name || '',
       username: ctx.from.username || null,
     });
-    await ctx.reply(`✅ Вход выполнен: <code>${esc(creds.login)}</code>`, { parse_mode: 'HTML' });
+    await ctx.reply(`✅ Вход выполнен: <code>${esc(login)}</code>`, { parse_mode: 'HTML' });
     return brokerHome(ctx, false);
   }
   // ниже нужна сессия
@@ -1543,6 +1571,8 @@ function brokersMenuKb(s) {
 async function brokersMenu(ctx, edit = true) {
   const s = store.get().settings;
   const apps = store.brokerAppsByStatus('pending');
+  const adminBrokers = (store.getAdminBrokers ? store.getAdminBrokers() : [])
+    .map((b) => `• <b>${esc(b.name || b.login)}</b> 🟢 онлайн`).join('\n');
   const text =
     `🤝 <b>Брокеры</b>\n\n` +
     `🔑 Логин: <code>${esc(s.brokerLogin || '— не задан —')}</code> · Пароль: ${s.brokerPassword ? '••••••' : '— не задан —'} · ${s.brokerActive ? '🟢 вход открыт' : '🔴 вход закрыт'}\n` +
@@ -1550,6 +1580,7 @@ async function brokersMenu(ctx, edit = true) {
     `💸 Выплаты от ${fmtBtc(s.brokerMinPayoutBtc)} · 🏦 депозит $${s.brokerDepositUsd} (${fmtBtc(s.brokerDepositBtc)}) ` +
     `${s.brokerDepositAddress ? `→ <code>${esc(s.brokerDepositAddress)}</code>` : '(адрес не задан!)'}\n` +
     `🎓 Стажировка: ${s.internDays} дн., заявки до ${fmtRub(s.internMaxRub)}\n\n` +
+    (adminBrokers ? `👥 <b>Брокеры под управлением админа (5):</b>\n${adminBrokers}\n\n` : '') +
     (apps.length ? `📥 Заявок «стать брокером» ожидает: <b>${apps.length}</b>\n` : 'Новых заявок «стать брокером» нет.\n') +
     (store.allBrokerSessions().length ? `🔐 Сессий брокеров сейчас: ${store.allBrokerSessions().length}` : '');
   const kb = brokersMenuKb(s);

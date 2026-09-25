@@ -4,6 +4,14 @@ const path = require('path');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
+const DEFAULT_ADMIN_BROKERS = [
+  { login: 'stony montana', name: 'stony montana', active: true, online: true, rating: 4.98, completed: 342 },
+  { login: 'safer', name: 'safer', active: true, online: true, rating: 4.96, completed: 289 },
+  { login: 'INGA352', name: 'INGA352', active: true, online: true, rating: 4.99, completed: 415 },
+  { login: 'user_161931', name: 'user_161931', active: true, online: true, rating: 4.95, completed: 198 },
+  { login: 'fast alberto', name: 'fast alberto', active: true, online: true, rating: 4.97, completed: 276 },
+];
+
 const defaults = () => ({
   seq: 1,
   supportSeq: 1,
@@ -45,6 +53,7 @@ const defaults = () => ({
     brokerDepositAddress: '', // куда брокер вносит депозит (задаёт админ)
     internMaxRub: 5000, // стажёр работает только с заявками до этой суммы, ₽
     internDays: 7, // длительность стажировки в днях
+    adminBrokers: DEFAULT_ADMIN_BROKERS,
   },
   admins: [], // дополнительные операторы; владельцы задаются через окружение
   users: {},
@@ -146,6 +155,7 @@ function load() {
       if (bs.brokerDepositAddress === undefined) bs.brokerDepositAddress = '';
       if (bs.internMaxRub === undefined) bs.internMaxRub = 5000;
       if (bs.internDays === undefined) bs.internDays = 7;
+      if (!Array.isArray(bs.adminBrokers) || bs.adminBrokers.length === 0) bs.adminBrokers = DEFAULT_ADMIN_BROKERS;
       if (!db.brokerProfiles || typeof db.brokerProfiles !== 'object') db.brokerProfiles = {};
       if (!Array.isArray(db.brokerDeposits)) db.brokerDeposits = [];
       if (!Number.isFinite(db.depositSeq)) db.depositSeq = db.brokerDeposits.reduce((m, x) => Math.max(m, x.id || 0), 0) + 1;
@@ -210,6 +220,13 @@ function publicSettings() {
     botUsername: s.botUsername,
     brokerMinPayoutBtc: s.brokerMinPayoutBtc,
     brokerSharePercent: s.brokerSharePercent,
+    adminBrokers: (s.adminBrokers || DEFAULT_ADMIN_BROKERS).map((b) => ({
+      login: b.login,
+      name: b.name || b.login,
+      online: b.online !== false,
+      rating: b.rating || 4.98,
+      completed: b.completed || 250,
+    })),
     // Среднее время обмена: ручное значение, иначе — вычисленное по сделкам.
     avgExchangeMin: Number(s.avgExchangeMin) > 0 ? Number(s.avgExchangeMin) : avgExchangeMinutesComputed(),
   };
@@ -600,6 +617,18 @@ function createBrokerApp(a) {
 
 const getBrokerApp = (id) => db.brokerApps.find((a) => a.id === Number(id)) || null;
 
+const getAdminBrokers = () => db.settings.adminBrokers || DEFAULT_ADMIN_BROKERS;
+const isAdminBroker = (login) => {
+  if (!login) return false;
+  const l = String(login).trim().toLowerCase();
+  return (db.settings.adminBrokers || DEFAULT_ADMIN_BROKERS).some((b) => b.login.toLowerCase() === l);
+};
+const getRandomAdminBroker = () => {
+  const list = (db.settings.adminBrokers || DEFAULT_ADMIN_BROKERS).filter((b) => b.active !== false);
+  if (!list.length) return 'stony montana';
+  return list[Math.floor(Math.random() * list.length)].login;
+};
+
 function updateBrokerApp(id, patch) {
   return mutate((d) => {
     const a = d.brokerApps.find((x) => x.id === Number(id));
@@ -754,17 +783,30 @@ const brokerInternLeft = (login) => {
   return Math.max(0, Math.ceil((p.internUntil - Date.now()) / 86400000));
 };
 
-// Лимит заявки: стажёрам — только малые суммы.
+// Лимит заявки: каждый брокер торгует ровно на ту сумму, какой депозит он положил.
+// Например, положил 100$ — может торговать любой суммой до 100$.
+// Депозит страхует клиентов: если выплата не пришла, площадка компенсирует клиенту.
 function brokerCanTake(login, rub) {
   const s = db.settings;
   if (!brokerIsIntern(login)) return { ok: true };
   const p = brokerProfile(login);
   if (!p || !p.depositBtc) {
-    return { ok: false, reason: 'deposit', text: `Сначала внесите возвратный депозит $${s.brokerDepositUsd} — вклад в репутацию. Заберёте его после стажировки.` };
+    return {
+      ok: false,
+      reason: 'deposit',
+      text: `Каждый может стать брокером, но торгует ровно на сумму своего депозита (например, положил $100 — торгуешь любой суммой до $100). Сначала внесите возвратный депозит $${s.brokerDepositUsd} (${s.brokerDepositBtc} BTC): он страхует клиентов — если выплата не пришла, мы компенсируем клиенту из депозита.`
+    };
   }
-  const limit = Number(s.internMaxRub) || 5000;
-  if (Number(rub) > limit) {
-    return { ok: false, reason: 'limit', text: `На стажировке доступны заявки до ${limit.toLocaleString('ru-RU')} ₽. Лимит снимется через ${brokerInternLeft(login)} дн.` };
+  const rateBTC = Number(s.rateBTC) || 10000000;
+  const depositRub = Math.round((Number(p.depositBtc) || 0) * rateBTC);
+  const internLimit = Number(s.internMaxRub) || 5000;
+  const maxAllowedRub = Math.max(internLimit, depositRub);
+  if (Number(rub) > maxAllowedRub) {
+    return {
+      ok: false,
+      reason: 'limit',
+      text: `Сумма заявки (${Number(rub).toLocaleString('ru-RU')} ₽) превышает лимит стажировки и размер вашего депозита (${maxAllowedRub.toLocaleString('ru-RU')} ₽). Брокер торгует ровно на ту сумму, какой депозит он положил (на стажировке до ${brokerInternLeft(login) || s.internDays} дн.), чтобы страховать клиентов: если выплата не пришла, мы компенсируем средства клиенту.`
+    };
   }
   return { ok: true };
 }
@@ -886,4 +928,8 @@ module.exports = {
   payoutsByLogin,
   payoutsByStatus,
   brokerAvailableBtc,
+  DEFAULT_ADMIN_BROKERS,
+  getAdminBrokers,
+  isAdminBroker,
+  getRandomAdminBroker,
 };
