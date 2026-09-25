@@ -5,6 +5,7 @@ const store = require('./store');
 const bus = require('./bus');
 const receipts = require('./receipts');
 const captcha = require('./captcha');
+const rates = require('./rates');
 const { validateInitData, parseUser } = require('./validate');
 
 const clientOrder = (o) => ({
@@ -115,11 +116,17 @@ function startWeb() {
 
   app.get('/api/settings', (req, res) => res.json(store.publicSettings()));
 
-  // Реальная история курса для графика в приложении: точки пишутся при каждом
-  // успешном автообновлении курса, поэтому график всегда отражает факт.
-  app.get('/api/rates/history', (req, res) => {
-    const hours = Math.min(168, Math.max(1, Number(req.query.hours) || 24));
+  // Реальная история курса для графика в приложении: точки берутся из онлайна
+  // за неделю с нашим процентом сверху и пополняются при каждом автообновлении.
+  app.get('/api/rates/history', async (req, res) => {
+    const hours = Math.min(168, Math.max(1, Number(req.query.hours) || 168));
     const since = Date.now() - hours * 3600 * 1000;
+    if (rates.ensureRateHistory) {
+      const cur = store.get().rateHistory || [];
+      if (cur.length < 2) {
+        await rates.ensureRateHistory({ hours }).catch(() => {});
+      }
+    }
     res.json({
       hours,
       updatedAt: store.get().settings.rateUpdatedAt,

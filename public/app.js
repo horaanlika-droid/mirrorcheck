@@ -74,6 +74,11 @@
     const p = (x) => String(x).padStart(2, '0');
     return `${p(d.getHours())}:${p(d.getMinutes())}`;
   };
+  const fmtDayMonth = (ts) => {
+    const d = new Date(ts);
+    const p = (x) => String(x).padStart(2, '0');
+    return `${p(d.getDate())}.${p(d.getMonth() + 1)}`;
+  };
   const fmtAgo = (ts) => {
     if (!Number.isFinite(Number(ts))) return '—';
     const diff = Date.now() - Number(ts);
@@ -262,7 +267,7 @@
   }
 
   // Подпись у точки просадки + сигнал «лучшее время для покупки» под графиком.
-  function renderDipLabel(el, spot) {
+  function renderDipLabel(el, spot, span = 0) {
     if (!el || !spot || !spot.dip || spot.dip.isLast) return;
     const { dip, W } = spot;
     const lab = document.createElement('div');
@@ -270,7 +275,8 @@
     lab.className = 'chart-dip' + (leftSide ? ' left' : '');
     lab.style.left = (leftSide ? dip.x - 12 : Math.min(W - 70, Math.max(70, dip.x))) + 'px';
     lab.style.top = Math.max(0, dip.y - (leftSide ? 20 : 46)) + 'px';
-    lab.innerHTML = `<span class="d-k">Просадка · ${esc(fmtTime(dip.at))}</span><span class="d-v">${esc(Math.round(dip.v).toLocaleString('ru-RU'))} ₽</span>`;
+    const timeLabel = span > 86400000 ? fmtDate(dip.at) : fmtTime(dip.at);
+    lab.innerHTML = `<span class="d-k">Просадка · ${esc(timeLabel)}</span><span class="d-v">${esc(Math.round(dip.v).toLocaleString('ru-RU'))} ₽</span>`;
     el.appendChild(lab);
   }
 
@@ -338,8 +344,9 @@
     if (signal) signal.innerHTML = '';
 
     if (series.length >= 2) {
+      const span = series[series.length - 1].at - series[0].at;
       const spot = renderChart(chart, series, { markDip: true });
-      renderDipLabel(chart, spot);
+      renderDipLabel(chart, spot, span);
       if (signal) {
         const sig = marketSignal(series, spot);
         signal.innerHTML = sig ? sig + DISCLAIMER : '';
@@ -347,8 +354,9 @@
       renderChartTip(chart, spot, (Math.round(series[series.length - 1].v) || 0).toLocaleString('ru-RU') + ' ₽', fmtTime(series[series.length - 1].at));
       if (axis) {
         const mid = series[Math.floor((series.length - 1) / 2)];
+        const fmtAxis = (ts) => (span > 86400000 ? fmtDayMonth(ts) : fmtTime(ts));
         axis.innerHTML = [series[0], mid, series[series.length - 1]]
-          .map((p) => `<span>${fmtTime(p.at)}</span>`).join('');
+          .map((p) => `<span>${fmtAxis(p.at)}</span>`).join('');
       }
       const a = series[0].v;
       const b = series[series.length - 1].v;
@@ -1609,7 +1617,7 @@
   /* ---------- история курса ---------- */
   async function loadRateHistory() {
     try {
-      const r = await api('/api/rates/history', { query: { hours: 24 } });
+      const r = await api('/api/rates/history', { query: { hours: 168 } });
       S.history.points = Array.isArray(r.points) ? r.points : [];
       if (S.tab === 'exchange') renderHero();
     } catch (e) {

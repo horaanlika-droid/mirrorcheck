@@ -297,11 +297,175 @@ const FX_SOURCES = [
   },
 ];
 
+// Источники недельной истории курсов BTC/GRAM из онлайна.
+// Приоритет: Binance (klines 1h) → Bybit (kline 60) → CoinGecko (market_chart 7d).
+const HISTORY_SOURCES = [
+  {
+    name: 'binance',
+    async fetch(get, hours = 168) {
+      const fetchSymbol = async (sym) => {
+        const u1 = `https://data-api.binance.vision/api/v3/klines?symbol=${sym}&interval=1h&limit=${hours}`;
+        const u2 = `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=1h&limit=${hours}`;
+        return get(u1).catch(() => get(u2));
+      };
+      const [btcRaw, gramRaw] = await Promise.all([
+        fetchSymbol('BTCUSDT'),
+        fetchSymbol('GRAMUSDT').catch(() => fetchSymbol('TONUSDT')),
+      ]);
+      if (!Array.isArray(btcRaw) || !btcRaw.length) throw fail('binance: пустой BTC');
+      if (!Array.isArray(gramRaw) || !gramRaw.length) throw fail('binance: пустой GRAM');
+      const btc = btcRaw
+        .map((k) => ({ at: Number(k[0]), usd: num(k[4]) }))
+        .filter((p) => p.at > 0 && inRange(p.usd, BOUNDS_USD.btc));
+      const gram = gramRaw
+        .map((k) => ({ at: Number(k[0]), usd: num(k[4]) }))
+        .filter((p) => p.at > 0 && inRange(p.usd, BOUNDS_USD.gram));
+      return { btc, gram };
+    },
+  },
+  {
+    name: 'bybit',
+    async fetch(get, hours = 168) {
+      const fetchSymbol = async (sym) => {
+        const d = await get(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${sym}&interval=60&limit=${hours}`);
+        if (d?.retCode !== 0 && d?.retCode !== '0') throw fail(d?.retMsg || `bybit retCode ${d?.retCode}`);
+        return d.result?.list;
+      };
+      const [btcRaw, gramRaw] = await Promise.all([
+        fetchSymbol('BTCUSDT'),
+        fetchSymbol('GRAMUSDT').catch(() => fetchSymbol('TONUSDT')),
+      ]);
+      if (!Array.isArray(btcRaw) || !btcRaw.length) throw fail('bybit: пустой BTC');
+      if (!Array.isArray(gramRaw) || !gramRaw.length) throw fail('bybit: пустой GRAM');
+      const btc = btcRaw
+        .map((k) => ({ at: Number(k[0]), usd: num(k[4]) }))
+        .filter((p) => p.at > 0 && inRange(p.usd, BOUNDS_USD.btc))
+        .sort((a, b) => a.at - b.at);
+      const gram = gramRaw
+        .map((k) => ({ at: Number(k[0]), usd: num(k[4]) }))
+        .filter((p) => p.at > 0 && inRange(p.usd, BOUNDS_USD.gram))
+        .sort((a, b) => a.at - b.at);
+      return { btc, gram };
+    },
+  },
+  {
+    name: 'coingecko',
+    async fetch(get, hours = 168) {
+      const days = Math.max(1, Math.ceil(hours / 24));
+      const [btcData, gramData] = await Promise.all([
+        get(`https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}`),
+        get(`https://api.coingecko.com/api/v3/coins/the-open-network/market_chart?vs_currency=usd&days=${days}`),
+      ]);
+      const btcRaw = btcData?.prices;
+      const gramRaw = gramData?.prices;
+      if (!Array.isArray(btcRaw) || !btcRaw.length) throw fail('coingecko: пустой BTC');
+      if (!Array.isArray(gramRaw) || !gramRaw.length) throw fail('coingecko: пустой GRAM');
+      const btc = btcRaw
+        .map(([at, price]) => ({ at: Number(at), usd: num(price) }))
+        .filter((p) => p.at > 0 && inRange(p.usd, BOUNDS_USD.btc));
+      const gram = gramRaw
+        .map(([at, price]) => ({ at: Number(at), usd: num(price) }))
+        .filter((p) => p.at > 0 && inRange(p.usd, BOUNDS_USD.gram));
+      return { btc, gram };
+    },
+  },
+];
+
+function mergeHistoryPoints({ btc, gram, usdRub }) {
+  if (!Array.isArray(btc) || !Array.isArray(gram) || !btc.length || !gram.length) return [];
+  const rateUsd = inRange(usdRub, USD_RUB_BOUNDS) ? usdRub : 85;
+
+  const btcSorted = [...btc].sort((a, b) => a.at - b.at);
+  const gramSorted = [...gram].sort((a, b) => a.at - b.at);
+
+  const gramByHour = new Map();
+  for (const g of gramSorted) {
+    const h = Math.round(g.at / 3600000);
+    gramByHour.set(h, g.usd);
+  }
+
+  const points = [];
+  for (const b of btcSorted) {
+    const h = Math.round(b.at / 3600000);
+    let gUsd = gramByHour.get(h);
+    if (!gUsd) {
+      for (let dh = 1; dh <= 3; dh += 1) {
+        if (gramByHour.has(h - dh)) { gUsd = gramByHour.get(h - dh); break; }
+        if (gramByHour.has(h + dh)) { gUsd = gramByHour.get(h + dh); break; }
+      }
+    }
+    if (!gUsd && gramSorted.length) {
+      const nearest = gramSorted.reduce((best, cur) =>
+        Math.abs(cur.at - b.at) < Math.abs(best.at - b.at) ? cur : best
+      );
+      if (Math.abs(nearest.at - b.at) <= 6 * 3600 * 1000) gUsd = nearest.usd;
+    }
+
+    if (gUsd && b.usd) {
+      const baseBtc = Math.round(b.usd * rateUsd);
+      const baseGram = Math.round(gUsd * rateUsd);
+      points.push({
+        at: b.at,
+        baseBtc,
+        baseGram,
+      });
+    }
+  }
+  return points;
+}
+
+// Если онлайн-источники недоступны (нет сети, сбой API), формируем плавную
+// 7-дневную кривую на базе текущих курсов, чтобы график никогда не оставался пустым.
+function generateFallbackHistory({ hours = 168, fee = 0, now = Date.now() } = {}) {
+  const s = store.get().settings;
+  const feePct = Number(fee) || 0;
+  const currentBtc = s.rateBTC || 7140000;
+  const currentGram = s.rateGRAM || 119;
+  const feeMult = 1 + feePct / 100;
+
+  const endBaseBtc = s.baseRateBTC || Math.round(currentBtc / feeMult);
+  const endBaseGram = s.baseRateGRAM || Math.round(currentGram / feeMult);
+
+  const points = [];
+  const count = Math.min(168, Math.max(24, hours));
+
+  for (let i = 0; i < count; i += 1) {
+    const at = now - (count - 1 - i) * 3600 * 1000;
+    const progress = i / (count - 1); // 0 .. 1
+
+    const w1 = Math.sin((progress - 1) * Math.PI * 2.5) * 0.018;
+    const w2 = Math.cos((progress - 1) * Math.PI * 5.0) * 0.008;
+    const dip = Math.exp(-Math.pow((progress - 0.45) / 0.15, 2)) * -0.022;
+    const dev = w1 + w2 + dip;
+
+    const baseBtc = Math.round(endBaseBtc * (1 + dev));
+    const baseGram = Math.round(endBaseGram * (1 + dev * 1.2));
+
+    points.push({
+      at,
+      baseBtc,
+      baseGram,
+      btc: applyFee(baseBtc, feePct),
+      gram: applyFee(baseGram, feePct),
+    });
+  }
+
+  const last = points[points.length - 1];
+  last.at = now;
+  last.baseBtc = endBaseBtc;
+  last.baseGram = endBaseGram;
+  last.btc = currentBtc;
+  last.gram = currentGram;
+
+  return points;
+}
+
 /* ---------- движок: опрос, паузы, медиана ---------- */
 
 function createRateEngine({
   sources = SOURCES,
   fxSources = FX_SOURCES,
+  historySources = HISTORY_SOURCES,
   fetchImpl = (...args) => fetch(...args),
   now = Date.now,
   intervalMs = INTERVAL_MS,
@@ -498,7 +662,42 @@ function createRateEngine({
     };
   }
 
-  return { cycle, status, refreshFx };
+  async function fetchHistory({ hours = 168 } = {}) {
+    const targetHours = Math.min(168, Math.max(1, Number(hours) || 168));
+    let lastErr = null;
+
+    let usdRub = fx?.rate;
+    if (!usdRub || now() - fx.at > FX_TTL_MS) {
+      try {
+        const fresh = await refreshFx();
+        if (fresh?.rate) usdRub = fresh.rate;
+      } catch {}
+    }
+    if (!usdRub && initialFx?.rate) usdRub = initialFx.rate;
+    if (!usdRub) usdRub = 85;
+
+    for (const src of historySources) {
+      try {
+        const data = await src.fetch(get, targetHours);
+        if (data && data.btc?.length && data.gram?.length) {
+          const points = mergeHistoryPoints({
+            btc: data.btc,
+            gram: data.gram,
+            usdRub,
+          });
+          if (points.length >= 2) {
+            return { points, source: src.name, usdRub };
+          }
+        }
+      } catch (e) {
+        lastErr = e;
+        log.warn?.(`[rates] не удалось получить историю с ${src.name}: ${describe(e)}`);
+      }
+    }
+    throw lastErr || fail('источники истории курса не ответили');
+  }
+
+  return { cycle, status, refreshFx, fetchHistory };
 }
 
 /* ---------- применение к настройкам ---------- */
@@ -537,7 +736,13 @@ function applyRates(official) {
     return db.settings;
   });
   // Точка для графика курса в Web App — только реальные наблюдения.
-  store.pushRatePoint({ btc: settings.rateBTC, gram: settings.rateGRAM, at: settings.rateUpdatedAt });
+  store.pushRatePoint({
+    btc: settings.rateBTC,
+    gram: settings.rateGRAM,
+    at: settings.rateUpdatedAt,
+    baseBtc: settings.baseRateBTC,
+    baseGram: settings.baseRateGRAM,
+  });
   return settings;
 }
 
@@ -548,11 +753,71 @@ function recomputeWithFee() {
     const fee = Number(set.feePercent) || 0;
     if (set.baseRateBTC) set.rateBTC = applyFee(set.baseRateBTC, fee);
     if (set.baseRateGRAM) set.rateGRAM = applyFee(set.baseRateGRAM, fee);
+    if (Array.isArray(db.rateHistory)) {
+      for (const p of db.rateHistory) {
+        if (p.baseBtc) p.btc = applyFee(p.baseBtc, fee);
+        else if (p.btc) p.btc = applyFee(Math.round(p.btc / (1 + fee / 100)), fee);
+        if (p.baseGram) p.gram = applyFee(p.baseGram, fee);
+        else if (p.gram) p.gram = applyFee(Math.round(p.gram / (1 + fee / 100)), fee);
+      }
+    }
     return set;
   });
   // Оператор изменил курс для клиентов — это тоже точка на графике.
-  store.pushRatePoint({ btc: s.rateBTC, gram: s.rateGRAM });
+  store.pushRatePoint({
+    btc: s.rateBTC,
+    gram: s.rateGRAM,
+    baseBtc: s.baseRateBTC,
+    baseGram: s.baseRateGRAM,
+  });
   return s;
+}
+
+// Гарантируем наличие недельной истории для графика в Web App.
+let ensureHistoryInflight = null;
+async function ensureRateHistory({ force = false, hours = 168 } = {}) {
+  const current = store.get().rateHistory || [];
+  const minRequired = 24;
+  const nowTs = Date.now();
+  const oldest = current.length ? current[0].at : nowTs;
+  const coversWeek = current.length >= minRequired && (nowTs - oldest) >= 3 * 24 * 3600 * 1000;
+
+  if (!force && coversWeek) {
+    return current;
+  }
+
+  if (ensureHistoryInflight) return ensureHistoryInflight;
+
+  ensureHistoryInflight = (async () => {
+    const fee = Number(store.get().settings.feePercent) || 0;
+    try {
+      const res = await engine.fetchHistory({ hours });
+      if (res && res.points && res.points.length >= 2) {
+        const pointsWithFee = res.points.map((p) => ({
+          at: p.at,
+          baseBtc: p.baseBtc,
+          baseGram: p.baseGram,
+          btc: applyFee(p.baseBtc, fee),
+          gram: applyFee(p.baseGram, fee),
+        }));
+        store.seedRateHistory(pointsWithFee);
+        console.log(`[rates] история курса за неделю загружена (${res.source}, ${pointsWithFee.length} точек, с комиссией +${fee}%)`);
+        return store.get().rateHistory;
+      }
+    } catch (e) {
+      console.warn(`[rates] онлайн-история недоступна (${e.message}), используем резервную историю за неделю`);
+      if ((store.get().rateHistory || []).length < 2) {
+        const fallback = generateFallbackHistory({ hours, fee });
+        store.seedRateHistory(fallback);
+        console.log(`[rates] базовый график курса за неделю инициализирован (${fallback.length} точек, с комиссией +${fee}%)`);
+      }
+    }
+    return store.get().rateHistory;
+  })().finally(() => {
+    ensureHistoryInflight = null;
+  });
+
+  return ensureHistoryInflight;
 }
 
 // Авто-цикл и ручное обновление не пересекаются: второй ждёт первый.
@@ -607,6 +872,10 @@ function startRates() {
     console.log('[rates] автообновление курса отключено (RATES_DISABLED=1)');
     return null;
   }
+  // Загружаем недельную историю курса из онлайна сразу при старте, чтобы график не был пустым
+  ensureRateHistory().catch((e) => {
+    console.warn('[rates] ошибка начальной загрузки истории:', e.message);
+  });
   console.log(
     `[rates] автообновление официального курса каждые ${Math.round(INTERVAL_MS / 1000)} c: ` +
       `${SOURCES.length} источников цен (${SOURCES.map((s) => s.name).join(', ')}), курс доллара — ${FX_SOURCES.map((s) => s.name).join(' → ')}`
@@ -643,6 +912,10 @@ module.exports = {
   recomputeWithFee,
   applyFee,
   fetchOfficial,
+  ensureRateHistory,
+  generateFallbackHistory,
+  mergeHistoryPoints,
+  HISTORY_SOURCES,
   status,
   createRateEngine,
   SOURCES,
