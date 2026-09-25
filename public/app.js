@@ -81,9 +81,11 @@
   /* ---------- общий гарантийный депозит брокеров ---------- */
   // Это депозит ВСЕХ брокеров площадки — общий фонд, которым страхуется каждая
   // сделка. Сумму задаёт оператор в боте («🤝 Брокеры → 🛡 Общий депозит клиентам»),
-  // сейчас это 0.02 BTC. Ровное начало суммы (0.02) показывается как есть, а все
-  // знаки после него живут: они ходят вместе с рынком, поэтому фонд читается как
-  // настоящий, а не как нарисованная круглая цифра.
+  // сейчас это 0.02 BTC. Ровное начало суммы (0.02) показывается как есть, а знаки
+  // после него живут своей жизнью: фонд читается как настоящий, а не как
+  // нарисованная круглая цифра. Нигде это не подчёркивается: клиент видит только
+  // тихую строку-справку — мелким приглушённым текстом, без плашки, иконки и
+  // акцентного цвета.
   const DEPOSIT_FALLBACK_BTC = 0.02;
   // Живая часть — до 15 % от суммы фонда: этого хватает, чтобы после «0.02»
   // шевелились ВСЕ шесть знаков, включая первый, и при этом сумма не выглядела
@@ -136,43 +138,17 @@
     };
   }
 
+  // Сумма в том виде, в каком её читает клиент: одной цифрой одного цвета — деления
+  // на «ровную» и «живую» часть снаружи не видно.
   function depositAmountHtml(dep = depositLive()) {
-    return `<span class="dep-head">${esc(dep.coreText)}</span><span class="dep-tail">${esc(dep.floatText)}</span>`;
+    return esc(dep.coreText + dep.floatText);
   }
 
-  // Карточка на экране обмена: общий депозит брокеров клиент видит до сделки.
-  function depositCardHtml() {
+  // Тихое упоминание депозита: одна строка мелким приглушённым текстом, без плашки,
+  // иконки и подложки. Одна и та же в форме обмена и в заявках.
+  function depositNoteHtml() {
     const dep = depositLive();
-    return `
-      <section class="card deposit-card" id="depositCard">
-        <div class="dep-top">
-          <span class="dep-shield" aria-hidden="true">🛡</span>
-          <div class="dep-copy">
-            <b>Гарантийный депозит брокеров</b>
-            <span>Общий депозит всех брокеров площадки. Каждая сделка страхуется им: если выплата не придёт, PRICELEX компенсирует её из депозита</span>
-          </div>
-          <span class="dep-live"><span class="dot-online"></span>живая сумма</span>
-        </div>
-        <div class="dep-amount">
-          <span class="dep-btc">${depositAmountHtml(dep)}</span>
-          <span class="dep-cur">BTC</span>
-        </div>
-        <div class="dep-foot">
-          <span>Сумма меняется вместе с рынком · <b class="dep-at">${esc(fmtOrganicTime(dep.at))}</b></span>
-          <button type="button" class="f-link" id="depGuarantee">Гарантии PRICELEX</button>
-        </div>
-      </section>`;
-  }
-
-  // Компактная строка о депозите для экранов заявки — те же цифры, что в карточке.
-  function depositStripHtml() {
-    const dep = depositLive();
-    return `
-      <div class="stage-deposit">
-        <span class="sd-ic" aria-hidden="true">🛡</span>
-        <span class="sd-txt">Сделка застрахована общим депозитом всех брокеров площадки —
-          <b class="dep-btc">${depositAmountHtml(dep)}</b> BTC</span>
-      </div>`;
+    return `<div class="dep-line">Сделка застрахована общим депозитом брокеров площадки — <span class="dep-btc">${depositAmountHtml(dep)}</span> BTC</div>`;
   }
 
   // Короткая фраза для текстов приложения: «0.02019784 BTC».
@@ -205,7 +181,6 @@
     const dep = depositLive();
     const amount = depositAmountHtml(dep);
     document.querySelectorAll('.dep-btc').forEach((el) => { el.innerHTML = amount; });
-    document.querySelectorAll('.dep-at').forEach((el) => { el.textContent = fmtOrganicTime(dep.at); });
   }
 
   const STATUS = {
@@ -778,8 +753,6 @@
           </div>
         </section>
 
-        ${depositCardHtml()}
-
         <div class="card exchange-form-card">
           <div class="card-title">Сумма обмена</div>
           <div class="f-label"><span>Вы отдаёте</span><span id="mmLabel"></span></div>
@@ -797,6 +770,7 @@
           </div>
           <div class="f-hint">Введите сумму в любом поле — второе посчитается автоматически</div>
           <div class="f-meta" id="fMeta"></div>
+          ${depositNoteHtml()}
         </div>
 
         <div class="card wallet-card">
@@ -833,8 +807,6 @@
     $('#inCrypto').addEventListener('input', () => { S.calcFrom = 'crypto'; renderFormMeta(); });
     $('#btnGo').addEventListener('click', submitOrder);
     $('#howItWorks').addEventListener('click', () => { haptic('light'); goTab('info'); });
-    const depMore = $('#depGuarantee');
-    if (depMore) depMore.addEventListener('click', () => { haptic('light'); goTab('info'); });
     renderCaptchaBoxes();
     renderHero();
     renderFormMeta();
@@ -1046,7 +1018,7 @@
             <div class="stage-sub">
               Брокер сначала не известен. Распределительный центр PRICELEX подбирает проверенного брокера из команды: брокеры торгуют под общей гарантией депозита площадки, брокер сам принимает платёж и сам переводит криптовалюту вам на кошелёк.
             </div>
-            ${depositStripHtml()}
+            ${depositNoteHtml()}
             <div class="stage-online-bar">
               <span class="dot-online"></span> Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b>
             </div>
@@ -1083,7 +1055,7 @@
             <div class="stage-sub">
               Брокер <b>${esc(o.broker)}</b> готовит реквизиты. Брокер сам проводит обмен и сам переведёт ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code> под гарантией общего депозита всех брокеров площадки.
             </div>
-            ${depositStripHtml()}
+            ${depositNoteHtml()}
             <div class="progress" aria-hidden="true"><span></span></div>
             <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
           </div>`;
@@ -1114,7 +1086,7 @@
             <button class="btn btn-ghost btn-sm" id="btnPick">📎 <span>${o.receipt ? 'Заменить чек (PDF)' : 'Прикрепить чек (PDF)'}</span></button>
             <div class="file-name ${o.receipt ? 'ok' : ''}" id="fileName">${o.receipt ? `✅ ${esc(o.receipt.name)} (${fmtSize(o.receipt.size)})` : 'Без чека оплата не подтвердится'}</div>
           </div>
-          ${depositStripHtml()}
+          ${depositNoteHtml()}
           <div class="note">Переведите <b>точную сумму</b> по реквизитам выше, прикрепите <b>чек в PDF</b>, затем нажмите кнопку ниже. Брокер лично проверяет поступление и сам отправляет ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code>. Сделка защищена гарантией депозита брокера.</div>
           <button class="btn btn-primary mt" id="btnPaid">${ICONS.check}<span>Я оплатил</span></button>
           ${o.adminCalled ? `
@@ -1152,7 +1124,7 @@
           <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">⏳</div></div>
           <div class="stage-title">Подтверждаем оплату</div>
           <div class="stage-sub">Брокер <b>${esc(o.broker || 'stony montana')}</b> проверяет поступление ${fmtRub(o.payRub || o.rub)} по заявке <b>#${o.id}</b> и сам переводит ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code>.<br>Средства клиента застрахованы общим депозитом брокеров платформы.</div>
-          ${depositStripHtml()}
+          ${depositNoteHtml()}
           ${o.receipt
             ? `<div class="note">🧾 Чек <b>${esc(o.receipt.name)}</b> отправлен ✅</div>`
             : `<div class="file-box">
