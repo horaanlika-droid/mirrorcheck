@@ -184,10 +184,14 @@ html[data-device] .profile-row, html[data-device] .profile-link {
 .profile-row-copy { gap: 5px; }
 #view-refs .ref-stat { padding: 18px 16px; }
 #view-refs .ref-stat .l { margin-top: 12px; line-height: 1.5; letter-spacing: .04em; }
-#view-refs .steps { margin-top: 26px; gap: 20px; padding: 0 0 8px; }
-#view-refs .step { gap: 16px; align-items: flex-start; line-height: 1.65; }
-#view-refs .step .n { margin-top: 1px; flex: 0 0 25px; height: 25px; }
-.step-copy { display: block; min-width: 0; }
+#view-refs .steps { margin-top: 26px; gap: 18px; padding: 2px 2px 8px; }
+#view-refs .step { gap: 14px; align-items: flex-start; line-height: 1.6; }
+#view-refs .step .n { margin-top: 0; flex: 0 0 28px; width: 28px; height: 28px; min-width: 28px; min-height: 28px; display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+.step-copy { display: block; min-width: 0; flex: 1; line-height: 1.5; padding-top: 2px; }
+/* Reviews reply: prevent left-edge clipping, keep header on one line */
+.rv-item .rv-reply { margin-left: 0; margin-right: 0; padding: 14px 16px; border-radius: 12px; overflow: hidden; }
+.rv-item .rv-reply-h { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: nowrap; }
+.rv-item .rv-reply-h span { white-space: nowrap; flex-shrink: 0; margin-left: auto; }
 @media (min-width: 700px) {
   html[data-device] .profile-row, html[data-device] .profile-link { column-gap: 22px; }
   #view-refs .step { gap: 20px; }

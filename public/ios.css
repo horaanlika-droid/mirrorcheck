@@ -343,8 +343,9 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 .ref-stat { padding: 14px 12px; background: var(--surface-2) !important; border-radius: 12px !important; }
 .ref-stat .v { font-size: 26px; font-weight: 700; letter-spacing: -.03em; }
 .ref-stat .l { font-size: 12px; }
-.step { font-size: 14px; }
-.step .n { border: 0; background: var(--tint-fill); color: var(--tint-fill-ink); font-size: 12px; font-weight: 600; }
+.step { font-size: 14px; display: flex; gap: 12px; align-items: flex-start; }
+.step .n { border: 0; background: var(--tint-fill); color: var(--tint-fill-ink); font-size: 12px; font-weight: 700; flex: 0 0 28px; width: 28px; height: 28px; min-width: 28px; min-height: 28px; display: grid; place-items: center; border-radius: 50%; }
+.step .step-copy { flex: 1; min-width: 0; line-height: 1.5; padding-top: 1px; }
 
 /* ---------- Профиль: grouped list ---------- */
 .profile-identity { padding: 14px 16px; min-height: 76px; }
@@ -391,16 +392,17 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 /* Ответ площадки на отзыв — плоский inset-блок в языке iOS-слоя:
    без градиентной плашки и боковой рамки прежнего amber-слоя. */
 .rv-reply {
-  margin-top: 12px; padding: 12px 14px;
-  border: 0; border-radius: var(--r-ctl);
+  margin-top: 12px; padding: 14px 16px;
+  border: 1px solid var(--glass-edge); border-radius: 12px;
   background: var(--surface-2);
 }
 .rv-reply-h {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: nowrap;
   font-family: var(--font-sans); font-size: 13px; font-weight: 600;
-  letter-spacing: 0; text-transform: none; color: var(--tint); margin-bottom: 6px;
+  letter-spacing: 0; text-transform: none; color: var(--tint); margin-bottom: 8px;
 }
-.rv-reply-h span { color: var(--dim); font-size: 11px; letter-spacing: 0; text-transform: none; }
-.rv-reply p { font-size: 14px; line-height: 1.45; color: var(--txt-2); overflow-wrap: anywhere; white-space: normal; word-break: break-word; }
+.rv-reply-h span { color: var(--dim); font-size: 11px; letter-spacing: 0; text-transform: none; white-space: nowrap; flex-shrink: 0; margin-left: auto; }
+.rv-reply p { font-size: 14px; line-height: 1.5; color: var(--txt-2); overflow-wrap: anywhere; white-space: normal; word-break: break-word; }
 
 /* Демо-оператор: карточка ответа площадки в списке отзывов. */
 .demo-reply .rv-who-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 14px; }
