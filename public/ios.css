@@ -39,7 +39,24 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 
 /* ---------- Прелоадер ---------- */
 .preloader { background: var(--bg-1); }
-.preloader-logo { width: 120px; height: 120px; margin-bottom: 18px; filter: none; }
+.preloader-logo-wrap { position: relative; display: inline-block; }
+/* Проскользающий блик по силуэту герба: маска — альфа самого логотипа,
+   световая полоса едет background-position'ом поверх металла (screen). */
+.preloader-logo-wrap::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, transparent 40%, rgba(255, 246, 232, .5) 46%, rgba(255, 255, 255, .9) 50%, rgba(255, 246, 232, .5) 54%, transparent 60%) no-repeat;
+  background-size: 260% 100%;
+  background-position: 0% 0;
+  -webkit-mask: url('/img/logo-mark.png') center / contain no-repeat;
+  mask: url('/img/logo-mark.png') center / contain no-repeat;
+  mix-blend-mode: screen;
+  animation: preloader-shine 2.8s cubic-bezier(.45, 0, .25, 1) infinite;
+}
+@keyframes preloader-shine {
+  0% { background-position: 0% 0; }
+  55%, 100% { background-position: 100% 0; }
+}
+.preloader-logo { display: block; width: 120px; height: auto; margin-bottom: 18px; filter: none; }
 .preloader-brand { font-size: 17px; font-weight: 600; letter-spacing: .3em; color: var(--ink); }
 .preloader-tag { color: var(--mut); font-family: var(--font-sans); font-size: 11px; letter-spacing: .12em; }
 .preloader-est { display: none; }

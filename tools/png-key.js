@@ -227,6 +227,52 @@ function resize(img, size) {
   return { width: tw, height: th, px: out };
 }
 
+/* ---------- унификация оттенка: градационная карта бронзы ---------- */
+// Генерация даёт каждый объект со своим нюансом металла (розовее, меднее,
+// зеленоватее). Чтобы набор не различался по оттенкам, цвет каждого
+// непрозрачного пикселя заменяется точкой единой шампанской рампы
+// тень → бронза → блик по его яркости: объём и блики сохраняются,
+// оттенок становится общим у всех иконок и логотипа.
+const RAMP = [
+  [0.0, [0x4a, 0x3a, 0x28]],
+  [0.5, [0xc9, 0xa8, 0x7e]],
+  [1.0, [0xfa, 0xec, 0xd0]],
+];
+function rampColor(t) {
+  const x = Math.min(1, Math.max(0, t));
+  for (let i = 1; i < RAMP.length; i += 1) {
+    if (x <= RAMP[i][0]) {
+      const [t0, c0] = RAMP[i - 1];
+      const [t1, c1] = RAMP[i];
+      const k = (x - t0) / (t1 - t0 || 1);
+      return [
+        Math.round(c0[0] + (c1[0] - c0[0]) * k),
+        Math.round(c0[1] + (c1[1] - c0[1]) * k),
+        Math.round(c0[2] + (c1[2] - c0[2]) * k),
+      ];
+    }
+  }
+  return RAMP[RAMP.length - 1][1];
+}
+function gradeBronze(img) {
+  const { width, height, px } = img;
+  for (let i = 0; i < width * height; i += 1) {
+    const o = i * 4;
+    if (px[o + 3] === 0) continue;
+    const r = px[o] / 255;
+    const g = px[o + 1] / 255;
+    const b = px[o + 2] / 255;
+    // perceptual luminance + контрастная S-кривая, чтобы металл держал объём
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let t = Math.pow(lum, 0.92);
+    t = Math.min(1, Math.max(0, (t - 0.06) / 0.88));
+    t = t * t * (3 - 2 * t);
+    const [nr, ng, nb] = rampColor(t);
+    px[o] = nr; px[o + 1] = ng; px[o + 2] = nb;
+  }
+  return img;
+}
+
 /* ---------- кодировщик PNG (RGBA, filter 0) ---------- */
 function encodePng(img, file) {
   const { width, height, px } = img;
@@ -268,8 +314,18 @@ function convert(src, dst, size) {
 }
 
 if (require.main === module) {
-  const [src, dst, size] = process.argv.slice(2);
-  convert(src, dst, Number(size) || 96);
+  const argv = process.argv.slice(2);
+  if (argv[0] === 'grade') {
+    // унификация оттенка готовых ассетов: node tools/png-key.js grade a.png b.png …
+    for (const file of argv.slice(1)) {
+      const img = gradeBronze(decodePng(file));
+      const bytes = encodePng(img, file);
+      console.log(`grade ${file} ${img.width}×${img.height} ${(bytes / 1024).toFixed(0)} KB`);
+    }
+  } else {
+    const [src, dst, size] = argv;
+    convert(src, dst, Number(size) || 96);
+  }
 }
 
-module.exports = { decodePng, encodePng, keyBlack, cropAlpha, resize, convert };
+module.exports = { decodePng, encodePng, keyBlack, cropAlpha, resize, convert, gradeBronze, rampColor };

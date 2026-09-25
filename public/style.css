@@ -99,7 +99,7 @@ html, body { height: 100%; }
   to { opacity: 1; transform: none; }
 }
 .preloader-logo {
-  width: 168px; height: 168px; object-fit: contain;
+  width: 168px; height: auto; object-fit: contain;
   display: block; margin: 0 auto 6px;
   filter: none;
 }

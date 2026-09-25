@@ -37,6 +37,52 @@ test('3D-арт: PNG с прозрачным фоном, плотным силу
   }
 });
 
+function meanHue(file) {
+  const img = decodePng(file);
+  let sx = 0;
+  let sy = 0;
+  let n = 0;
+  for (let i = 0; i < img.width * img.height; i += 1) {
+    const o = i * 4;
+    if (img.px[o + 3] < 200) continue;
+    const r = img.px[o] / 255;
+    const g = img.px[o + 1] / 255;
+    const b = img.px[o + 2] / 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const d = max - min;
+    if (d < 0.02) continue; // почти ахроматические пиксели тон не несут
+    let h;
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+    sx += Math.cos((h * Math.PI) / 180);
+    sy += Math.sin((h * Math.PI) / 180);
+    n += 1;
+  }
+  assert.ok(n > 100, 'достаточно цветных пикселей для замера');
+  let mean = (Math.atan2(sy, sx) * 180) / Math.PI;
+  if (mean < 0) mean += 360;
+  return mean;
+}
+
+test('весь арт сведён к одному оттенку бронзы: разброс набора минимален', () => {
+  const hues = ART.map((f) => meanHue(path.join(__dirname, '../public/img', f)));
+  for (const h of hues) assert.ok(h > 25 && h < 45, `оттенк в шампанской полосе: ${h.toFixed(1)}°`);
+  const spread = Math.max(...hues) - Math.min(...hues);
+  assert.ok(spread < 6, `набор не различается по оттенкам: разброс ${spread.toFixed(2)}°`);
+});
+
+test('прелоадер: блик скользит по силуэту герба через альфа-маску логотипа', () => {
+  assert.match(html, /<div class="preloader-logo-wrap">/, 'логотип обёрнут для блика');
+  assert.match(iosCss, /\.preloader-logo-wrap::after \{/, 'блик — слой над логотипом');
+  assert.match(iosCss, /mask: url\('\/img\/logo-mark\.png'\) center \/ contain no-repeat;/, 'маска — альфа самого герба');
+  assert.match(iosCss, /mix-blend-mode: screen;/, 'свет прибавляется к металлу');
+  assert.match(iosCss, /@keyframes preloader-shine \{/, 'анимация проскальзывания');
+});
+
 test('кнопки и сегменты — шампанские пилюли по референсу IMG_1230', () => {
   assert.match(iosCss, /\.btn \{ min-height: 50px; border-radius: 999px;/, 'кнопки-пилюли');
   assert.match(iosCss, /\.btn-primary \{\n\s*color: var\(--tint-fill-ink\);\n\s*background: linear-gradient\(135deg, var\(--sand-1\) 0%, var\(--tint-fill\) 55%, var\(--sand-2\) 100%\);/, 'главная кнопка — шампанский градиент');
