@@ -1294,6 +1294,13 @@
           <div class="f"><span class="i">◆</span>Отзывы только от реальных клиентов — после завершённого обмена</div>
         </div>
       </div>
+      <div class="card why-pair">
+        <div class="kicker gold">est. 2024</div>
+        <div class="card-title">Почему только BTC и GRAM</div>
+        <p class="why-pair-lead">Две пары. Самые точные рыночные отклики. Прямой путь в любую валюту.</p>
+        <p class="why-pair-body">Bitcoin и GRAM — то, чем рынок дышит каждый день: глубина, ликвидность, привычная конвертация. Мы не держим витрину из десятков тикеров — ведём две пары, которые действительно обмениваются чисто и быстро.</p>
+        <p class="why-pair-body">Нужен другой актив? Напишите. Брокер разберёт маршрут и с радостью поможет пройти его спокойно.</p>
+      </div>
       <div class="card">
         <div class="card-title">Как это работает</div>
         <div class="steps">
@@ -1342,7 +1349,7 @@
           </div>
         </details>
       </div>
-      <div class="signature">PRICELEX<span>— быстро · надёжно · выгодно —</span></div>`;
+      <div class="signature">PRICELEX<span>private crypto brokerage · est. 2024</span></div>`;
     const go = $('#goSupport');
     if (go) go.addEventListener('click', () => { haptic('light'); goTab('support'); });
   }
@@ -1464,6 +1471,7 @@
             <article class="card rv-item">
               <div class="rv-top"><div class="rv-av">${esc((r.name || 'К').trim().charAt(0).toUpperCase())}</div><div class="rv-who"><b>${esc(r.name)}</b><span>${esc(fmtDay(r.createdAt))}</span></div>${starsHtml(r.rating)}</div>
               <p class="rv-body">${esc(r.text).replace(/\n/g, '<br>')}</p>
+              ${r.reply && r.reply.text ? `<div class="rv-reply"><div class="rv-reply-h">Ответ PRICELEX<span>${esc(fmtDay(r.reply.at))}</span></div><p>${esc(r.reply.text).replace(/\n/g, '<br>')}</p></div>` : ''}
             </article>`).join('')
           : `<div class="card"><div class="empty"><div class="e-ic">✦</div>${loaded ? 'Отзывов пока нет — станьте первым, кто оценит PRICELEX.' : 'Загружаем отзывы…'}</div></div>`
       }</div>`;
@@ -1577,8 +1585,23 @@
         const m = await api('/api/me');
         S.orders = m.orders;
         await loadReviews();
+        if (r.approved) {
+          renderReviews();
+          return toast(`Оператор одобрил отзывов: ${r.approved} (демо)`);
+        }
+        const latest = (S.reviews.list || [])[0];
+        if (!latest) {
+          renderReviews();
+          return toast('Новых отзывов для оператора нет (демо)');
+        }
+        const text = typeof prompt === 'function'
+          ? prompt('Ответ PRICELEX на отзыв (пусто — снять):', (latest.reply && latest.reply.text) || '')
+          : null;
+        if (text == null) { renderReviews(); return; }
+        await api(`/api/admin/review/${latest.id}/reply`, { method: 'POST', body: { text } });
+        await loadReviews();
         renderReviews();
-        return toast(r.approved ? `Оператор одобрил отзывов: ${r.approved} (демо)` : 'Новых отзывов для оператора нет (демо)');
+        return toast(String(text).trim() ? 'Ответ опубликован (демо)' : 'Ответ снят (демо)');
       }
       if (!S.order) return toast('Сначала создайте заявку на обмен');
       const o = S.order;
@@ -1737,6 +1760,14 @@
     window.addEventListener('resize', () => { if (S.tab === 'exchange') renderHero(); if (S.tab === 'history') renderHistory(); });
   }
 
+  function hidePreloader() {
+    const el = document.getElementById('preloader');
+    if (!el || el.classList.contains('done')) return;
+    el.classList.add('done');
+    el.setAttribute('aria-hidden', 'true');
+  }
+  const preloaderFallback = setTimeout(hidePreloader, 7000);
+
   (async () => {
     try {
       const r = await api('/api/init', { method: 'POST', body: { startParam } });
@@ -1757,6 +1788,8 @@
     } catch (e) {
       document.getElementById('announce').textContent = '⚠️ Не удалось подключиться к серверу. Обновите страницу.';
       document.getElementById('announce').classList.remove('hidden');
+      clearTimeout(preloaderFallback);
+      hidePreloader();
       return;
     }
     renderHeader();
@@ -1776,5 +1809,7 @@
     renderDemoAdmin();
     initParallax();
     startPolling();
+    clearTimeout(preloaderFallback);
+    hidePreloader();
   })();
 })();

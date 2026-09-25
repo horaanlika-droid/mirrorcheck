@@ -411,6 +411,29 @@ function startWeb() {
       const list = store.reviewsByStatus('pending').map((r) => store.updateReview(r.id, { status: 'approved' }));
       res.json({ approved: list.length });
     });
+    app.post('/api/admin/review/:id/reply', (req, res) => {
+      const r = store.getReview(req.params.id);
+      if (!r) return res.status(404).json({ error: 'not found' });
+      const text = String(req.body?.text || '').trim();
+      if (!text) {
+        const upd = store.updateReview(r.id, { reply: null });
+        return res.json({ review: store.publicReview(upd) });
+      }
+      if (text.length > store.REVIEW_TEXT_MAX) {
+        return res.status(400).json({ error: `Ответ слишком длинный (до ${store.REVIEW_TEXT_MAX} символов)` });
+      }
+      const at = Number.isFinite(Number(req.body?.at)) ? Number(req.body.at) : Date.now();
+      const upd = store.updateReview(r.id, { reply: { text, at, by: 'demo' } });
+      res.json({ review: store.publicReview(upd) });
+    });
+    app.post('/api/admin/settings', (req, res) => {
+      const next = {};
+      if (req.body?.announcement != null) next.announcement = String(req.body.announcement).slice(0, 500);
+      if (req.body?.operator != null) next.operator = String(req.body.operator).trim().slice(0, 500);
+      if (req.body?.channel != null) next.channel = String(req.body.channel).trim().slice(0, 500);
+      if (Object.keys(next).length) store.mutate((db) => Object.assign(db.settings, next));
+      res.json({ settings: store.publicSettings() });
+    });
     app.post('/api/admin/support/:userId/reply', (req, res) => {
       const userId = String(req.params.userId);
       const text = String(req.body?.text || '').trim();

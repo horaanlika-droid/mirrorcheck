@@ -458,3 +458,62 @@ test('public address is never shown; support contact defaults to empty (чат �
   await click(111, 'm:links');
   assert.ok(!calls.some((c) => /secret\.example|Публичный адрес/.test(c.text || '')));
 });
+
+test('settings: announcement, operator and channel save to the real keys', async () => {
+  await click(111, 's:ann');
+  await text(111, 'Новое объявление PRICELEX');
+  assert.equal(store.get().settings.announcement, 'Новое объявление PRICELEX');
+  assert.equal(store.get().settings.ann, undefined);
+
+  await click(111, 's:op');
+  await text(111, '@pricelex_help');
+  assert.equal(store.get().settings.operator, '@pricelex_help');
+  assert.equal(store.get().settings.op, undefined);
+
+  await click(111, 's:ch');
+  await text(111, 'https://t.me/pricelex_new');
+  assert.equal(store.get().settings.channel, 'https://t.me/pricelex_new');
+  assert.equal(store.get().settings.ch, undefined);
+
+  const s = await (await fetch(`http://127.0.0.1:${server.address().port}/api/settings`)).json();
+  assert.equal(s.announcement, 'Новое объявление PRICELEX');
+  assert.equal(s.operator, '@pricelex_help');
+  assert.equal(s.channel, 'https://t.me/pricelex_new');
+});
+
+test('admin replies to a review with editable date; public API hides author', async () => {
+  const r = store.createReview({
+    name: 'Игорь', rating: 5, text: 'Отличная сделка, всё чисто',
+    status: 'approved', source: 'admin',
+  });
+  await click(111, `rv:${r.id}:reply`);
+  await text(111, 'Благодарим за доверие — всегда на связи.');
+  await click(111, 'rvr:now');
+  const saved = store.getReview(r.id);
+  assert.equal(saved.reply.text, 'Благодарим за доверие — всегда на связи.');
+  assert.ok(Number.isFinite(saved.reply.at) && Math.abs(saved.reply.at - Date.now()) < 5000);
+  assert.equal(saved.reply.by, '111');
+
+  const pub = await (await fetch(`http://127.0.0.1:${server.address().port}/api/reviews`)).json();
+  const item = pub.reviews.find((x) => x.id === r.id);
+  assert.ok(item);
+  assert.equal(item.reply.text, saved.reply.text);
+  assert.equal(item.reply.at, saved.reply.at);
+  assert.ok(!('by' in item.reply));
+
+  await click(222, `rv:${r.id}:replyedit`);
+  await text(222, 'Обновили ответ.');
+  await click(222, `rv:${r.id}:replydate`);
+  await text(222, '21.09.2026 10:15');
+  const upd = store.getReview(r.id);
+  assert.equal(upd.reply.text, 'Обновили ответ.');
+  assert.equal(upd.reply.at, Date.UTC(2026, 8, 21, 7, 15));
+  assert.equal(upd.reply.by, '222');
+
+  calls = [];
+  await click(111, `rv:${r.id}`);
+  assert.ok(calls.some((c) => c.method === 'editMessageText' && /Ответ PRICELEX/.test(c.text) && /Обновили ответ/.test(c.text)));
+
+  await click(111, `rv:${r.id}:replydel`);
+  assert.equal(store.getReview(r.id).reply, null);
+});
