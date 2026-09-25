@@ -229,16 +229,23 @@ test('active order is a back-navigable subpage with a resume card on exchange', 
   assert.equal(a.document.querySelector('#appHeader .hdr-page-title').textContent, 'Заявка');
 });
 
-test('клиент видит общий депозит всех брокеров: 0.02 стоит, все знаки после него живут', async (t) => {
+test('депозит брокеров вписан тихой строкой: 0.02 стоит, все знаки после него живут', async (t) => {
   const clock = { t: now };
   const a = await app(t, { clock });
-  const card = a.document.querySelector('#view-exchange #depositCard');
-  assert.ok(card, 'карточка гарантии стоит на экране обмена');
-  assert.match(card.querySelector('.dep-copy b').textContent, /Гарантийный депозит брокеров/);
-  assert.match(card.querySelector('.dep-copy span').textContent, /Общий депозит всех брокеров площадки/);
-  assert.ok(card.querySelector('.dep-live'), 'у суммы есть признак живого значения');
+  const exchange = a.document.querySelector('#view-exchange');
+  assert.ok(!exchange.querySelector('#depositCard'), 'депозит не выделен отдельной карточкой');
+  assert.doesNotMatch(exchange.textContent, /живая сумма|меняется вместе с рынком/,
+    'про живую сумму и рынок клиенту не сообщается');
 
-  const amountOf = () => a.document.querySelector('#view-exchange #depositCard .dep-btc').textContent.trim();
+  // Единственное упоминание — мелкая приглушённая строка в форме обмена.
+  const lineOf = () => a.document.querySelector('#view-exchange #exForm .dep-line');
+  const line = lineOf();
+  assert.ok(line, 'депозит вписан строкой в форму обмена');
+  assert.match(line.textContent, /Сделка застрахована общим депозитом брокеров площадки/);
+  assert.deepEqual([...line.children].map((el) => el.className), ['dep-btc'],
+    'внутри строки выделена только цифра, и та же строкой');
+
+  const amountOf = () => lineOf().querySelector('.dep-btc').textContent.trim();
   const first = amountOf();
   // Начало суммы — как задал оператор (0.02); все шесть знаков после него свободны.
   assert.match(first, /^0\.02\d{6}$/, 'после 0.02 видны все знаки');
@@ -263,6 +270,16 @@ test('клиент видит общий депозит всех брокеро�
   assert.ok(firstDigits.size >= 2, 'меняется и первый знак после 0.02, а не только последние четыре');
   assert.ok(secondDigits.size >= 3, 'второй знак хвоста тоже живёт');
   assert.ok(middleDigits.size >= 4, 'середина хвоста дышит');
+
+  // Оформление строки — приглушённый текст без плашки, подложки и акцента: строка
+  // не выделяется ни цветом, ни иконкой, ни отдельным блоком.
+  const css = fs.readFileSync(path.join(__dirname, '../public/reference.css'), 'utf8');
+  const rule = css.match(/\.dep-line\s*\{([^}]*)\}/);
+  assert.ok(rule, 'строка депозита описана в reference.css');
+  assert.doesNotMatch(rule[1], /--sand|--ok|--warn|--danger|--amber|background|border|shadow/,
+    'у строки нет акцентного цвета, подложки и обводки');
+  assert.doesNotMatch(css, /\.deposit-card|\.stage-deposit|\.dep-tail|\.dep-live|\.dep-shield/,
+    'выделенные блоки и цветной хвост суммы убраны из оформления');
 });
 
 test('«Брокеров в сети» подписано словами и меняется на ±1/±2 вокруг состава', async (t) => {

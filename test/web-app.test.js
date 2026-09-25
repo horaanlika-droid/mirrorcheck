@@ -208,12 +208,13 @@ test('calculator converts both ways and never mentions any fee', async (t) => {
   assert.ok(!/комисси/i.test(a.document.querySelector('#view-exchange').textContent));
 });
 
-test('order screen shows the platform-wide broker deposit with live satoshi', async (t) => {
+test('order screen keeps the platform-wide broker deposit as a quiet line', async (t) => {
   const a = await app(t, details);
-  const strip = a.document.querySelector('#exOrder .stage-deposit');
-  assert.ok(strip, 'гарантийный депозит виден прямо в заявке');
-  assert.match(strip.querySelector('.sd-txt').textContent, /Сделка застрахована общим депозитом всех брокеров площадки/);
-  const amount = strip.querySelector('.dep-btc').textContent.trim();
+  const line = a.document.querySelector('#exOrder .dep-line');
+  assert.ok(line, 'гарантийный депозит тихо упомянут в заявке');
+  assert.match(line.textContent, /Сделка застрахована общим депозитом брокеров площадки/);
+  assert.ok(!a.document.querySelector('#exOrder .stage-deposit'), 'депозит не выделен отдельной плашкой');
+  const amount = line.querySelector('.dep-btc').textContent.trim();
   assert.match(amount, /^0\.02\d{6}$/, 'начало суммы ровное, все знаки после него живые');
   assert.notEqual(amount.slice(-4), '0000', 'хвост не оставлен ровными нулями');
 });
