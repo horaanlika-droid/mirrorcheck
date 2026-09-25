@@ -24,6 +24,15 @@ const settings = {
   channel: 'https://t.me/test',
   chat: 'https://t.me/test',
   botUsername: 'pricelex_test_bot',
+  // Общий депозит всех брокеров площадки: его задаёт оператор в боте.
+  guaranteeFundBtc: 0.02,
+  adminBrokers: [
+    { login: 'stony montana', name: 'stony montana', online: true, rating: 4.98, completed: 342 },
+    { login: 'safer', name: 'safer', online: true, rating: 4.96, completed: 289 },
+    { login: 'INGA352', name: 'INGA352', online: true, rating: 4.99, completed: 415 },
+    { login: 'user_161931', name: 'user_161931', online: true, rating: 4.95, completed: 198 },
+    { login: 'fast alberto', name: 'fast alberto', online: true, rating: 4.97, completed: 276 },
+  ],
 };
 
 const points = Array.from({ length: 8 }, (_, i) => ({
@@ -63,11 +72,12 @@ const reviewsFixture = [
   { id: 2, name: 'Марина', rating: 4, text: 'Спокойно и честно', createdAt: now - 48 * HOUR },
 ];
 
-async function app(t, { orders = completed, points: historyPoints = points, reviews = reviewsFixture } = {}) {
+async function app(t, { orders = completed, points: historyPoints = points, reviews = reviewsFixture, clock = null } = {}) {
   const posted = [];
   const dom = new JSDOM(html, { url: 'https://pricelex.example', runScripts: 'outside-only', pretendToBeVisual: true });
   t.after(() => dom.window.close());
   const { window } = dom;
+  if (clock) window.Date.now = () => clock.t; // тест двигает время сам
   window.console.warn = () => {};
   window.setInterval = () => 1;
   window.fetch = async (url, opts) => {
@@ -93,7 +103,14 @@ async function app(t, { orders = completed, points: historyPoints = points, revi
   window.eval(script);
   await tick();
   await tick();
-  return { window, document: window.document, posted };
+  // Переключение вкладок заставляет приложение перерисовать экран текущим временем.
+  const showTab = async (tab) => {
+    const button = window.document.querySelector(`.nav button[data-tab="${tab}"]`);
+    if (button) button.click();
+    await tick();
+    await tick();
+  };
+  return { window, document: window.document, posted, showTab };
 }
 
 test('hero card shows the live rate, delta and a chart built from real observations', async (t) => {
@@ -210,6 +227,80 @@ test('active order is a back-navigable subpage with a resume card on exchange', 
   assert.ok(!a.document.querySelector('#exForm').classList.contains('hidden'));
   a.document.querySelector('#activeOrder').click();
   assert.equal(a.document.querySelector('#appHeader .hdr-page-title').textContent, 'Заявка');
+});
+
+test('клиент видит общий депозит всех брокеров: 0.02 стоит, все знаки после него живут', async (t) => {
+  const clock = { t: now };
+  const a = await app(t, { clock });
+  const card = a.document.querySelector('#view-exchange #depositCard');
+  assert.ok(card, 'карточка гарантии стоит на экране обмена');
+  assert.match(card.querySelector('.dep-copy b').textContent, /Гарантийный депозит брокеров/);
+  assert.match(card.querySelector('.dep-copy span').textContent, /Общий депозит всех брокеров площадки/);
+  assert.ok(card.querySelector('.dep-live'), 'у суммы есть признак живого значения');
+
+  const amountOf = () => a.document.querySelector('#view-exchange #depositCard .dep-btc').textContent.trim();
+  const first = amountOf();
+  // Начало суммы — как задал оператор (0.02); все шесть знаков после него свободны.
+  assert.match(first, /^0\.02\d{6}$/, 'после 0.02 видны все знаки');
+  assert.ok(Number(first) >= settings.guaranteeFundBtc, 'фонд не показывается меньше заданного');
+  assert.ok(Number(first) <= settings.guaranteeFundBtc * 1.16, 'и не уходит далеко вверх');
+
+  // Смотрим час шагом 3 минуты: живут не только последние четыре знака, а весь
+  // хвост после 0.02 — первый знак после него тоже успевает смениться.
+  const tails = new Set([first.slice(4)]);
+  for (let i = 1; i <= 20; i += 1) {
+    clock.t = now + i * 3 * 60000;
+    await a.showTab('reviews');
+    await a.showTab('exchange');
+    const value = amountOf();
+    assert.match(value, /^0\.02\d{6}$/, `сумма остаётся в формате фонда: ${value}`);
+    tails.add(value.slice(4));
+  }
+  assert.ok(tails.size >= 3, 'значения не замирают на одном числе');
+  const firstDigits = new Set([...tails].map((tail) => tail[0]));
+  const secondDigits = new Set([...tails].map((tail) => tail[1]));
+  const middleDigits = new Set([...tails].map((tail) => tail[2] + tail[3]));
+  assert.ok(firstDigits.size >= 2, 'меняется и первый знак после 0.02, а не только последние четыре');
+  assert.ok(secondDigits.size >= 3, 'второй знак хвоста тоже живёт');
+  assert.ok(middleDigits.size >= 4, 'середина хвоста дышит');
+});
+
+test('«Брокеров в сети» подписано словами и меняется на ±1/±2 вокруг состава', async (t) => {
+  const clock = { t: now };
+  const a = await app(t, { clock });
+  const countOf = () => {
+    const chip = a.document.querySelector('.brokers-online-chip');
+    assert.match(chip.textContent, /Брокеров в сети:\s*\d+/, 'число подписано «Брокеров в сети»');
+    return Number(chip.querySelector('.broker-online-count').textContent);
+  };
+  const first = countOf();
+  assert.ok(first >= 4 && first <= 7, `число держится вокруг состава команды, получено ${first}`);
+
+  const seen = new Set([first]);
+  let prev = first;
+  for (let i = 1; i <= 30; i += 1) {
+    clock.t = now + i * 60000; // каждую минуту смотрим счётчик заново
+    await a.showTab('reviews');
+    await a.showTab('exchange');
+    const value = countOf();
+    assert.ok(Math.abs(value - prev) <= 2, `шаг ${prev} → ${value} не больше двух человек`);
+    assert.ok(value >= 4 && value <= 7, `значение ${value} не выходит за состав команды`);
+    seen.add(value);
+    prev = value;
+  }
+  assert.ok(seen.size >= 2, 'счётчик действительно живёт');
+});
+
+test('метка просадки и лучшая цена показывают органичное время, а не ровный час', async (t) => {
+  const a = await app(t);
+  const label = a.document.querySelector('#rateChart .chart-dip .d-k').textContent;
+  const dipTime = label.replace(/^.*·\s*/, '').trim();
+  assert.match(dipTime, /^\d{2}:\d{2}$/);
+  assert.doesNotMatch(dipTime, /:([0-5])[05]$/, `время просадки не ровное: ${dipTime}`);
+
+  const signalTime = a.document.querySelector('#rateSignal .signal .s-t').textContent.replace(/^.*в\s*/, '').trim();
+  assert.match(signalTime, /^\d{2}:\d{2}$/);
+  assert.doesNotMatch(signalTime, /:([0-5])[05]$/, `время лучшей цены не ровное: ${signalTime}`);
 });
 
 test('chart marks the dip and calls out the best time to buy when the rate sits near the low', async (t) => {

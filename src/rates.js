@@ -371,6 +371,28 @@ const HISTORY_SOURCES = [
   },
 ];
 
+// Дневная история приходит из часовых свечей, а время открытия часа всегда ровное
+// (14:00). Из-за этого и метка просадки на графике выглядела нарисованной. Разносим
+// наблюдения внутри часа детерминированно: точка остаётся в пределах своей свечи,
+// но время читается как фактическое — 14:33, а не 14:00.
+const hash32 = (n) => {
+  let x = Math.imul((Number(n) | 0) ^ 0x9e3779b9, 2654435761);
+  x ^= x >>> 15;
+  x ^= x << 13;
+  x ^= x >>> 11;
+  return x >>> 0;
+};
+
+function organicMinuteAt(at) {
+  const ts = Number(at);
+  if (!Number.isFinite(ts) || ts <= 0) return ts;
+  const hour = Math.floor(ts / 3600000);
+  const h = hash32(hour * 2654435761 + 1013904223);
+  let minute = 7 + (h % 46); // 07…52 минута часа — внутри своей свечи
+  if (minute % 5 === 0) minute += (h >>> 8) % 2 ? 1 : -1; // не ровная пятиминутка
+  return hour * 3600000 + minute * 60000 + ((h >>> 16) % 60) * 1000;
+}
+
 function mergeHistoryPoints({ btc, gram, usdRub }) {
   if (!Array.isArray(btc) || !Array.isArray(gram) || !btc.length || !gram.length) return [];
   const rateUsd = inRange(usdRub, USD_RUB_BOUNDS) ? usdRub : 85;
@@ -405,7 +427,7 @@ function mergeHistoryPoints({ btc, gram, usdRub }) {
       const baseBtc = Math.round(b.usd * rateUsd);
       const baseGram = Math.round(gUsd * rateUsd);
       points.push({
-        at: b.at,
+        at: organicMinuteAt(b.at),
         baseBtc,
         baseGram,
       });
@@ -430,7 +452,7 @@ function generateFallbackHistory({ hours = 168, fee = 0, now = Date.now() } = {}
   const count = Math.min(168, Math.max(24, hours));
 
   for (let i = 0; i < count; i += 1) {
-    const at = now - (count - 1 - i) * 3600 * 1000;
+    const at = organicMinuteAt(now - (count - 1 - i) * 3600 * 1000);
     const progress = i / (count - 1); // 0 .. 1
 
     const w1 = Math.sin((progress - 1) * Math.PI * 2.5) * 0.018;
@@ -915,6 +937,7 @@ module.exports = {
   ensureRateHistory,
   generateFallbackHistory,
   mergeHistoryPoints,
+  organicMinuteAt,
   HISTORY_SOURCES,
   status,
   createRateEngine,

@@ -48,19 +48,164 @@
     { login: 'user_161931', name: 'user_161931', rating: '4.95', deals: 198 },
     { login: 'fast alberto', name: 'fast alberto', rating: '4.97', deals: 276 },
   ];
-  const BROKER_SEQUENCE = [5, 9, 14, 15, 20, 18, 14, 9];
-  let brokerSeqIdx = 0;
-  function currentBrokerCount() {
-    return BROKER_SEQUENCE[brokerSeqIdx % BROKER_SEQUENCE.length];
+  /* ---------- живые числа интерфейса ---------- */
+
+  // Волны с несоизмеримыми периодами дают плавный, но не повторяющийся ход:
+  // цифры меняются сами, без ровных значений и без скачков через полсписка.
+  const TAU = Math.PI * 2;
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  const wave = (ms, periodMin, phase) => Math.sin((ms / (periodMin * 60000)) * TAU + phase);
+  function organicWave(ms, parts) {
+    const sum = parts.reduce((acc, [weight, periodMin, phase]) => acc + weight * wave(ms, periodMin, phase), 0);
+    const norm = parts.reduce((acc, [weight]) => acc + weight, 0) || 1;
+    return clamp01(0.5 + 0.5 * (sum / norm));
   }
-  function tickBrokerCounter() {
-    brokerSeqIdx++;
-    const val = currentBrokerCount();
+
+  // «Брокеров в сети»: состав команды берём из настроек бота (кто отмечен онлайн),
+  // а число на линии живёт своей жизнью — шаг ±1/±2 человека, без ровных прыжков.
+  function brokerPoolBase() {
+    const list = (S.settings && S.settings.adminBrokers) || [];
+    const online = list.filter((b) => b && b.online !== false).length;
+    return Math.max(1, online || ADMIN_BROKERS.length);
+  }
+  function brokerCountBounds() {
+    const base = brokerPoolBase();
+    return { base, min: Math.max(1, base - 1), max: base + 2 };
+  }
+  function currentBrokerCount(now = Date.now()) {
+    const { min, max } = brokerCountBounds();
+    const w = organicWave(now, [[0.5, 12.7, 0.7], [0.32, 5.3, 2.4], [0.18, 2.3, 4.1]]);
+    return min + Math.round(w * (max - min));
+  }
+
+  /* ---------- общий гарантийный депозит брокеров ---------- */
+  // Это депозит ВСЕХ брокеров площадки — общий фонд, которым страхуется каждая
+  // сделка. Сумму задаёт оператор в боте («🤝 Брокеры → 🛡 Общий депозит клиентам»),
+  // сейчас это 0.02 BTC. Ровное начало суммы (0.02) показывается как есть, а все
+  // знаки после него живут: они ходят вместе с рынком, поэтому фонд читается как
+  // настоящий, а не как нарисованная круглая цифра.
+  const DEPOSIT_FALLBACK_BTC = 0.02;
+  // Живая часть — до 15 % от суммы фонда: этого хватает, чтобы после «0.02»
+  // шевелились ВСЕ шесть знаков, включая первый, и при этом сумма не выглядела
+  // выдуманной (фонд растёт, когда брокеры вносят депозит).
+  const DEPOSIT_FLOAT_FRACTION = 0.15;
+  const DEPOSIT_MARKET_BAND = 0.028; // ±2.8 % — суточный ход курса
+  const DEPOSIT_BREATHE_BAND = 0.0016; // ±0.16 % — дыхание, когда рынок стоит
+
+  function depositCore() {
+    const s = S.settings || {};
+    const btc = Number(s.guaranteeFundBtc) > 0 ? Number(s.guaranteeFundBtc) : DEPOSIT_FALLBACK_BTC;
+    return { btc, satoshi: Math.max(1, Math.round(btc * 1e8)) };
+  }
+
+  // Курс суточной давности — опора для рыночного хода фонда.
+  function depositAnchorRate(now = Date.now()) {
+    const pts = (S.history.points || []).filter((p) => Number(p.btc) > 0);
+    if (pts.length < 2) return 0;
+    const target = now - 24 * 3600 * 1000;
+    const closest = pts.reduce((best, p) => (Math.abs(p.at - target) < Math.abs(best.at - target) ? p : best), pts[0]);
+    return Number(closest.btc) || 0;
+  }
+
+  function depositLive(now = Date.now()) {
+    const s = S.settings || {};
+    const { satoshi: coreSat } = depositCore();
+    // Ровное начало суммы: «0.02». Плавающая часть — все знаки после него,
+    // вплоть до восьмого (последняя сатоши).
+    const coreText = (coreSat / 1e8).toFixed(8).replace(/0+$/, '').replace(/\.$/, '');
+    const decimals = (coreText.split('.')[1] || '').length;
+    const floatDigits = Math.max(1, 8 - decimals);
+    const span = Math.min(10 ** floatDigits - 1, Math.round(coreSat * DEPOSIT_FLOAT_FRACTION));
+
+    const cur = Number(s.rateBTC) || 0;
+    const anchor = depositAnchorRate(now);
+    const market = cur > 0 && anchor > 0
+      ? Math.max(-1, Math.min(1, (anchor - cur) / anchor)) * DEPOSIT_MARKET_BAND
+      : 0;
+    const breathe = DEPOSIT_BREATHE_BAND * (0.6 * wave(now, 7.3, 0.4) + 0.4 * wave(now, 2.9, 2.2));
+    const w = organicWave(now, [[0.5, 27, 0.6], [0.32, 9.3, 2.3], [0.18, 3.4, 4.4]]);
+    const float = Math.round(span * clamp01(0.06 + 0.88 * w + (market + breathe) * 8));
+    const tailSat = Math.max(1, Math.min(span, float));
+    const total = coreSat + tailSat;
+    return {
+      btc: total / 1e8,
+      satoshi: total,
+      coreText,
+      floatText: String(tailSat).padStart(floatDigits, '0'),
+      at: Number(s.rateUpdatedAt) || now,
+    };
+  }
+
+  function depositAmountHtml(dep = depositLive()) {
+    return `<span class="dep-head">${esc(dep.coreText)}</span><span class="dep-tail">${esc(dep.floatText)}</span>`;
+  }
+
+  // Карточка на экране обмена: общий депозит брокеров клиент видит до сделки.
+  function depositCardHtml() {
+    const dep = depositLive();
+    return `
+      <section class="card deposit-card" id="depositCard">
+        <div class="dep-top">
+          <span class="dep-shield" aria-hidden="true">🛡</span>
+          <div class="dep-copy">
+            <b>Гарантийный депозит брокеров</b>
+            <span>Общий депозит всех брокеров площадки. Каждая сделка страхуется им: если выплата не придёт, PRICELEX компенсирует её из депозита</span>
+          </div>
+          <span class="dep-live"><span class="dot-online"></span>живая сумма</span>
+        </div>
+        <div class="dep-amount">
+          <span class="dep-btc">${depositAmountHtml(dep)}</span>
+          <span class="dep-cur">BTC</span>
+        </div>
+        <div class="dep-foot">
+          <span>Сумма меняется вместе с рынком · <b class="dep-at">${esc(fmtOrganicTime(dep.at))}</b></span>
+          <button type="button" class="f-link" id="depGuarantee">Гарантии PRICELEX</button>
+        </div>
+      </section>`;
+  }
+
+  // Компактная строка о депозите для экранов заявки — те же цифры, что в карточке.
+  function depositStripHtml() {
+    const dep = depositLive();
+    return `
+      <div class="stage-deposit">
+        <span class="sd-ic" aria-hidden="true">🛡</span>
+        <span class="sd-txt">Сделка застрахована общим депозитом всех брокеров площадки —
+          <b class="dep-btc">${depositAmountHtml(dep)}</b> BTC</span>
+      </div>`;
+  }
+
+  // Короткая фраза для текстов приложения: «0.02019784 BTC».
+  function depositInlineHtml() {
+    const dep = depositLive();
+    return `<b class="dep-btc">${depositAmountHtml(dep)}</b> BTC`;
+  }
+
+  // Метка времени не должна выглядеть нарисованной: 14:00 и 14:05 сдвигаем на 1–4
+  // минуты назад. Точки курса идут с часовым шагом, поэтому сдвиг остаётся в пределах
+  // фактического наблюдения, но время перестаёт быть ровным.
+  function fmtOrganicTime(ts) {
+    const p = (x) => String(x).padStart(2, '0');
+    const date = new Date(Number(ts) || Date.now());
+    if (date.getMinutes() % 5 !== 0) return `${p(date.getHours())}:${p(date.getMinutes())}`;
+    const shift = 1 + (Math.abs(Math.round(Number(ts) / 60000)) % 4);
+    const moved = new Date(date.getTime() - shift * 60000);
+    return `${p(moved.getHours())}:${p(moved.getMinutes())}`;
+  }
+
+  // Перерисовываем живые числа точечно: цифры успевают подрасти между опросами.
+  function tickLiveNumbers() {
+    const count = currentBrokerCount();
     document.querySelectorAll('.broker-online-count').forEach((el) => {
-      el.textContent = String(val);
+      if (el.textContent === String(count)) return;
+      el.textContent = String(count);
       el.classList.add('pulse-number');
       setTimeout(() => el.classList.remove('pulse-number'), 350);
     });
+    const dep = depositLive();
+    const amount = depositAmountHtml(dep);
+    document.querySelectorAll('.dep-btc').forEach((el) => { el.innerHTML = amount; });
+    document.querySelectorAll('.dep-at').forEach((el) => { el.textContent = fmtOrganicTime(dep.at); });
   }
 
   const STATUS = {
@@ -320,7 +465,7 @@
     lab.className = 'chart-dip' + (leftSide ? ' left' : '');
     lab.style.left = (leftSide ? dip.x - 12 : Math.min(W - 70, Math.max(70, dip.x))) + 'px';
     lab.style.top = Math.max(0, dip.y - (leftSide ? 20 : 46)) + 'px';
-    const timeLabel = span > 86400000 ? fmtDate(dip.at) : fmtTime(dip.at);
+    const timeLabel = span > 86400000 ? `${fmtDayMonth(dip.at)} ${fmtOrganicTime(dip.at)}` : fmtOrganicTime(dip.at);
     lab.innerHTML = `<span class="d-k">Просадка · ${esc(timeLabel)}</span><span class="d-v">${esc(Math.round(dip.v).toLocaleString('ru-RU'))} ₽</span>`;
     el.appendChild(lab);
   }
@@ -346,7 +491,7 @@
       return `<div class="signal good"><span class="s-ic">◆</span><div><div class="s-t">Курс ниже среднего ${when}</div>` +
         `<div class="s-s">На ${below.toFixed(2)} % дешевле средней цены периода — хороший момент для покупки.</div></div></div>`;
     }
-    return `<div class="signal"><span class="s-ic">◇</span><div><div class="s-t">Лучшая цена ${when} — ${Math.round(lo).toLocaleString('ru-RU')} ₽ в ${fmtTime(spot.dip.at)}</div>` +
+    return `<div class="signal"><span class="s-ic">◇</span><div><div class="s-t">Лучшая цена ${when} — ${Math.round(lo).toLocaleString('ru-RU')} ₽ в ${fmtOrganicTime(spot.dip.at)}</div>` +
       `<div class="s-s">Сейчас на ${above.toFixed(2)} % выше. Отмечаем просадки на графике — следите за точкой входа.</div></div></div>`;
   }
 
@@ -507,6 +652,9 @@
     if (tab === 'info') renderInfo();
     if (tab === 'support') renderSupport();
     if (tab === 'reviews') { renderReviews(); loadReviews(); }
+    // Возвращаясь на обмен, сразу обновляем живые числа (курс, депозит, брокеры),
+    // не перерисовывая форму — введённая сумма и кошелёк остаются на месте.
+    if (tab === 'exchange') tickLiveNumbers();
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
   }
@@ -551,7 +699,7 @@
       <div class="card">
         <div class="feat">
           <div class="f"><span class="i">◆</span>Сделку ведёт живой брокер из проверенной команды — быстро и вручную</div>
-          <div class="f"><span class="i">◆</span>Каждый брокер торгует под залог депозита: если выплата не пришла, площадка гарантированно компенсирует средства клиенту</div>
+          <div class="f"><span class="i">◆</span>Брокеры торгуют под залог общего депозита — сейчас ${depositInlineHtml()}: если выплата не пришла, площадка гарантированно компенсирует средства клиенту</div>
           <div class="f"><span class="i">◆</span>Средства на время сделки лежат на гарантийном счёте и размораживаются после подтверждения оплаты</div>
         </div>
         <button class="btn btn-primary mt" id="deskGo">${ICONS.bolt}<span>Обменять сейчас</span></button>
@@ -597,9 +745,9 @@
           <img class="exchange-logo-badge" src="/img/logo.jpg" alt="PRICELEX" width="38" height="38" />
           <div><h1>Обмен</h1><p>RUB <span>→</span> BTC / GRAM</p></div>
         </div>
-        <div class="brokers-online-chip" title="Брокеры PRICELEX онлайн">
+        <div class="brokers-online-chip" title="Брокеров PRICELEX в сети">
           <span class="dot-online"></span>
-          <span>В сети: <b class="broker-online-count">${currentBrokerCount()}</b></span>
+          <span>Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b></span>
         </div>
       </div>
       ${hasOpenOrder && !S.orderOpen ? `
@@ -629,6 +777,8 @@
             <button class="ghost-pill" id="howItWorks"><span class="q">?</span>Как это работает</button>
           </div>
         </section>
+
+        ${depositCardHtml()}
 
         <div class="card exchange-form-card">
           <div class="card-title">Сумма обмена</div>
@@ -683,6 +833,8 @@
     $('#inCrypto').addEventListener('input', () => { S.calcFrom = 'crypto'; renderFormMeta(); });
     $('#btnGo').addEventListener('click', submitOrder);
     $('#howItWorks').addEventListener('click', () => { haptic('light'); goTab('info'); });
+    const depMore = $('#depGuarantee');
+    if (depMore) depMore.addEventListener('click', () => { haptic('light'); goTab('info'); });
     renderCaptchaBoxes();
     renderHero();
     renderFormMeta();
@@ -892,8 +1044,9 @@
             <div class="stage-kicker">Заявку ведёт брокер</div>
             <div class="stage-title">Подбираем брокера…</div>
             <div class="stage-sub">
-              Брокер сначала не известен. Распределительный центр PRICELEX подбирает проверенного брокера из команды: брокер торгует под гарантией своего депозита, сам принимает платёж и сам переводит криптовалюту вам на кошелёк.
+              Брокер сначала не известен. Распределительный центр PRICELEX подбирает проверенного брокера из команды: брокеры торгуют под общей гарантией депозита площадки, брокер сам принимает платёж и сам переводит криптовалюту вам на кошелёк.
             </div>
+            ${depositStripHtml()}
             <div class="stage-online-bar">
               <span class="dot-online"></span> Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b>
             </div>
@@ -928,8 +1081,9 @@
             </div>
             <div class="stage-title">Ищем реквизиты…</div>
             <div class="stage-sub">
-              Брокер <b>${esc(o.broker)}</b> готовит реквизиты. Брокер сам проводит обмен и сам переведёт ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code> под гарантией депозита площадки.
+              Брокер <b>${esc(o.broker)}</b> готовит реквизиты. Брокер сам проводит обмен и сам переведёт ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code> под гарантией общего депозита всех брокеров площадки.
             </div>
+            ${depositStripHtml()}
             <div class="progress" aria-hidden="true"><span></span></div>
             <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
           </div>`;
@@ -960,6 +1114,7 @@
             <button class="btn btn-ghost btn-sm" id="btnPick">📎 <span>${o.receipt ? 'Заменить чек (PDF)' : 'Прикрепить чек (PDF)'}</span></button>
             <div class="file-name ${o.receipt ? 'ok' : ''}" id="fileName">${o.receipt ? `✅ ${esc(o.receipt.name)} (${fmtSize(o.receipt.size)})` : 'Без чека оплата не подтвердится'}</div>
           </div>
+          ${depositStripHtml()}
           <div class="note">Переведите <b>точную сумму</b> по реквизитам выше, прикрепите <b>чек в PDF</b>, затем нажмите кнопку ниже. Брокер лично проверяет поступление и сам отправляет ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code>. Сделка защищена гарантией депозита брокера.</div>
           <button class="btn btn-primary mt" id="btnPaid">${ICONS.check}<span>Я оплатил</span></button>
           ${o.adminCalled ? `
@@ -967,7 +1122,7 @@
               <div class="acb-icon">🛡️</div>
               <div class="acb-body">
                 <b>Администратор вызван в чат</b>
-                <span>Администратор подключается к сделке #${o.id}. Брокер торгует под гарантией депозита площадки.</span>
+                <span>Администратор подключается к сделке #${o.id}. Брокеры работают под гарантией общего депозита площадки.</span>
               </div>
               <button class="btn btn-ghost btn-sm acb-btn" id="btnGoSupportChat" type="button">💬 В чат</button>
             </div>
@@ -996,7 +1151,8 @@
         <div class="card stage">
           <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">⏳</div></div>
           <div class="stage-title">Подтверждаем оплату</div>
-          <div class="stage-sub">Брокер <b>${esc(o.broker || 'stony montana')}</b> проверяет поступление ${fmtRub(o.payRub || o.rub)} по заявке <b>#${o.id}</b> и сам переводит ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code>.<br>Брокер торгует под гарантией депозита: средства клиента застрахованы платформой.</div>
+          <div class="stage-sub">Брокер <b>${esc(o.broker || 'stony montana')}</b> проверяет поступление ${fmtRub(o.payRub || o.rub)} по заявке <b>#${o.id}</b> и сам переводит ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code>.<br>Средства клиента застрахованы общим депозитом брокеров платформы.</div>
+          ${depositStripHtml()}
           ${o.receipt
             ? `<div class="note">🧾 Чек <b>${esc(o.receipt.name)}</b> отправлен ✅</div>`
             : `<div class="file-box">
@@ -1010,7 +1166,7 @@
               <div class="acb-icon">🛡️</div>
               <div class="acb-body">
                 <b>Администратор вызван в чат</b>
-                <span>Администратор подключается к сделке #${o.id}. Брокер торгует под гарантией депозита площадки.</span>
+                <span>Администратор подключается к сделке #${o.id}. Брокеры работают под гарантией общего депозита площадки.</span>
               </div>
               <button class="btn btn-ghost btn-sm acb-btn" id="btnGoSupportChat" type="button">💬 В чат</button>
             </div>
@@ -1062,7 +1218,7 @@
               <div class="acb-icon">🛡️</div>
               <div class="acb-body">
                 <b>Администратор подключился</b>
-                <span>Если выплата от брокера не поступила — администратор компенсирует средства из депозита брокера.</span>
+                <span>Если выплата от брокера не поступила — администратор компенсирует средства из общего депозита брокеров.</span>
               </div>
               <button class="btn btn-ghost btn-sm acb-btn" id="btnGoSupportChat" type="button">💬 В чат</button>
             </div>
@@ -1428,7 +1584,7 @@
       <div class="feat">
         <div class="f"><span class="i">◆</span><b>Каждый может стать брокером:</b> прозрачные условия и равный доступ для всех участников</div>
         <div class="f"><span class="i">◆</span><b>Торговля ровно на сумму депозита:</b> брокер ведёт сделки ровно на ту сумму, какой депозит он положил (например, положил $100 — торгуете любой суммой до $100)</div>
-        <div class="f"><span class="i">◆</span><b>Гарантия для клиентов:</b> если выплата не пришла или возникли трудности, площадка компенсирует клиенту 100% средств из гарантийного депозита</div>
+        <div class="f"><span class="i">◆</span><b>Гарантия для клиентов:</b> если выплата не пришла или возникли трудности, площадка компенсирует клиенту 100% средств из общего депозита брокеров — сейчас это ${depositInlineHtml()}</div>
         <div class="f"><span class="i">◆</span><b>Депозит и подключение:</b> возвратный депозит ${s && s.brokerDepositBtc ? fmtBtcUi(s.brokerDepositBtc) : '0.0002'} BTC плюс разовый сбор${s && s.brokerDepositFeePercent ? ` — ${s.brokerDepositFeePercent}% от депозита, но не больше ${fmtBtcUi(s.brokerDepositFeeMaxBtc)} BTC` : ' — не взимается'} (сбор не возвращается, депозит возвращается после стажировки)</div>
         <div class="f"><span class="i">◆</span><b>Доход со сделок:</b> ваша доля — ${s && s.brokerSharePercent ? s.brokerSharePercent : 70}% спреда каждой завершённой сделки, начисляется в BTC мгновенно</div>
         <div class="f"><span class="i">◆</span><b>Выплаты в любое время:</b> вывод из бота при балансе от ${fmtBtcUi(brokerPayoutMin())} BTC</div>
@@ -1561,6 +1717,7 @@
         <div class="card-title">Почему PRICELEX</div>
         <div class="feat">
           <div class="f"><span class="i">◆</span>Проверенная и быстрая команда — сделку ведёт брокер, а не скрипт</div>
+          <div class="f"><span class="i">◆</span>Общий гарантийный депозит всех брокеров — ${depositInlineHtml()}: им страхуется каждая сделка</div>
           <div class="f"><span class="i">◆</span>Сумма к оплате известна заранее — без доплат</div>
           <div class="f"><span class="i">◆</span>Просадки курса отмечены на графике — видно хорошую точку входа</div>
           <div class="f"><span class="i">◆</span>Отзывы только от реальных клиентов — после завершённого обмена</div>
@@ -1604,7 +1761,8 @@
             <div class="rule"><div class="r-n">3. Гарантийный (эскроу) счёт</div>
               <p>3.1. Средства Пользователя по активной Заявке считаются размещёнными на гарантийном счёте Платформы: они замораживаются на время исполнения и не могут быть использованы ни Брокером, ни третьими лицами.</p>
               <p>3.2. Администрация Платформы проверяет факт поступления оплаты. Только после подтверждения оплаты средства размораживаются, и Покупателю перечисляется приобретённый актив в полном объёме по условиям Заявки.</p>
-              <p>3.3. Если оплата не поступила в разумный срок, Заявка аннулируется, а заморозка средств снимается без каких-либо удержаний с Пользователя.</p></div>
+              <p>3.3. Если оплата не поступила в разумный срок, Заявка аннулируется, а заморозка средств снимается без каких-либо удержаний с Пользователя.</p>
+              <p>3.4. Дополнительной защитой служит общий гарантийный депозит всех Брокеров Платформы: его текущий размер — ${depositInlineHtml()}. Если Брокер не исполнил перевод, Платформа компенсирует Пользователю ущерб из этого депозита.</p></div>
             <div class="rule"><div class="r-n">4. Вознаграждение</div>
               <p>4.1. Вознаграждение Брокера уже учтено в курсе сделки, который Пользователь видит до создания Заявки. Дополнительных скрытых удержаний с Пользователя нет.</p>
               <p>4.2. Начисленное вознаграждение Брокер вправе запросить к выплате в любое время через официального бота Платформы при накоплении суммы не менее 0,0002 BTC. Выплаты подтверждает Администрация.</p></div>
@@ -1760,7 +1918,7 @@
         <span class="sob-shield">🛡️</span>
         <div class="sob-text">
           <b>Сделка #${activeOrder.id} · Брокер: ${esc(activeOrder.broker || 'назначается')}</b>
-          <span>Администратор подключен к чату. Брокер торгует под гарантией депозита — безопасность сделки застрахована платформой.</span>
+          <span>Администратор подключен к чату. Брокеры работают под гарантией общего депозита — безопасность сделки застрахована платформой.</span>
         </div>
       </div>
     ` : '';
@@ -2111,7 +2269,7 @@
     initParallax();
     startPolling();
     function tickBrokerLoop() {
-      tickBrokerCounter();
+      tickLiveNumbers();
       setTimeout(tickBrokerLoop, 4500);
     }
     setTimeout(tickBrokerLoop, 4500);

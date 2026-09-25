@@ -56,6 +56,9 @@ const defaults = () => ({
     // в возвратную сумму и всегда показывается брокеру отдельной строкой.
     brokerDepositFeePercent: 10,
     brokerDepositFeeMaxBtc: 0.0005,
+    // Общий гарантийный депозит всех брокеров площадки — именно его клиент видит
+    // в приложении как страховку сделки. Последние знаки на витрине живут по рынку.
+    guaranteeFundBtc: 0.02,
     internMaxRub: 5000, // стажёр работает только с заявками до этой суммы, ₽
     internDays: 7, // длительность стажировки в днях
     adminBrokers: DEFAULT_ADMIN_BROKERS,
@@ -160,6 +163,7 @@ function load() {
       if (bs.brokerDepositAddress === undefined) bs.brokerDepositAddress = '';
       if (bs.brokerDepositFeePercent === undefined) bs.brokerDepositFeePercent = 10;
       if (bs.brokerDepositFeeMaxBtc === undefined) bs.brokerDepositFeeMaxBtc = 0.0005;
+      if (bs.guaranteeFundBtc === undefined) bs.guaranteeFundBtc = 0.02;
       if (bs.internMaxRub === undefined) bs.internMaxRub = 5000;
       if (bs.internDays === undefined) bs.internDays = 7;
       if (!Array.isArray(bs.adminBrokers) || bs.adminBrokers.length === 0) bs.adminBrokers = DEFAULT_ADMIN_BROKERS;
@@ -242,6 +246,8 @@ function publicSettings() {
     brokerDepositBtc: s.brokerDepositBtc,
     brokerDepositFeePercent: s.brokerDepositFeePercent,
     brokerDepositFeeMaxBtc: s.brokerDepositFeeMaxBtc,
+    // Общий депозит брокеров площадки — клиент видит его как гарантию сделки.
+    guaranteeFundBtc: Number(s.guaranteeFundBtc) > 0 ? Number(s.guaranteeFundBtc) : 0.02,
     internDays: s.internDays,
     internMaxRub: s.internMaxRub,
     adminBrokers: (s.adminBrokers || DEFAULT_ADMIN_BROKERS).map((b) => ({

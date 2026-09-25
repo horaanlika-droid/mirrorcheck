@@ -481,6 +481,30 @@ test('settings: announcement, operator and channel save to the real keys', async
   assert.equal(s.channel, 'https://t.me/pricelex_new');
 });
 
+test('общий гарантийный депозит брокеров: задаётся в боте и виден клиенту', async () => {
+  // По умолчанию фонд — 0.02 BTC, и он уходит в публичные настройки приложения.
+  assert.equal(store.get().settings.guaranteeFundBtc, 0.02);
+  const first = await (await fetch(`http://127.0.0.1:${server.address().port}/api/settings`)).json();
+  assert.equal(first.guaranteeFundBtc, 0.02);
+
+  // Оператор задаёт сумму в меню «Брокеры» — она сразу видна клиентам.
+  await click(111, 'sb:gfund');
+  await text(111, '0.035');
+  assert.equal(store.get().settings.guaranteeFundBtc, 0.035);
+  const pub = await (await fetch(`http://127.0.0.1:${server.address().port}/api/settings`)).json();
+  assert.equal(pub.guaranteeFundBtc, 0.035);
+
+  // Служебное поле депозита стажёра остаётся отдельной настройкой и в клиентских
+  // настройках лежит рядом — это разные суммы.
+  assert.notEqual(pub.guaranteeFundBtc, pub.brokerDepositBtc);
+
+  // Отрицательное значение не принимается.
+  await click(111, 'sb:gfund');
+  const before = store.get().settings.guaranteeFundBtc;
+  await text(111, '-1');
+  assert.equal(store.get().settings.guaranteeFundBtc, before);
+});
+
 test('admin replies to a review with editable date; public API hides author', async () => {
   const r = store.createReview({
     name: 'Игорь', rating: 5, text: 'Отличная сделка, всё чисто',
