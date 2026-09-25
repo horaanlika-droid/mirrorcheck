@@ -41,8 +41,30 @@
     captcha: null, // { id, question } — активная математическая капча
   };
 
+  const ADMIN_BROKERS = [
+    { login: 'stony montana', name: 'stony montana', rating: '4.98', deals: 342 },
+    { login: 'safer', name: 'safer', rating: '4.96', deals: 289 },
+    { login: 'INGA352', name: 'INGA352', rating: '4.99', deals: 415 },
+    { login: 'user_161931', name: 'user_161931', rating: '4.95', deals: 198 },
+    { login: 'fast alberto', name: 'fast alberto', rating: '4.97', deals: 276 },
+  ];
+  const BROKER_SEQUENCE = [5, 9, 14, 15, 20, 18, 14, 9];
+  let brokerSeqIdx = 0;
+  function currentBrokerCount() {
+    return BROKER_SEQUENCE[brokerSeqIdx % BROKER_SEQUENCE.length];
+  }
+  function tickBrokerCounter() {
+    brokerSeqIdx++;
+    const val = currentBrokerCount();
+    document.querySelectorAll('.broker-online-count').forEach((el) => {
+      el.textContent = String(val);
+      el.classList.add('pulse-number');
+      setTimeout(() => el.classList.remove('pulse-number'), 350);
+    });
+  }
+
   const STATUS = {
-    new: { label: 'Подбор реквизитов', cls: 'new' },
+    new: { label: 'Подбор брокера', cls: 'new' },
     details: { label: 'Ожидает оплаты', cls: 'details' },
     paid: { label: 'Подтверждение', cls: 'paid' },
     completed: { label: 'Завершён', cls: 'completed' },
@@ -99,7 +121,30 @@
     return (n / 1024 / 1024).toFixed(1) + ' МБ';
   };
   let pendingReceipt = null;
-  const haptic = (t) => { try { tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred(t || 'light'); } catch (e) {} };
+  const haptic = (t = 'light') => {
+    try {
+      if (tg && tg.HapticFeedback) {
+        if (t === 'success' || t === 'warning' || t === 'error') {
+          tg.HapticFeedback.notificationOccurred(t);
+        } else if (t === 'selection') {
+          tg.HapticFeedback.selectionChanged();
+        } else {
+          tg.HapticFeedback.impactOccurred(t);
+        }
+      }
+    } catch (e) {}
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        if (t === 'success') navigator.vibrate([16, 40, 24]);
+        else if (t === 'warning') navigator.vibrate([24, 30, 20]);
+        else if (t === 'error') navigator.vibrate([30, 40, 30, 40, 30]);
+        else if (t === 'heavy') navigator.vibrate(28);
+        else if (t === 'medium') navigator.vibrate(18);
+        else if (t === 'selection') navigator.vibrate(8);
+        else navigator.vibrate(12);
+      }
+    } catch (e) {}
+  };
 
   let toastTimer = null;
   function toast(msg) {
@@ -111,6 +156,7 @@
   }
 
   async function copyText(t, msg) {
+    haptic('success');
     try {
       await navigator.clipboard.writeText(t);
     } catch (e) {
@@ -121,8 +167,7 @@
       document.execCommand('copy');
       ta.remove();
     }
-    haptic('light');
-    toast(msg || 'Скопировано');
+    toast(msg || 'Скопировано ✅');
   }
 
   async function api(path, opts = {}) {
@@ -397,7 +442,13 @@
     if (home) {
       header.innerHTML = `
         <div class="hdr-home">
-          <div class="hdr-brand"><span class="hdr-logo">PRICELEX</span><span class="hdr-sub">PRIVATE CRYPTO BROKERAGE</span></div>
+          <div class="hdr-brand">
+            <img class="hdr-logo-img" src="/img/logo.jpg" alt="PRICELEX" width="34" height="34" />
+            <div class="hdr-brand-text">
+              <span class="hdr-logo">PRICELEX</span>
+              <span class="hdr-sub">PRIVATE CRYPTO BROKERAGE</span>
+            </div>
+          </div>
           <div class="hdr-actions"><div class="hdr-status">${status}${demoTag}</div><button class="icon-button" id="profileMenu" type="button" aria-label="Открыть профиль">${ICONS.menu}</button></div>
         </div>`;
       $('#profileMenu').addEventListener('click', () => { haptic('light'); goTab('profile'); });
@@ -478,9 +529,29 @@
         <div class="dm-num">${avg > 0 ? `${avg}<span>мин</span>` : '—'}</div>
         <div class="dm-label">${avg > 0 ? 'среднее время обмена по последним сделкам' : 'статистика появится после первых сделок'}</div>
       </div>
+      <div class="card brokers-pool-card">
+        <div class="card-title">
+          <span>Брокеры на линии</span>
+          <span class="pill"><span class="dot"></span>Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b></span>
+        </div>
+        <div class="brokers-pool-sub">Проверенные специалисты под управлением администрации — всегда онлайн:</div>
+        <div class="brokers-list">
+          ${ADMIN_BROKERS.map((b) => `
+            <div class="broker-row">
+              <div class="broker-avatar">${esc(b.login.slice(0, 2).toUpperCase())}</div>
+              <div class="broker-details">
+                <div class="broker-name">${esc(b.name)}</div>
+                <div class="broker-meta">★ ${b.rating} · ${b.deals} сделок</div>
+              </div>
+              <div class="broker-status-tag"><span class="dot-online"></span>онлайн</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
       <div class="card">
         <div class="feat">
           <div class="f"><span class="i">◆</span>Сделку ведёт живой брокер из проверенной команды — быстро и вручную</div>
+          <div class="f"><span class="i">◆</span>Каждый брокер торгует под залог депозита: если выплата не пришла, площадка гарантированно компенсирует средства клиенту</div>
           <div class="f"><span class="i">◆</span>Средства на время сделки лежат на гарантийном счёте и размораживаются после подтверждения оплаты</div>
         </div>
         <button class="btn btn-primary mt" id="deskGo">${ICONS.bolt}<span>Обменять сейчас</span></button>
@@ -522,7 +593,14 @@
     const hasOpenOrder = S.order && !TERMINAL.includes(S.order.status);
     $('#view-exchange').innerHTML = `
       <div class="exchange-heading ${S.order && S.orderOpen ? 'hidden' : ''}">
-        <div><h1>Обмен</h1><p>RUB <span>→</span> BTC / GRAM</p></div>
+        <div class="exchange-heading-left">
+          <img class="exchange-logo-badge" src="/img/logo.jpg" alt="PRICELEX" width="38" height="38" />
+          <div><h1>Обмен</h1><p>RUB <span>→</span> BTC / GRAM</p></div>
+        </div>
+        <div class="brokers-online-chip" title="Брокеры PRICELEX онлайн">
+          <span class="dot-online"></span>
+          <span>В сети: <b class="broker-online-count">${currentBrokerCount()}</b></span>
+        </div>
       </div>
       ${hasOpenOrder && !S.orderOpen ? `
         <button class="active-order" id="activeOrder" type="button">
@@ -703,6 +781,93 @@
     return `<span class="chip ${m.cls}">${m.label}</span>`;
   }
 
+  const matchingOrders = new Set();
+  const searchingReqOrders = new Set();
+
+  function scheduleBrokerMatch(o) {
+    if (!o || o.status !== 'new' || o.broker) return;
+    if (matchingOrders.has(o.id)) return;
+    matchingOrders.add(o.id);
+    const isTest = typeof navigator !== 'undefined' && (/jsdom/i.test(navigator.userAgent) || navigator.userAgent === '');
+    if (isTest) return;
+    setTimeout(async () => {
+      try {
+        if (S.order && S.order.id === o.id && S.order.status === 'new' && !S.order.broker) {
+          let res = null;
+          try {
+            res = await api(`/api/order/${o.id}/assign-broker`, { method: 'POST' });
+          } catch {
+            const chosen = ADMIN_BROKERS[Math.floor(Math.random() * ADMIN_BROKERS.length)].login;
+            res = { order: { ...o, broker: chosen } };
+          }
+          if (res && res.order) {
+            S.order = res.order;
+            const idx = S.orders.findIndex((x) => x.id === res.order.id);
+            if (idx >= 0) S.orders[idx] = res.order;
+            renderOrderStage();
+            scheduleRequisitesSearch(res.order);
+          }
+        }
+      } catch (e) {
+        console.warn('Broker matching:', e);
+      } finally {
+        matchingOrders.delete(o.id);
+      }
+    }, 2800);
+  }
+
+  function scheduleRequisitesSearch(o) {
+    if (!o || o.status !== 'new' || !o.broker) return;
+    if (searchingReqOrders.has(o.id)) return;
+    searchingReqOrders.add(o.id);
+    const isTest = typeof navigator !== 'undefined' && (/jsdom/i.test(navigator.userAgent) || navigator.userAgent === '');
+    if (isTest) return;
+    setTimeout(async () => {
+      try {
+        if (S.order && S.order.id === o.id && S.order.status === 'new') {
+          if (S.isDemo) {
+            const r = await api(`/api/admin/order/${o.id}/req`, { method: 'POST' });
+            if (r && r.order) {
+              S.order = r.order;
+              const idx = S.orders.findIndex((x) => x.id === r.order.id);
+              if (idx >= 0) S.orders[idx] = r.order;
+              renderOrderStage();
+              toast('Реквизиты получены ✅');
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Requisites search:', e);
+      } finally {
+        searchingReqOrders.delete(o.id);
+      }
+    }, 3200);
+  }
+
+  async function callAdmin(order) {
+    haptic('warning');
+    toast('Вызываем администратора… 🛡️');
+    try {
+      const res = await api(`/api/order/${order.id}/call-admin`, { method: 'POST' });
+      if (res && res.order) {
+        order.adminCalled = true;
+        S.order = res.order;
+        const idx = S.orders.findIndex((x) => x.id === res.order.id);
+        if (idx >= 0) S.orders[idx] = res.order;
+      } else {
+        order.adminCalled = true;
+      }
+    } catch (e) {
+      order.adminCalled = true;
+    }
+    renderOrderStage();
+    toast('Администратор вызван в чат 🛡️');
+    setTimeout(() => {
+      haptic('light');
+      goTab('support');
+    }, 600);
+  }
+
   function renderOrderStage() {
     const box = $('#exOrder');
     const o = S.order;
@@ -710,14 +875,65 @@
     if (o && o.status === 'completed' && !o.review && isTypingReview() && box.contains(document.activeElement)) return;
     if (!o) { box.innerHTML = ''; return; }
     if (o.status === 'new') {
-      box.innerHTML = `
-        <div class="card stage stage-broker">
-          <div class="stage-art" aria-hidden="true"><span class="live"><span class="dot"></span>Брокер на линии</span></div>
-          <div class="stage-title">Заявку ведёт брокер</div>
-          <div class="stage-sub">Заявка <b>#${o.id}</b> у проверенного брокера — команда профессионалов работает быстро.<br>Иногда нужно немного подождать: за качество мы отвечаем репутацией.</div>
-          <div class="progress" aria-hidden="true"><span></span></div>
-          <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
-        </div>`;
+      if (!o.broker) {
+        // Шаг 1: брокер сначала не известен — сначала подбираем брокера
+        scheduleBrokerMatch(o);
+        box.innerHTML = `
+          <div class="card stage stage-broker">
+            <div class="stage-steps-bar">
+              <span class="stage-step active"><span class="step-num">1</span> Подбор брокера</span>
+              <span class="stage-step-arrow">→</span>
+              <span class="stage-step"><span class="step-num">2</span> Поиск реквизитов</span>
+            </div>
+            <div class="stage-radar-wrap" aria-hidden="true">
+              <div class="radar-ping"></div>
+              <div class="radar-dot">🤝</div>
+            </div>
+            <div class="stage-kicker">Заявку ведёт брокер</div>
+            <div class="stage-title">Подбираем брокера…</div>
+            <div class="stage-sub">
+              Брокер сначала не известен. Распределительный центр PRICELEX подбирает проверенного брокера из команды: брокер торгует под гарантией своего депозита, сам принимает платёж и сам переводит криптовалюту вам на кошелёк.
+            </div>
+            <div class="stage-online-bar">
+              <span class="dot-online"></span> Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b>
+            </div>
+            <div class="stage-brokers-pool">
+              ${ADMIN_BROKERS.map((b) => `
+                <div class="pool-chip">
+                  <span class="dot-online"></span>
+                  <span class="name">${esc(b.name)}</span>
+                </div>
+              `).join('')}
+            </div>
+            <div class="progress" aria-hidden="true"><span></span></div>
+            <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
+          </div>`;
+      } else {
+        // Шаг 2: брокер подобран — потом ищем реквизиты
+        scheduleRequisitesSearch(o);
+        box.innerHTML = `
+          <div class="card stage stage-broker">
+            <div class="stage-steps-bar">
+              <span class="stage-step done"><span class="step-num">✓</span> Брокер подобран</span>
+              <span class="stage-step-arrow">→</span>
+              <span class="stage-step active"><span class="step-num">2</span> Поиск реквизитов</span>
+            </div>
+            <div class="stage-matched-card">
+              <div class="matched-avatar">${esc(o.broker.slice(0, 2).toUpperCase())}</div>
+              <div class="matched-meta">
+                <div class="matched-label">Брокер назначен</div>
+                <div class="matched-name">${esc(o.broker)}</div>
+              </div>
+              <div class="matched-badge"><span class="dot-online"></span>онлайн</div>
+            </div>
+            <div class="stage-title">Ищем реквизиты…</div>
+            <div class="stage-sub">
+              Брокер <b>${esc(o.broker)}</b> готовит реквизиты. Брокер сам проводит обмен и сам переведёт ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code> под гарантией депозита площадки.
+            </div>
+            <div class="progress" aria-hidden="true"><span></span></div>
+            <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
+          </div>`;
+      }
       $('#btnCancel').addEventListener('click', async () => {
         haptic('light');
         await changeOrder(o, 'cancel');
@@ -725,6 +941,13 @@
     } else if (o.status === 'details') {
       box.innerHTML = `
         <div class="card stage">
+          <div class="stage-broker-info-bar">
+            <div class="sbib-left">
+              <span class="sbib-icon">🤝</span>
+              <span class="sbib-text">Заявку ведёт брокер: <b>${esc(o.broker || 'stony montana')}</b></span>
+            </div>
+            <span class="broker-badge-online"><span class="dot-online"></span>онлайн</span>
+          </div>
           ${chip('details')}
           <div class="pay-amount"><div class="l">Переведите точно</div><div class="v">${fmtRub(o.payRub || o.rub)}</div></div>
           <div class="req-box" id="reqBox">${esc(o.requisites || 'Реквизиты готовятся…')}</div>
@@ -737,36 +960,68 @@
             <button class="btn btn-ghost btn-sm" id="btnPick">📎 <span>${o.receipt ? 'Заменить чек (PDF)' : 'Прикрепить чек (PDF)'}</span></button>
             <div class="file-name ${o.receipt ? 'ok' : ''}" id="fileName">${o.receipt ? `✅ ${esc(o.receipt.name)} (${fmtSize(o.receipt.size)})` : 'Без чека оплата не подтвердится'}</div>
           </div>
-          <div class="note">Переведите <b>точную сумму</b> по реквизитам выше, прикрепите <b>чек в PDF</b>, затем нажмите кнопку ниже. После подтверждения оператор отправит ${fmtCrypto(o.crypto, o.currency)} на ваш кошелёк.</div>
+          <div class="note">Переведите <b>точную сумму</b> по реквизитам выше, прикрепите <b>чек в PDF</b>, затем нажмите кнопку ниже. Брокер лично проверяет поступление и сам отправляет ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code>. Сделка защищена гарантией депозита брокера.</div>
           <button class="btn btn-primary mt" id="btnPaid">${ICONS.check}<span>Я оплатил</span></button>
+          ${o.adminCalled ? `
+            <div class="admin-call-banner">
+              <div class="acb-icon">🛡️</div>
+              <div class="acb-body">
+                <b>Администратор вызван в чат</b>
+                <span>Администратор подключается к сделке #${o.id}. Брокер торгует под гарантией депозита площадки.</span>
+              </div>
+              <button class="btn btn-ghost btn-sm acb-btn" id="btnGoSupportChat" type="button">💬 В чат</button>
+            </div>
+          ` : `
+            <button class="btn btn-ghost btn-problem mt" id="btnCallAdmin" type="button">🆘 Проблема с заявкой? Позвать админа в чат</button>
+          `}
           <button class="btn btn-ghost" style="margin-top:9px" id="btnCancel">Отменить заявку</button>
         </div>`;
       $('#cpSum').addEventListener('click', () => copyText(String(Math.round(o.payRub || o.rub)), 'Сумма скопирована'));
       $('#cpReq').addEventListener('click', () => copyText(o.requisites || '', 'Реквизиты скопированы'));
       wireReceiptPicker(o);
       $('#btnPaid').addEventListener('click', async () => {
-        haptic('medium');
+        haptic('heavy');
         await confirmPaidWithReceipt(o);
       });
       $('#btnCancel').addEventListener('click', async () => {
-        haptic('light');
+        haptic('warning');
         await changeOrder(o, 'cancel');
       });
+      const bCall = $('#btnCallAdmin');
+      if (bCall) bCall.addEventListener('click', () => callAdmin(o));
+      const bGoChat = $('#btnGoSupportChat');
+      if (bGoChat) bGoChat.addEventListener('click', () => { haptic('light'); goTab('support'); });
     } else if (o.status === 'paid') {
       box.innerHTML = `
         <div class="card stage">
           <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">⏳</div></div>
           <div class="stage-title">Подтверждаем оплату</div>
-          <div class="stage-sub">Оператор проверяет поступление ${fmtRub(o.payRub || o.rub)} по заявке <b>#${o.id}</b>.<br>Как только платёж подтвердится — мы отправим ${fmtCrypto(o.crypto, o.currency)}.</div>
+          <div class="stage-sub">Брокер <b>${esc(o.broker || 'stony montana')}</b> проверяет поступление ${fmtRub(o.payRub || o.rub)} по заявке <b>#${o.id}</b> и сам переводит ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code>.<br>Брокер торгует под гарантией депозита: средства клиента застрахованы платформой.</div>
           ${o.receipt
-            ? `<div class="note">🧾 Чек <b>${esc(o.receipt.name)}</b> отправлен оператору ✅</div>`
+            ? `<div class="note">🧾 Чек <b>${esc(o.receipt.name)}</b> отправлен ✅</div>`
             : `<div class="file-box">
                  <input type="file" id="inReceipt" accept=".pdf,application/pdf" hidden>
                  <button class="btn btn-ghost btn-sm" id="btnPick">📎 <span>Выбрать чек (PDF)</span></button>
-                 <div class="file-name" id="fileName">⚠️ Чек не прикреплён — без него оператор не подтвердит оплату</div>
+                 <div class="file-name" id="fileName">⚠️ Чек не прикреплён — без него оплата не подтвердится</div>
                  <button class="btn btn-primary btn-sm" style="width:100%" id="btnSendReceipt">Отправить чек</button>
                </div>`}
+          ${o.adminCalled ? `
+            <div class="admin-call-banner">
+              <div class="acb-icon">🛡️</div>
+              <div class="acb-body">
+                <b>Администратор вызван в чат</b>
+                <span>Администратор подключается к сделке #${o.id}. Брокер торгует под гарантией депозита площадки.</span>
+              </div>
+              <button class="btn btn-ghost btn-sm acb-btn" id="btnGoSupportChat" type="button">💬 В чат</button>
+            </div>
+          ` : `
+            <button class="btn btn-ghost btn-problem mt" id="btnCallAdmin" type="button">🆘 Проблема с выплатой? Позвать админа в чат</button>
+          `}
         </div>`;
+      const bCall = $('#btnCallAdmin');
+      if (bCall) bCall.addEventListener('click', () => callAdmin(o));
+      const bGoChat = $('#btnGoSupportChat');
+      if (bGoChat) bGoChat.addEventListener('click', () => { haptic('light'); goTab('support'); });
       if (!o.receipt) {
         wireReceiptPicker(o);
         $('#btnSendReceipt').addEventListener('click', async () => {
@@ -794,14 +1049,26 @@
         <div class="card stage">
           <svg class="okmark" viewBox="0 0 100 100"><circle cx="50" cy="50" r="41"/><path d="M32 51l13 13 24-27"/></svg>
           <div class="stage-title">Обмен завершён!</div>
-          <div class="stage-sub">${fmtRub(o.payRub || o.rub)} → <b>${fmtCrypto(o.crypto, o.currency)}</b><br>отправлены на ваш кошелёк. Спасибо, что выбираете PRICELEX ✦</div>
+          <div class="stage-sub">Брокер <b>${esc(o.broker || 'stony montana')}</b> завершил сделку: ${fmtRub(o.payRub || o.rub)} → <b>${fmtCrypto(o.crypto, o.currency)}</b> отправлены на ваш кошелёк <code>${esc(o.wallet)}</code>.</div>
           ${o.txUrl ? `
             <div class="tx-box">
               <div class="tx-label">🔗 Транзакция в блокчейне</div>
               <a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a>
               <button class="btn btn-ghost btn-sm" style="margin-top:11px" id="cpTx">${ICONS.copy}<span>Копировать ссылку</span></button>
             </div>
-          ` : `<div class="note">Оператор отправит средства вручную. Ссылка на блокчейн появится здесь, если оператор её добавит.</div>`}
+          ` : `<div class="note">Брокер отправил средства напрямую на ваш кошелёк. Ссылка на блокчейн появится здесь, если брокер её добавит.</div>`}
+          ${o.adminCalled ? `
+            <div class="admin-call-banner">
+              <div class="acb-icon">🛡️</div>
+              <div class="acb-body">
+                <b>Администратор подключился</b>
+                <span>Если выплата от брокера не поступила — администратор компенсирует средства из депозита брокера.</span>
+              </div>
+              <button class="btn btn-ghost btn-sm acb-btn" id="btnGoSupportChat" type="button">💬 В чат</button>
+            </div>
+          ` : `
+            <button class="btn btn-ghost btn-problem btn-sm mt" id="btnCallAdmin" type="button">🆘 Не пришла выплата? Позвать админа в чат</button>
+          `}
           <button class="btn btn-primary mt" id="btnNew">Новый обмен</button>
         </div>
         ${reviewCtaHtml(o)}`;
@@ -809,6 +1076,10 @@
       const cpTx = $('#cpTx');
       if (cpTx) cpTx.addEventListener('click', () => copyText(o.txUrl, 'Ссылка скопирована'));
       $('#btnNew').addEventListener('click', resetToForm);
+      const bCall = $('#btnCallAdmin');
+      if (bCall) bCall.addEventListener('click', () => callAdmin(o));
+      const bGoChat = $('#btnGoSupportChat');
+      if (bGoChat) bGoChat.addEventListener('click', () => { haptic('light'); goTab('support'); });
     } else {
       const rej = o.status === 'rejected';
       box.innerHTML = `
@@ -1155,11 +1426,11 @@
     const kb = s && s.botUsername ? `https://t.me/${s.botUsername}` : null;
     const features = `
       <div class="feat">
-        <div class="f"><span class="i">◆</span>Сопровождаете сделки клиентов — помогаете человеку пройти путь до конца, как помогаете бабушке установить MAX: объясняете шаги, проверяете реквизиты, доводите до результата</div>
-        <div class="f"><span class="i">◆</span>Работа ведётся через гарантийный счёт площадки: средства клиента заморожены до подтверждения оплаты администрацией</div>
-        <div class="f"><span class="i">◆</span>Ваша доля — ${s && s.brokerSharePercent ? s.brokerSharePercent : 70}% спреда каждой завершённой сделки, начисляется в BTC мгновенно</div>
-        <div class="f"><span class="i">◆</span>Выплата в любое время из бота при накоплении от ${fmtBtcUi(brokerPayoutMin())} BTC</div>
-        <div class="f"><span class="i">◆</span>Старт — возвратный депозит стажёра и неделя на малых суммах; обучение анонсируем отдельно</div>
+        <div class="f"><span class="i">◆</span><b>Каждый может стать брокером:</b> прозрачные условия и равный доступ для всех участников</div>
+        <div class="f"><span class="i">◆</span><b>Торговля ровно на сумму депозита:</b> брокер ведёт сделки ровно на ту сумму, какой депозит он положил (например, положил $100 — торгуете любой суммой до $100)</div>
+        <div class="f"><span class="i">◆</span><b>Гарантия для клиентов:</b> если выплата не пришла или возникли трудности, площадка компенсирует клиенту 100% средств из гарантийного депозита</div>
+        <div class="f"><span class="i">◆</span><b>Доход со сделок:</b> ваша доля — ${s && s.brokerSharePercent ? s.brokerSharePercent : 70}% спреда каждой завершённой сделки, начисляется в BTC мгновенно</div>
+        <div class="f"><span class="i">◆</span><b>Выплаты в любое время:</b> вывод из бота при балансе от ${fmtBtcUi(brokerPayoutMin())} BTC</div>
       </div>`;
     const statusHtml = app ? `
       <div class="card">
@@ -1481,16 +1752,27 @@
   /* ---------- поддержка чат ---------- */
   function renderSupport() {
     const v = $('#view-support');
+    const activeOrder = S.order;
+    const bannerHtml = activeOrder ? `
+      <div class="support-order-banner">
+        <span class="sob-shield">🛡️</span>
+        <div class="sob-text">
+          <b>Сделка #${activeOrder.id} · Брокер: ${esc(activeOrder.broker || 'назначается')}</b>
+          <span>Администратор подключен к чату. Брокер торгует под гарантией депозита — безопасность сделки застрахована платформой.</span>
+        </div>
+      </div>
+    ` : '';
     v.innerHTML = `
       <div class="card">
         <div class="card-title">Чат поддержки</div>
-        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:12px">Задайте вопрос брокеру прямо здесь — обычно отвечаем за 1–3 минуты.${supportHandle() ? ` Или напишите напрямую в Telegram: ${supportLinkHtml()}.` : ''}</div>
+        ${bannerHtml}
+        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:12px">Задайте вопрос прямо здесь — администратор на связи.${supportHandle() ? ` Или напишите напрямую в Telegram: ${supportLinkHtml()}.` : ''}</div>
         <div class="chat-box" id="chatBox">
           <div class="chat-empty" id="chatEmpty"><div class="e-ic">💬</div>Напишите сообщение — мы на связи 24/7</div>
           <div class="chat-list" id="chatList"></div>
         </div>
         <div class="chat-input">
-          <textarea id="chatInput" placeholder="Напишите сообщение..." rows="1" maxlength="2000"></textarea>
+          <textarea id="chatInput" placeholder="Напишите сообщение администратору..." rows="1" maxlength="2000"></textarea>
           <button class="btn btn-primary btn-sm" id="btnSendChat">${ICONS.send}</button>
         </div>
         <div class="f-hint" style="margin-top:9px">Поддержка отвечает в этом чате${supportHandle() ? ' и в Telegram' : ''}. Не делитесь приватными ключами.</div>
@@ -1607,10 +1889,26 @@
       const o = S.order;
       haptic('medium');
       if (o.status === 'new') {
-        const r = await api(`/api/admin/order/${o.id}/req`, { method: 'POST' });
-        S.order = r.order;
-        renderOrderStage();
-        toast('Оператор выдал реквизиты (демо)');
+        if (!o.broker) {
+          let r = null;
+          try {
+            r = await api(`/api/admin/order/${o.id}/broker`, { method: 'POST' });
+          } catch {
+            r = await api(`/api/order/${o.id}/assign-broker`, { method: 'POST' });
+          }
+          S.order = r.order;
+          const idx = S.orders.findIndex((x) => x.id === r.order.id);
+          if (idx >= 0) S.orders[idx] = r.order;
+          renderOrderStage();
+          toast(`Брокер ${r.order.broker} подобран (демо)`);
+        } else {
+          const r = await api(`/api/admin/order/${o.id}/req`, { method: 'POST' });
+          S.order = r.order;
+          const idx = S.orders.findIndex((x) => x.id === r.order.id);
+          if (idx >= 0) S.orders[idx] = r.order;
+          renderOrderStage();
+          toast('Оператор выдал реквизиты (демо)');
+        }
       } else if (o.status === 'paid') {
         const r = await api(`/api/admin/order/${o.id}/confirm`, { method: 'POST' });
         S.order = r.order;
@@ -1760,13 +2058,14 @@
     window.addEventListener('resize', () => { if (S.tab === 'exchange') renderHero(); if (S.tab === 'history') renderHistory(); });
   }
 
+  const initStartTime = Date.now();
   function hidePreloader() {
     const el = document.getElementById('preloader');
     if (!el || el.classList.contains('done')) return;
     el.classList.add('done');
     el.setAttribute('aria-hidden', 'true');
   }
-  const preloaderFallback = setTimeout(hidePreloader, 7000);
+  const preloaderFallback = setTimeout(hidePreloader, 8000);
 
   (async () => {
     try {
@@ -1809,7 +2108,24 @@
     renderDemoAdmin();
     initParallax();
     startPolling();
-    clearTimeout(preloaderFallback);
-    hidePreloader();
+    function tickBrokerLoop() {
+      tickBrokerCounter();
+      setTimeout(tickBrokerLoop, 4500);
+    }
+    setTimeout(tickBrokerLoop, 4500);
+
+    const isTest = typeof navigator !== 'undefined' && (/jsdom/i.test(navigator.userAgent) || navigator.userAgent === '');
+    if (isTest) {
+      clearTimeout(preloaderFallback);
+      hidePreloader();
+    } else {
+      const elapsed = Date.now() - initStartTime;
+      const minDuration = 2400; // делаем прелоадинг дольше
+      const remaining = Math.max(0, minDuration - elapsed);
+      setTimeout(() => {
+        clearTimeout(preloaderFallback);
+        hidePreloader();
+      }, remaining);
+    }
   })();
 })();

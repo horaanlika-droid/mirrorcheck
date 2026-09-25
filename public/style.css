@@ -101,6 +101,24 @@ html, body { height: 100%; }
   letter-spacing: 0.26em; text-transform: uppercase;
   color: var(--dim);
 }
+.preloader-bar {
+  width: 140px; height: 3px; margin: 22px auto 0;
+  background: rgba(228, 236, 240, 0.1);
+  border-radius: 999px; overflow: hidden;
+  position: relative;
+}
+.preloader-progress {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
+  background: linear-gradient(90deg, #c9a87e, #f3dab6);
+  border-radius: 999px;
+  animation: preloader-fill 2.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+@keyframes preloader-fill {
+  0% { width: 0%; }
+  35% { width: 45%; }
+  75% { width: 85%; }
+  100% { width: 100%; }
+}
 
 body {
   font-family: var(--font-sans);
@@ -727,23 +745,15 @@ body {
   font-family: var(--font-mono); font-size: 8.5px; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink);
   background: rgba(8, 8, 7, 0.62); border: 1px solid rgba(232, 149, 82, 0.35); backdrop-filter: blur(10px);
 }
-.sp-mic .dot { width: 5px; height: 5px; border-radius: 50%; background: #E86A4A; box-shadow: 0 0 9px #E86A4A; animation: pulse 1.9s infinite; }
+.sp-mic .dot { width: 5px; height: 5px; border-radius: 50%; background: #E86A4A; box-shadow: 0 0 9px #E86A4A; }
 .sp-line {
   font-weight: 400; font-size: 16.5px; line-height: 1.55; color: var(--txt-2);
-  opacity: 0; transform: translateY(16px); filter: blur(6px);
-  animation: sp-in 1.15s var(--ease-o) forwards;
+  opacity: 1; transform: none; filter: none; animation: none;
 }
 .sp-line + .sp-line { margin-top: 15px; }
 .sp-line.lead { font-size: 23px; font-weight: 550; line-height: 1.24; letter-spacing: -0.015em; color: var(--ink); }
 .sp-line.big { font-size: 20px; font-weight: 550; line-height: 1.32; letter-spacing: -0.01em; color: #EDE9E0; }
 .sp-line em { font-style: italic; color: var(--amber-3); }
-.sp-line:nth-of-type(1) { animation-delay: 0.15s; }
-.sp-line:nth-of-type(2) { animation-delay: 0.6s; }
-.sp-line:nth-of-type(3) { animation-delay: 1.05s; }
-.sp-line:nth-of-type(4) { animation-delay: 1.5s; }
-.sp-line:nth-of-type(5) { animation-delay: 2.0s; }
-.sp-line:nth-of-type(6) { animation-delay: 2.45s; }
-@keyframes sp-in { to { opacity: 1; transform: none; filter: blur(0); } }
 .sp-sign {
   margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--amber-line);
   font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.34em; text-transform: uppercase; color: var(--amber-2);

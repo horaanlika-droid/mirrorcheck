@@ -290,3 +290,20 @@ test('avg exchange time: auto from deals, manual override via setting', () => {
   assert.equal(store.publicSettings().avgExchangeMin, 12);
   store.mutate((db) => { db.settings.avgExchangeMin = 0; });
 });
+
+test('client calls admin on problem: admin notified and support messages created', async () => {
+  const r = await api('/api/orders', { method: 'POST', body: { rub: 3000, currency: 'BTC', wallet: 'bc1' + 'd'.repeat(30), ...(await captcha()) } });
+  const { order } = await r.json();
+  calls = [];
+  const callRes = await api(`/api/order/${order.id}/call-admin`, { method: 'POST' });
+  assert.equal(callRes.status, 200);
+  const data = await callRes.json();
+  assert.equal(data.order.adminCalled, true);
+  // admins received alert
+  assert.ok(calls.some((c) => /Позвать администратора|вызвал администратора/i.test(c.text)));
+  // support messages exist
+  const stored = store.getOrder(order.id);
+  const msgs = store.getSupportMessages(stored.userId);
+  assert.ok(msgs.some((m) => /Вызов администратора/.test(m.text)));
+  assert.ok(msgs.some((m) => /Администратор PRICELEX подключается/.test(m.text)));
+});

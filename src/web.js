@@ -16,10 +16,13 @@ const clientOrder = (o) => ({
   crypto: o.crypto,
   rate: o.rate,
   status: o.status,
+  broker: o.broker || null,
   requisites: o.requisites,
   payRub: o.payRub,
   receipt: o.receipt || null,
   txUrl: o.txUrl || null,
+  adminCalled: Boolean(o.adminCalled),
+  adminCalledAt: o.adminCalledAt || null,
   review: (() => {
     const r = store.reviewForOrder(o.id);
     return r ? { id: r.id } : null; // статус модерации клиенту не раскрываем
@@ -206,6 +209,21 @@ function startWeb() {
     res.json({ order: clientOrder(o) });
   });
 
+  app.post('/api/order/:id/assign-broker', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const o = store.getOrder(req.params.id);
+    if (!o || o.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
+    if (o.status !== 'new') return res.status(400).json({ error: 'Заявка уже обрабатывается' });
+    let broker = req.body?.broker;
+    if (!broker || !store.isAdminBroker(broker)) {
+      broker = store.getRandomAdminBroker();
+    }
+    const upd = store.updateOrder(o.id, { broker });
+    bus.emit('order_event', { order: upd, type: 'broker_assigned' });
+    res.json({ order: clientOrder(upd) });
+  });
+
   app.post('/api/order/:id/receipt', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
@@ -283,6 +301,29 @@ function startWeb() {
       return res.json({ order: clientOrder(upd) });
     }
     res.json({ order: clientOrder(o) });
+  });
+
+  app.post('/api/order/:id/call-admin', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const o = store.getOrder(req.params.id);
+    if (!o || o.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
+    const upd = store.updateOrder(o.id, { adminCalled: true, adminCalledAt: Date.now() });
+    const brokerName = upd.broker || 'не назначен';
+    const userMsg = store.createSupportMessage(
+      a.user.id,
+      'user',
+      `🆘 Вызов администратора по заявке #${o.id}. Брокер сделки: ${brokerName}. Нужна помощь в сделке / возникли проблемы.`
+    );
+    const adminMsg = store.createSupportMessage(
+      a.user.id,
+      'admin',
+      `🛡️ Вызов принят. Администратор PRICELEX подключается к чату по заявке #${o.id}. Напоминаем: брокер торгует под гарантией своего депозита, поэтому средства клиента защищены. Напишите, пожалуйста, в чём возникла проблема — мы поможем завершить обмен или компенсируем средства из депозита брокера.`
+    );
+    bus.emit('support_message', { message: userMsg, user: a.user });
+    bus.emit('support_message', { message: adminMsg, user: { id: a.user.id } });
+    bus.emit('order_event', { order: upd, type: 'admin_called' });
+    res.json({ ok: true, order: clientOrder(upd) });
   });
 
   /* ---------- отзывы ---------- */
@@ -373,10 +414,19 @@ function startWeb() {
 
   // ДЕМО-пульт оператора: существует ТОЛЬКО когда BOT_TOKEN не задан (превью без бота).
   if (!config.botToken) {
+    app.post('/api/admin/order/:id/broker', (req, res) => {
+      const o = store.getOrder(req.params.id);
+      if (!o) return res.status(404).json({ error: 'not found' });
+      const broker = req.body?.broker || store.getRandomAdminBroker();
+      const upd = store.updateOrder(o.id, { broker });
+      bus.emit('order_event', { order: upd, type: 'broker_assigned' });
+      res.json({ order: clientOrder(upd) });
+    });
     app.post('/api/admin/order/:id/req', (req, res) => {
       const o = store.getOrder(req.params.id);
       if (!o) return res.status(404).json({ error: 'not found' });
       const upd = store.updateOrder(o.id, {
+        broker: o.broker || store.getRandomAdminBroker(),
         requisites: req.body.requisites || 'СБП: +7 999 123-45-67\nБанк: Т-Банк\nПолучатель: PRICELEX OFFICIAL',
         payRub: Number(req.body.payRub) || o.rub,
         status: 'details',

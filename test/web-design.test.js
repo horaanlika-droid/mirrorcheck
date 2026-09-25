@@ -274,3 +274,26 @@ test('info tab carries the founder speech word for word and never mentions a fee
   assert.ok(!/комисси/i.test(a.document.querySelector('#view-info').textContent));
   assert.equal(a.document.querySelector('#view-info .contact').href, 'https://t.me/test');
 });
+
+test('active order in details stage renders broker info, call-admin button and connects to chat on problem', async (t) => {
+  const detailsOrder = {
+    id: 42,
+    status: 'details',
+    broker: 'stony montana',
+    rub: 5000,
+    payRub: 5000,
+    currency: 'BTC',
+    crypto: 0.0005,
+    wallet: 'bc1' + 'a'.repeat(38),
+    requisites: 'СБП +79991112233 Т-Банк',
+    createdAt: now,
+  };
+  const a = await app(t, { orders: [detailsOrder] });
+  const exOrder = a.document.querySelector('#exOrder');
+  assert.ok(exOrder);
+  assert.match(exOrder.textContent, /Заявку ведёт брокер/);
+  assert.match(exOrder.textContent, /stony montana/);
+  const btnCall = exOrder.querySelector('#btnCallAdmin');
+  assert.ok(btnCall, 'кнопка вызова админа на этапе заявки присутствует');
+  assert.match(btnCall.textContent, /Позвать админа|Проблема/);
+});
