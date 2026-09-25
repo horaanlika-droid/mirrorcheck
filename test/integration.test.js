@@ -357,6 +357,16 @@ test('rate history endpoint serves real observations for the Web App chart', asy
   const dense = await (await fetch(`http://127.0.0.1:${port}/api/rates/history?hours=24`)).json();
   assert.ok(dense.points.length <= 181, `ожидалось <= 181 точек, получено ${dense.points.length}`);
   assert.equal(dense.points[dense.points.length - 1].btc, 9_000_399);
+
+  // Когда пользователь заходит с пустой историей — подгружается недельная история с процентом
+  store.mutate((db) => {
+    db.rateHistory = [];
+    db.settings.feePercent = 2;
+  });
+  const weekly = await (await fetch(`http://127.0.0.1:${port}/api/rates/history`)).json();
+  assert.equal(weekly.hours, 168);
+  assert.ok(weekly.points.length >= 2, 'график не пустой');
+  assert.ok(weekly.points[0].btc > 0 && weekly.points[0].gram > 0);
 });
 
 test('reviews: only after a completed own order, one per order, hidden until moderated by any admin', async () => {

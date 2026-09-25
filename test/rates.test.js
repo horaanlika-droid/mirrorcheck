@@ -88,8 +88,41 @@ function market({ prices = PRICES, override = {} } = {}) {
     const pick = (sym) => (/^(BTC|XBT|btc)/.test(sym) ? p.btc : p.gram);
     switch (name) {
       case 'binance':
+        if (u.pathname.includes('/klines')) {
+          const sym = q.get('symbol');
+          const limit = Number(q.get('limit')) || 168;
+          const base = 1_790_000_000_000 - limit * 3600_000;
+          return json(Array.from({ length: limit }, (_, i) => [
+            base + i * 3600_000,
+            String(pick(sym)),
+            String(pick(sym) * 1.01),
+            String(pick(sym) * 0.99),
+            String(pick(sym)),
+            '100',
+            base + (i + 1) * 3600_000 - 1,
+          ]));
+        }
         return json(JSON.parse(q.get('symbols')).map((s) => ({ symbol: s, price: String(pick(s)) })));
       case 'bybit':
+        if (u.pathname.includes('/kline')) {
+          const sym = q.get('symbol');
+          const limit = Number(q.get('limit')) || 168;
+          const base = 1_790_000_000_000 - limit * 3600_000;
+          return json({
+            retCode: 0, retMsg: 'OK',
+            result: {
+              category: 'spot',
+              list: Array.from({ length: limit }, (_, i) => [
+                String(base + i * 3600_000),
+                String(pick(sym)),
+                String(pick(sym) * 1.01),
+                String(pick(sym) * 0.99),
+                String(pick(sym)),
+                '100',
+              ]),
+            },
+          });
+        }
         return json({ retCode: 0, retMsg: 'OK', result: { category: 'spot', list: [{ symbol: q.get('symbol'), lastPrice: String(pick(q.get('symbol'))) }] } });
       case 'okx':
         return json({ code: '0', msg: '', data: [{ instType: 'SPOT', instId: q.get('instId'), last: String(pick(q.get('instId'))) }] });
@@ -116,6 +149,18 @@ function market({ prices = PRICES, override = {} } = {}) {
       case 'tonapi':
         return json({ rates: { TON: { prices: { RUB: p.gram * 84.4971, USD: p.gram } } } });
       case 'coingecko':
+        if (u.pathname.includes('/market_chart')) {
+          const id = u.pathname.split('/')[4];
+          const sym = id === 'bitcoin' ? 'BTC' : 'GRAM';
+          const limit = 168;
+          const base = 1_790_000_000_000 - limit * 3600_000;
+          return json({
+            prices: Array.from({ length: limit }, (_, i) => [
+              base + i * 3600_000,
+              pick(sym),
+            ]),
+          });
+        }
         return json({ bitcoin: { usd: p.btc, rub: p.btc * 84.876 }, 'the-open-network': { usd: p.gram, rub: p.gram * 84.876 } });
       case 'cbr':
         return json({ Date: '2026-09-25T11:30:00+03:00', Valute: { USD: { CharCode: 'USD', Nominal: 1, Value: CBR_USD } } });
@@ -430,4 +475,80 @@ test('operator: «🔄 Обновить курс» shows the median, USD/RUB and
   assert.match(panel.text, /💱 Курс доллара: 84,91 ₽ \(ЦБ РФ, \d\d\.\d\d \d\d:\d\d\)/);
   assert.match(panel.text, /🛰 Источники курса на связи: <b>10 из 12<\/b> · на паузе: bybit \(HTTP 403\), coingecko \(HTTP 429\)/);
   assert.match(panel.text, /💵 Курс для клиентов: <b>₿ 7\s[12]\d\d\s\d{3} ₽ · G 121 ₽<\/b>/);
+});
+
+test('fetchHistory: loads 168 hours of online history from Binance klines', async () => {
+  const { e } = engine();
+  const hist = await e.fetchHistory({ hours: 168 });
+  assert.equal(hist.source, 'binance');
+  assert.equal(hist.points.length, 168);
+  assert.ok(hist.points[0].at < hist.points[hist.points.length - 1].at);
+  assert.ok(hist.points[0].baseBtc > 7_000_000);
+  assert.ok(hist.points[0].baseGram > 100);
+});
+
+test('fetchHistory: falls back to Bybit when Binance fails', async () => {
+  const { e } = engine({
+    override: {
+      binance: new Error('binance offline'),
+    },
+  });
+  const hist = await e.fetchHistory({ hours: 168 });
+  assert.equal(hist.source, 'bybit');
+  assert.equal(hist.points.length, 168);
+  assert.ok(hist.points[0].baseBtc > 7_000_000);
+});
+
+test('ensureRateHistory: populates store with weekly points and applies fee on top', async (t) => {
+  const realFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = realFetch; });
+  globalThis.fetch = market().fetchImpl;
+
+  store.mutate((db) => {
+    db.rateHistory = [];
+    db.settings.feePercent = 3;
+    db.settings.rateUpdatedAt = null;
+  });
+
+  const points = await rates.ensureRateHistory({ force: true, hours: 168 });
+  assert.ok(points.length >= 24, `Ожидалась недельная история, получено ${points.length}`);
+  const first = points[0];
+  const last = points[points.length - 1];
+
+  // Проверяем, что к каждому наблюдению применён наш процент
+  assert.equal(first.btc, rates.applyFee(first.baseBtc, 3));
+  assert.equal(first.gram, rates.applyFee(first.baseGram, 3));
+  assert.equal(last.btc, rates.applyFee(last.baseBtc, 3));
+  assert.equal(last.gram, rates.applyFee(last.baseGram, 3));
+
+  // Проверяем пересчёт комиссии оператором: вся история пересчитывается с новым процентом
+  store.mutate((db) => { db.settings.feePercent = 5; });
+  rates.recomputeWithFee();
+  const updatedHistory = store.get().rateHistory;
+  assert.equal(updatedHistory[0].btc, rates.applyFee(updatedHistory[0].baseBtc, 5));
+  assert.equal(updatedHistory[0].gram, rates.applyFee(updatedHistory[0].baseGram, 5));
+  assert.equal(updatedHistory[updatedHistory.length - 1].btc, rates.applyFee(updatedHistory[updatedHistory.length - 1].baseBtc, 5));
+  assert.equal(updatedHistory[updatedHistory.length - 1].gram, rates.applyFee(updatedHistory[updatedHistory.length - 1].baseGram, 5));
+});
+
+test('ensureRateHistory: offline fallback seeds realistic week history so chart is never empty', async (t) => {
+  const realFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = realFetch; });
+  globalThis.fetch = async () => { throw new Error('offline'); };
+
+  store.mutate((db) => {
+    db.rateHistory = [];
+    db.settings.feePercent = 2;
+  });
+
+  const points = await rates.ensureRateHistory({ force: true, hours: 168 });
+  assert.equal(points.length, 168, 'Резервная история за неделю на 168 часов');
+  assert.ok(points[0].btc > 0 && points[0].gram > 0);
+  assert.equal(points[0].btc, rates.applyFee(points[0].baseBtc, 2));
+  assert.equal(points[0].gram, rates.applyFee(points[0].baseGram, 2));
+
+  // Точки отдаются через rateHistorySince для графика
+  const served = store.rateHistorySince(Date.now() - 168 * 3600_000, 180);
+  assert.ok(served.length >= 2, 'График в Web App никогда не остаётся пустым');
+  assert.deepEqual(Object.keys(served[0]).sort(), ['at', 'btc', 'gram']);
 });

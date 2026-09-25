@@ -334,10 +334,12 @@ function stats() {
 
 /* ---------- история курса для графика ---------- */
 // Записываем только фактические наблюдения курса (автообновление или ручная правка).
-function pushRatePoint({ btc, gram, at = Date.now() } = {}) {
+function pushRatePoint({ btc, gram, at = Date.now(), baseBtc, baseGram } = {}) {
   const b = Math.round(Number(btc));
   const g = Math.round(Number(gram));
   if (!Number.isFinite(b) || !Number.isFinite(g) || b <= 0 || g <= 0) return null;
+  const bb = Number.isFinite(Number(baseBtc)) && Number(baseBtc) > 0 ? Math.round(Number(baseBtc)) : null;
+  const bg = Number.isFinite(Number(baseGram)) && Number(baseGram) > 0 ? Math.round(Number(baseGram)) : null;
   return mutate((d) => {
     if (!Array.isArray(d.rateHistory)) d.rateHistory = [];
     const last = d.rateHistory[d.rateHistory.length - 1];
@@ -345,12 +347,69 @@ function pushRatePoint({ btc, gram, at = Date.now() } = {}) {
     // Обновления чаще минуты не плодят точки: свежая точка заменяет предыдущую.
     if (last && at - last.at < 60000) {
       last.at = at; last.btc = b; last.gram = g;
+      if (bb) last.baseBtc = bb;
+      if (bg) last.baseGram = bg;
       return last;
     }
     const point = { at, btc: b, gram: g };
+    if (bb) point.baseBtc = bb;
+    if (bg) point.baseGram = bg;
     d.rateHistory.push(point);
     if (d.rateHistory.length > RATE_HISTORY_MAX) d.rateHistory.splice(0, d.rateHistory.length - RATE_HISTORY_MAX);
     return point;
+  });
+}
+
+// Заполнение начальной истории курса (из онлайна за неделю с нашим процентом).
+function seedRateHistory(points) {
+  if (!Array.isArray(points) || !points.length) return 0;
+  return mutate((d) => {
+    if (!Array.isArray(d.rateHistory)) d.rateHistory = [];
+    const valid = points
+      .filter((p) => p && Number.isFinite(p.at) && p.btc > 0 && p.gram > 0)
+      .map((p) => {
+        const pt = {
+          at: Number(p.at),
+          btc: Math.round(Number(p.btc)),
+          gram: Math.round(Number(p.gram)),
+        };
+        if (Number(p.baseBtc) > 0) pt.baseBtc = Math.round(Number(p.baseBtc));
+        if (Number(p.baseGram) > 0) pt.baseGram = Math.round(Number(p.baseGram));
+        return pt;
+      });
+    if (!valid.length) return 0;
+
+    const map = new Map();
+    for (const p of valid) {
+      map.set(Math.round(p.at / 60000), p);
+    }
+    for (const p of d.rateHistory) {
+      if (p && Number.isFinite(p.at) && p.btc > 0 && p.gram > 0) {
+        const k = Math.round(p.at / 60000);
+        if (!map.has(k)) map.set(k, p);
+      }
+    }
+    const merged = Array.from(map.values()).sort((a, b) => a.at - b.at);
+    if (merged.length > RATE_HISTORY_MAX) {
+      merged.splice(0, merged.length - RATE_HISTORY_MAX);
+    }
+    d.rateHistory = merged;
+
+    const latest = merged[merged.length - 1];
+    if (latest) {
+      if (!d.settings.rateUpdatedAt || d.settings.rateUpdatedAt < latest.at) {
+        d.settings.rateUpdatedAt = latest.at;
+      }
+      if (!d.settings.baseRateBTC && latest.baseBtc) d.settings.baseRateBTC = latest.baseBtc;
+      if (!d.settings.baseRateGRAM && latest.baseGram) d.settings.baseRateGRAM = latest.baseGram;
+      if (latest.btc) d.settings.rateBTC = latest.btc;
+      if (latest.gram) d.settings.rateGRAM = latest.gram;
+      if (!d.settings.rateSource || d.settings.rateSource === 'manual') {
+        d.settings.rateSource = 'online history';
+      }
+    }
+
+    return d.rateHistory.length;
   });
 }
 
@@ -369,11 +428,12 @@ function dropRatePointsAfter(ts = 0) {
 function rateHistorySince(since = 0, maxPoints = 180) {
   const all = (db.rateHistory || []).filter((p) => p.at >= since);
   const limit = Math.max(2, Number(maxPoints) || 180);
-  if (all.length <= limit) return all.slice();
+  const pick = (p) => ({ at: p.at, btc: p.btc, gram: p.gram });
+  if (all.length <= limit) return all.map(pick);
   const step = Math.ceil(all.length / limit);
-  const out = all.filter((_, i) => i % step === 0);
-  const last = all[all.length - 1];
-  if (out[out.length - 1] !== last) out.push(last);
+  const out = all.filter((_, i) => i % step === 0).map(pick);
+  const last = pick(all[all.length - 1]);
+  if (!out.length || out[out.length - 1].at !== last.at) out.push(last);
   return out;
 }
 
@@ -750,6 +810,7 @@ module.exports = {
   pushRatePoint,
   dropRatePointsAfter,
   rateHistorySince,
+  seedRateHistory,
   createSupportMessage,
   getSupportMessages,
   getSupportThreads,
