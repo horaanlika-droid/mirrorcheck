@@ -24,10 +24,11 @@ const settings = {
   guaranteeFundBtc: 0.02, adminBrokers: [],
 };
 
-function boot({ reduced = false, telegram = true, fail = false } = {}) {
+function boot({ reduced = false, telegram = true, fail = false, browser = false } = {}) {
   const dom = new JSDOM(html, { url: 'https://pricelex.example', runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
   window.console.warn = () => {};
+  if (browser) Object.defineProperty(window.navigator, 'userAgent', { value: 'Mozilla/5.0 Chrome/130' });
   if (reduced) {
     window.matchMedia = (q) => ({ matches: /prefers-reduced-motion/.test(q), media: q, addEventListener() {}, removeEventListener() {} });
   }
@@ -76,22 +77,13 @@ const runUpTo = ({ timers }, limit) => [...timers.values()]
 const preloaderRules = (css) => css.split(/\n(?=\S)/).filter((b) => /\.preloader/.test(b)).join('\n');
 
 test('прелоадер: большое лого и полный текст — PRICELEX, Private Crypto Brokerage, Since 2025', () => {
-  // Лого — большое: аттрибуты задают натуру 256 px, шкалы поднимают его ещё выше.
-  assert.match(html, /<img class="preloader-logo" src="\/img\/logo-mark\.png" alt="" width="256" height="256" \/>/,
-    'на прелоадинге — большое лого');
-  // Никаких обёрток и слоёв блика: герб лежит на кадре сам, без подсветок.
-  assert.doesNotMatch(html, /preloader-logo-wrap|preloader-logo-glow|preloader-logo-sheen|preloader-logo-edge/,
-    'слоёв блика вокруг лого нет');
-  // Прогресс-бар как «явная» имитация загрузки убран целиком.
-  assert.doesNotMatch(html, /preloader-bar|preloader-progress/, 'фолзового прогресс-бара нет');
-
-  // Текст — полностью, все три строки живут в разметке.
-  assert.match(html, /<div class="preloader-brand">PRICELEX<\/div>/, 'название');
-  assert.match(html, /<div class="preloader-tag">Private Crypto Brokerage<\/div>/, 'девис');
-  assert.match(html, /<div class="preloader-est">Since 2025<\/div>/, 'строка «since 2025»');
-
-  // И все три строки видимы: прежний iOS-слой прятал «est.» через display:none.
-  assert.doesNotMatch(iosCss, /\.preloader-est \{[^}]*display: none/, 'строка года не прячется');
+  assert.match(html, /class="preloader-wordmark" src="\/img\/logo-full\.png"/);
+  assert.match(html, /alt="PRICELEX — Since 2025" width="1200" height="561"/);
+  assert.match(html, /<div class="preloader-tag">Private Crypto Brokerage<\/div>/);
+  assert.doesNotMatch(html, /preloader-logo-wrap|preloader-logo-sheen|preloader-bar|preloader-progress/);
+  assert.match(pub('glass.css'), /\.preloader-inner \{[^}]*animation: none;/);
+  assert.doesNotMatch(html, /class="preloader-brand"|class="preloader-est"/,
+    'полное название и год уже внутри логотипа, не дублируются');
 });
 
 test('инфографика не соприкасается с буквами: зазор задан явно и хранится фикс-слоем', () => {
@@ -156,7 +148,7 @@ test('тактильный отклик: толчок на старте и от�
 test('кадр держится дольше и не ждёт дольше страховочного таймаута', () => {
   const m = appJs.match(/const minDuration = (\d+);/);
   assert.ok(m, 'минимальная длительность прелоадинга задана в app.js');
-  assert.ok(Number(m[1]) >= 3000, `кадр держится не меньше 3 с: ${m[1]} мс`);
+  assert.ok(Number(m[1]) >= 5200, `кадр держится не меньше 5.2 с: ${m[1]} мс`);
   assert.match(appJs, /const preloaderFallback = setTimeout\(\(\) => hidePreloader\(\), 8000\);/,
     'страховочный таймаут на случай медленного init остался');
 });
@@ -185,4 +177,18 @@ test('ошибка загрузки скрывает прелоадер без �
   await tick(); await tick(); await tick();
   assert.ok(env.window.document.getElementById('preloader').classList.contains('done'), 'прелоадер снят');
   assert.deepEqual(env.impacts, [], 'сбой не отзывается как готовность');
+});
+
+
+test('браузер: готовый интерфейс остаётся за логотипом до конца 5.2-секундной паузы', async (t) => {
+  const env = boot({ browser: true });
+  t.after(() => env.dom.window.close());
+  await tick(); await tick();
+  const pre = env.window.document.getElementById('preloader');
+  assert.equal(pre.classList.contains('done'), false);
+  const hold = [...env.timers.values()].find(({ ms }) => ms > 4800 && ms <= 5200);
+  assert.ok(hold, 'оставшаяся пауза поставлена даже при быстром API');
+  hold.fn();
+  assert.equal(pre.classList.contains('done'), true);
+  assert.equal(pre.getAttribute('aria-hidden'), 'true');
 });
