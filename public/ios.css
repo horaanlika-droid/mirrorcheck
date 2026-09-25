@@ -7,9 +7,11 @@
 :root {
   --bg-1: #080d11;
   --bg-2: #0c1216;
-  --surface: #151b20;      /* карточка / grouped-cell */
-  --surface-2: #1d242a;    /* поле, вложенная плашка */
-  --surface-3: #262e35;
+  /* Поверхности полупрозрачны: сквозь карточки и поля проступает фоновая
+     гравюра, интерфейс читается слоями, а не наклейками на чёрном. */
+  --surface: rgba(21, 27, 32, 0.78);   /* карточка / grouped-cell */
+  --surface-2: rgba(29, 36, 42, 0.72); /* поле, вложенная плашка */
+  --surface-3: rgba(38, 46, 53, 0.82);
   --ink: #f2f1ee;
   --txt-2: #a6adb2;
   --mut: #7a8388;
@@ -20,7 +22,7 @@
   --tint-fill: #c9a87e;    /* сплошные заливки: главная кнопка, шаги, свои сообщения */
   --tint-fill-ink: #1e160c;
   --gram: #a9cbdc;
-  --sep: rgba(var(--line-rgb), 0.09);
+  --sep: rgba(var(--line-rgb), 0.06);
   --ok: #7fb09b;
   --danger: #cf8a8a;
   --r-card: 16px;
@@ -34,8 +36,59 @@
 html, body { background: var(--bg-1); }
 body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoothing: antialiased; }
 
-/* Никакого фона, свечений и анимированных аур. */
-.bg, .bg-glow, .bg-img, .bg-grid, .bg-veil { display: none !important; animation: none !important; }
+/* ---------- Фон: инверсная гравюра доллара в нескольких планах ----------
+   Скан купюры (исходник IMG_1211) подготовлен в инверсии с раздавленными
+   тенями: бумага уходит в чёрный, штрихи гравюры светятся — на графите это
+   выглядит как свет, а не как наклейка. Макро глаза (IMG_1210) — дальний,
+   расфокусированный план. Три слоя различаются величиной, поворотом и
+   прозрачностью; края каждого плана растворяет радиальная маска, поэтому
+   прямоугольник картинки не читается. Поверх — вуаль для читаемости.
+   Слои статичны: без анимаций и аур, как и весь iOS-слой. */
+.bg, .bg-img, .bg-grid, .bg-glow, .bg-veil { display: block !important; }
+/* z-index: -1 — гравюра лежит под контентом, но над фоном страницы: вуаль
+   не затемняет карточки, а проступает сквозь полупрозрачные поверхности. */
+.bg { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+.bg-img, .bg-grid, .bg-glow {
+  position: absolute; inset: -12%;
+  background-repeat: no-repeat;
+  animation: none !important;
+}
+/* Ближний план: портрет Франклина справа сверху, крупно. */
+.bg-img {
+  background-image: url('/img/dollar-scan.jpg');
+  background-size: 135% auto; background-position: 82% -4%;
+  transform: rotate(-10deg);
+  opacity: .08;
+  -webkit-mask-image: radial-gradient(72% 66% at 68% 24%, #000 32%, transparent 80%);
+          mask-image: radial-gradient(72% 66% at 68% 24%, #000 32%, transparent 80%);
+}
+/* Средний план: та же купюра мельче, зеркально и с другим поворотом — слева внизу. */
+.bg-grid {
+  background-image: url('/img/dollar-scan.jpg');
+  background-size: 92% auto; background-position: 4% 98%;
+  transform: rotate(7deg) scaleX(-1);
+  opacity: .05;
+  -webkit-mask-image: radial-gradient(60% 55% at 26% 80%, #000 28%, transparent 78%);
+          mask-image: radial-gradient(60% 55% at 26% 80%, #000 28%, transparent 78%);
+}
+/* Дальний план: макро глаза, очень крупно и размыто — глубина резкости. */
+.bg-glow {
+  background-image: url('/img/dollar-eye.jpg');
+  background-size: 200% auto; background-position: 16% 44%;
+  transform: rotate(-8deg);
+  filter: blur(3px);
+  opacity: .06;
+  -webkit-mask-image: radial-gradient(58% 52% at 34% 50%, #000 26%, transparent 76%);
+          mask-image: radial-gradient(58% 52% at 34% 50%, #000 26%, transparent 76%);
+}
+/* Вуаль: гасит гравюру под шапкой и таб-баром, виньетка по кромкам. */
+.bg-veil {
+  position: absolute; inset: 0; animation: none !important;
+  background:
+    linear-gradient(180deg, rgba(var(--bg-rgb), .88) 0%, rgba(var(--bg-rgb), 0) 16%,
+                    rgba(var(--bg-rgb), 0) 74%, rgba(var(--bg-rgb), .9) 100%),
+    radial-gradient(130% 95% at 50% 42%, rgba(var(--bg-rgb), 0) 52%, rgba(var(--bg-rgb), .5) 100%);
+}
 *::before, *::after { animation-name: none; }
 
 /* ---------- Прелоадер ---------- */
@@ -153,7 +206,7 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 .hdr {
   margin: 0 -16px; padding: calc(10px + env(safe-area-inset-top)) 16px 8px;
   min-height: calc(52px + env(safe-area-inset-top));
-  background: var(--bg-1); border: 0; box-shadow: none;
+  background: rgba(var(--bg-rgb), 0.86); border: 0; box-shadow: none;
 }
 .hdr-home { min-height: 40px; }
 .hdr-logo-img { width: 30px; height: 30px; border: 0; border-radius: 0; box-shadow: none; }
@@ -425,6 +478,25 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 .rv-cta-t { font-size: 14px; }
 .rv-item { padding: 14px; }
 .rv-av { border: 0; background: var(--surface-3); font-size: 13px; }
+
+/* Ответ площадки на отзыв — плоский inset-блок в языке iOS-слоя:
+   без градиентной плашки и боковой рамки прежнего amber-слоя. */
+.rv-reply {
+  margin-top: 12px; padding: 12px 14px;
+  border: 0; border-radius: var(--r-ctl);
+  background: var(--surface-2);
+}
+.rv-reply-h {
+  font-family: var(--font-sans); font-size: 13px; font-weight: 600;
+  letter-spacing: 0; text-transform: none; color: var(--tint); margin-bottom: 6px;
+}
+.rv-reply-h span { color: var(--dim); font-size: 11px; letter-spacing: 0; text-transform: none; }
+.rv-reply p { font-size: 14px; line-height: 1.45; color: var(--txt-2); }
+
+/* Демо-оператор: карточка ответа площадки в списке отзывов. */
+.demo-reply .rv-who-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 14px; }
+.demo-reply-row { display: flex; gap: 8px; margin-top: 10px; }
+.demo-reply-row .btn-sm { flex: 1; min-width: 0; }
 .rv-who b { font-size: 15px; font-weight: 500; } .rv-who span { font-size: 12px; }
 .rv-body { font-size: 14px; line-height: 1.45; }
 
@@ -460,7 +532,7 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 .nav {
   padding: 6px 4px calc(4px + env(safe-area-inset-bottom));
   grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0;
-  border-top: 1px solid var(--sep); background: rgba(var(--bg-rgb), .92);
+  border-top: 1px solid var(--sep); background: rgba(var(--bg-rgb), .84);
   backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
 }
 .nav button { min-height: 48px; padding: 4px 0; gap: 3px; border-radius: 0; color: var(--mut); font-size: 10px; font-weight: 500; }
