@@ -35,6 +35,14 @@
 
   const $ = (s) => document.querySelector(s);
   const TERMINAL = ['completed', 'rejected', 'cancelled'];
+  // Штаб-квартира. Адрес — часть юридических данных, поэтому он живёт константой
+  // в коде, а не настройкой: разъехаться с тем, что написано в правилах, дороже,
+  // чем неудобство менять его через админ-меню. Показывается в контактах «Инфо»
+  // и повторяется в общих положениях; ссылка ведёт на карту по нормализованному
+  // запросу (латиницей), а не по тому тексту, что видит человек.
+  const HQ_ADDRESS = 'Street 11B 243/3 — Umm Al Sheif — Dubai — ОАЭ';
+  const HQ_MAPS = 'https://www.google.com/maps/search/?api=1&query='
+    + encodeURIComponent('Street 11B 243/3, Umm Al Sheif, Dubai, United Arab Emirates');
   const S = {
     settings: null, me: null, orders: [], order: null, tab: 'exchange',
     returnTab: 'exchange', orderOpen: false,
@@ -1557,7 +1565,6 @@
       <button class="profile-logout" id="profileLogout" type="button">Выйти из приложения</button>
       <div class="profile-foot">
         <div class="profile-foot-mark">PRICELEX</div>
-        <div class="profile-foot-tag">Тихие деньги говорят громче всех.</div>
       </div>
     `;
 
@@ -1758,15 +1765,36 @@
         <div class="sp-art" style="background-image:url('/img/speech.jpg')" aria-hidden="true"></div>
         <div class="sp-body">
           <div class="sp-mic"><span class="dot"></span>Слово PRICELEX</div>
-          <p class="sp-line lead">PRICELEX — это не просто обменник.</p>
-          <p class="sp-line">Это экосистема, где каждый сотрудник прошёл непростой путь, но на этом пути он овладевал навыками в мире криптовалют.</p>
-          <p class="sp-line">И теперь мы экономим ваше время и нервы.</p>
-          <p class="sp-line big">Мы не обменник. <em>Мы агентство брокеров</em> — проверенная и быстрая команда профессионалов.</p>
-          <p class="sp-line">Да, иногда приходится подождать.</p>
-          <p class="sp-line big">Но мы знаем, кто мы. <em>Мы отвечаем за качество репутацией.</em></p>
-          <div class="sp-sign">PRICELEX</div>
+          <p class="sp-line lead">PRICELEX — private crypto brokerage.</p>
+          <p class="sp-line">Здесь брокер работает в рамках <em>своего депозита</em> и ведёт операции на собственный капитал.</p>
+          <p class="sp-line">Не нужно ждать начальника. Не нужно собирать десять согласований. Не нужно объяснять человеку, который вчера узнал, что такое USDT, почему возможность есть именно сейчас.</p>
+          <p class="sp-line big">Ты увидел возможность — <em>ты должен быть способен действовать.</em></p>
+          <p class="sp-line">Здесь деньги — это инструмент. А главное преимущество — скорость, опыт и понимание рынка.</p>
+          <p class="sp-line">Нам не нужен тот, кто хочет научиться. Нам нужен тот, кто уже умеет: держит несколько источников одновременно, знает рынок, понимает ликвидность и считает риск до того, как нажмёт кнопку.</p>
+          <p class="sp-line">И не теряется, когда возможность живёт несколько минут.</p>
+          <p class="sp-line big">Если ты такой человек — <em>PRICELEX тебе подходит.</em></p>
+          <p class="sp-line">Не потому что мы обещаем лёгкие деньги. А потому что мы создаём среду, где твой опыт и твой капитал можно использовать профессионально.</p>
+          <p class="sp-line big">Отдельно — к вам, к клиенту.</p>
+          <p class="sp-line">Вам не нужно ничего доказывать и никуда спешить. Сделку ведёт живой брокер, сумма к оплате известна заранее, а на каждом шаге остаётся след: заявка, чек, ссылка на транзакцию.</p>
+          <p class="sp-line">Мы отвечаем за качество <em>репутацией и гарантийным депозитом</em> — и просим вас держать свои ключи при себе. Как именно это устроено — в блоке «Безопасность» ниже.</p>
+          <p class="sp-line big">PRICELEX. <em>Private crypto brokerage.</em></p>
+          <div class="sp-sign">since 2025</div>
         </div>
       </section>
+      <div class="card">
+        <div class="card-title">Безопасность</div>
+        <p class="why-pair-lead">Это не страшилки, а порядок, при котором ваши средства не зависят от чьей-то доброты.</p>
+        <div class="feat">
+          <div class="f"><span class="i">◆</span>Реквизиты сообщает только брокер внутри вашей заявки. Мы не пишем первыми в личку, не присылаем «резервный» адрес и не просим перевести «для проверки».</div>
+          <div class="f"><span class="i">◆</span>PRICELEX не спрашивает seed-фразу, приватный ключ, пароль от кошелька и код из SMS. Кто бы ни представился командой и что бы ни обещал — это подделка.</div>
+          <div class="f"><span class="i">◆</span>Адрес получения сверяйте сами: первые и последние шесть символов. Адрес поменялся в переписке — стоп, и только поддержка в приложении.</div>
+          <div class="f"><span class="i">◆</span>Средства по активной заявке заморожены на гарантийном счёте: ни брокер, ни третьи лица их не тронут. Общую ответственность держит гарантийный депозит брокеров — ${depositInlineHtml()}.</div>
+          <div class="f"><span class="i">◆</span>Спор решает администрация по фактам — чек, история заявки и ссылка на транзакцию, а не слова. Решение окончательное, правила платформы открыты ниже.</div>
+          <div class="f"><span class="i">◆</span>Официальные адреса только эти: <a class="inline-link" href="${esc(s.channel)}" target="_blank" rel="noopener">канал</a> и <a class="inline-link" href="${esc(s.chat)}" target="_blank" rel="noopener">чат</a>${supportHandle() ? `, поддержка — ${esc(supportHandle())}` : ''}. Домен или хэндл с одной лишней буквой — не мы.</div>
+          <div class="f"><span class="i">◆</span>Никаких обещаний доходности и «разгона баланса»: мы про обмен и сопровождение сделки, инвестиционных рекомендаций здесь нет.</div>
+        </div>
+        <p class="disclaimer">Платформа не является банком, платёжной системой или оператором электронных денежных средств.</p>
+      </div>
       <div class="card">
         <div class="card-title">Почему PRICELEX</div>
         <div class="feat">
@@ -1778,7 +1806,7 @@
         </div>
       </div>
       <div class="card why-pair">
-        <div class="kicker gold">est. 2024</div>
+        <div class="kicker gold">since 2025</div>
         <div class="card-title">Почему только BTC и GRAM</div>
         <p class="why-pair-lead">Две пары. Самые точные рыночные отклики. Прямой путь в любую валюту.</p>
         <p class="why-pair-body">Bitcoin и GRAM — то, чем рынок дышит каждый день: глубина, ликвидность, привычная конвертация. Мы не держим витрину из десятков тикеров — ведём две пары, которые действительно обмениваются чисто и быстро.</p>
@@ -1799,6 +1827,7 @@
           ${supportHandle() ? `<a class="contact" href="${esc(supportUrl())}" target="_blank" rel="noopener"><span class="ci">${ICONS.chat}</span><span>Поддержка<small>${esc(supportHandle())} · отвечаем лично</small></span></a>` : ''}
           <a class="contact" href="${esc(s.channel)}" target="_blank" rel="noopener"><span class="ci">📣</span><span>Официальный канал<small>новости и курсы</small></span></a>
           <a class="contact" href="${esc(s.chat)}" target="_blank" rel="noopener"><span class="ci">💬</span><span>Чат PRICELEX<small>общение с клиентами</small></span></a>
+          <a class="contact" href="${HQ_MAPS}" target="_blank" rel="noopener"><span class="ci">📍</span><span>Штаб-квартира<small>${esc(HQ_ADDRESS)}</small></span></a>
         </div>
         <button class="btn btn-ghost" style="margin-top:12px" id="goSupport">${ICONS.chat}<span>Написать в поддержку из приложения</span></button>
       </div>
@@ -1807,7 +1836,8 @@
           <summary><span class="card-title" style="margin:0">Правила платформы</span><span class="rules-toggle">${ICONS.info}<span>Читать</span></span></summary>
           <div class="rules-body">
             <div class="rule"><div class="r-n">1. Общие положения</div>
-              <p>PRICELEX (далее — «Платформа») выступает посредником, предоставляющим Пользователю доступ к профессиональному опыту независимых брокеров на условиях временной аренды их экспертизы. Брокер сопровождает сделку Пользователя так же, как Пользователь помогает своей бабушке установить мессенджер: объясняет шаги, проверяет реквизиты и доводит операцию до результата. Платформа не является банком, платёжной системой или оператором электронных денежных средств.</p></div>
+              <p>PRICELEX (далее — «Платформа») выступает посредником, предоставляющим Пользователю доступ к профессиональному опыту независимых брокеров на условиях временной аренды их экспертизы. Брокер сопровождает сделку Пользователя так же, как Пользователь помогает своей бабушке установить мессенджер: объясняет шаги, проверяет реквизиты и доводит операцию до результата. Платформа не является банком, платёжной системой или оператором электронных денежных средств.</p>
+              <p>1.1. Деятельность Платформа ведёт из штаб-квартиры: ${esc(HQ_ADDRESS)} — этот же адрес приведён в контактах приложения. Обращения, вопросы и споры принимаются только через поддержку внутри приложения: вне его Платформа с Пользователем не общается и ничего не запрашивает.</p></div>
             <div class="rule"><div class="r-n">2. Заявки и сопровождение</div>
               <p>2.1. Сделка оформляется Заявкой, в которой Пользователь указывает сумму, валюту и адрес получения. Заявку сопровождает Брокер, принявший её в работу через панель в официальном боте Платформы.</p>
               <p>2.2. Брокер действует от своего имени как независимый исполнитель. Платформа обеспечивает инфраструктуру, контроль исполнения и разрешение споров.</p>
@@ -1834,7 +1864,7 @@
           </div>
         </details>
       </div>
-      <div class="signature">PRICELEX<span>private crypto brokerage · est. 2024</span></div>`;
+      <div class="signature">PRICELEX<span>private crypto brokerage · since 2025</span></div>`;
     const go = $('#goSupport');
     if (go) go.addEventListener('click', () => { haptic('light'); goTab('support'); });
   }
@@ -2313,17 +2343,13 @@
     window.addEventListener('resize', () => { if (S.tab === 'exchange') renderHero(); if (S.tab === 'history') renderHistory(); });
   }
 
-  /* ---------- вибрация на прелоадинге ---------- */
-  // Тактильный рисунок загрузки: мягкий толчок на старте, короткий импульс в
-  // момент, когда блик проезжает по середине герба, и лёгкий отклик, когда
-  // приложение готово. Длительность цикла и доля цикла совпадают с бликом
-  // (@keyframes preloader-shine в ios.css: 2.6 s, проход занимает 70 % цикла
-  // и разогнан cubic-bezier(.42, 0, .2, 1), поэтому ядро луча оказывается на
-  // середине герба около четверти цикла — 0.7 × 0.357 ≈ 0.25).
+  /* ---------- отклик на прелоадинге ---------- */
+  // Прелоадер статичный, поэтому и тактильный рисунок короткий: мягкий толчок
+  // в момент, когда приложение просыпается, и лёгкий отклик на готовности.
+  // Импульсы «под луч» были привязаны к проходу блика по гербу — вместе с
+  // анимацией блика они убраны, отмечать тактильно больше нечего.
   // В Telegram — HapticFeedback, в обычном браузере — navigator.vibrate;
-  // при prefers-reduced-motion рисунок молчит.
-  const SHINE_MS = 2600;
-  const SHINE_PEAK = 0.25;
+  // при prefers-reduced-motion отклика нет вовсе.
   const preloaderHaptics = [];
   function reducedMotion() {
     try {
@@ -2332,10 +2358,7 @@
   }
   function startPreloaderHaptics() {
     if (reducedMotion()) return;
-    const beat = (ms, kind) => preloaderHaptics.push(setTimeout(() => haptic(kind), ms));
-    beat(140, 'soft');                                      // приложение проснулось
-    beat(Math.round(SHINE_MS * SHINE_PEAK), 'light');       // луч прошёл по гербу
-    beat(Math.round(SHINE_MS * (1 + SHINE_PEAK)), 'light'); // второй проход луча
+    preloaderHaptics.push(setTimeout(() => haptic('soft'), 140)); // приложение проснулось
   }
   function stopPreloaderHaptics() {
     while (preloaderHaptics.length) clearTimeout(preloaderHaptics.pop());
@@ -2405,8 +2428,11 @@
       clearTimeout(preloaderFallback);
       hidePreloader();
     } else {
+      // Кадр держится подольше: большое лого и полный текст должны успеть
+      // прочитаться, а не мелькнуть. Прогресс здесь не изображается —
+      // прелоадер уходит целиком, когда данные готовы.
       const elapsed = Date.now() - initStartTime;
-      const minDuration = 2400; // делаем прелоадинг дольше
+      const minDuration = 3400;
       const remaining = Math.max(0, minDuration - elapsed);
       setTimeout(() => {
         clearTimeout(preloaderFallback);

@@ -92,110 +92,20 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 *::before, *::after { animation-name: none; }
 
 /* ---------- Прелоадер ---------- */
+/* Спокойный кадр: большое лого, полный текст (PRICELEX · Private Crypto
+   Brokerage · Since 2025) и никакого «загрузочного» движения — слоёв блика и
+   прогресс-бара больше нет, герб статичен. iOS-шкала держит пропорцию монограммы
+   и воздух между графикой и буквами: лого не может стоять вплотную к набору. */
 .preloader { background: var(--bg-1); }
-/* Слои блика живут внутри обёртки герба: isolate держит их screen-смешивание
-   внутри группы, поэтому свет ложится только на сам герб и его ореол. */
-.preloader-logo-wrap { position: relative; display: inline-block; isolation: isolate; }
+.preloader-logo { display: block; width: 214px; height: auto; margin-bottom: 40px; filter: none; }
+.preloader-brand { font-size: 18px; font-weight: 600; letter-spacing: .34em; color: var(--ink); }
+.preloader-tag { margin-top: 14px; color: var(--mut); font-family: var(--font-sans); font-size: 11px; letter-spacing: .14em; }
+.preloader-est { margin-top: 10px; color: var(--mut); font-family: var(--font-mono); font-size: 10px; letter-spacing: .26em; text-transform: uppercase; }
 
-/* Световая полоса: узкое горячее ядро, широкие мягкие плечи, тёплый шампанский
-   оттенок по краям ядра. Одна геометрия на все слои — полоса проходит по ним
-   синхронно, как один луч по металлу. */
-.preloader-logo-glow i,
-.preloader-logo-sheen,
-.preloader-logo-edge {
-  position: absolute; inset: 0; display: block; pointer-events: none;
-  background-repeat: no-repeat;
-  background-size: 300% 100%;
-  background-position: 0% 0;
-  animation: preloader-shine 2.6s cubic-bezier(.42, 0, .2, 1) infinite;
-}
-@keyframes preloader-shine {
-  0% { background-position: 0% 0; }
-  70%, 100% { background-position: 100% 0; }
-}
-
-/* Ореол: размытая копия силуэта лежит ЗА гербом — снаружи виден только свет,
-   который вышел за кромку. Даёт эффект подсветки из-за границы логотипа. */
-.preloader-logo-glow {
-  position: absolute; inset: 0; z-index: 0; pointer-events: none;
-  filter: blur(9px);
-  mix-blend-mode: screen;
-  opacity: .7;
-}
-.preloader-logo-glow i {
-  background-image: linear-gradient(105deg,
-    transparent 26%,
-    rgba(201, 168, 126, .30) 38%,
-    rgba(255, 232, 200, .80) 48%,
-    rgba(255, 246, 232, .95) 52%,
-    rgba(255, 232, 200, .80) 56%,
-    rgba(201, 168, 126, .30) 68%,
-    transparent 80%);
-  -webkit-mask: url('/img/logo-mark.png') center / contain no-repeat;
-  mask: url('/img/logo-mark.png') center / contain no-repeat;
-}
-
-/* Сам герб — над ореолом: перекрывает его середину, оставляя снаружи свет. */
-.preloader-logo {
-  position: relative; z-index: 1;
-  display: block; width: 120px; height: auto; margin-bottom: 18px; filter: none;
-}
-
-/* Мягкий внутренний отсвет: металл под лучом светлеет целиком, но слабо —
-   основной акцент остаётся на кромке. */
-.preloader-logo-sheen {
-  z-index: 2;
-  background-image: linear-gradient(105deg,
-    transparent 30%,
-    rgba(255, 236, 208, .16) 42%,
-    rgba(255, 244, 228, .34) 50%,
-    rgba(255, 236, 208, .16) 58%,
-    transparent 70%);
-  -webkit-mask: url('/img/logo-mark.png') center / contain no-repeat;
-  mask: url('/img/logo-mark.png') center / contain no-repeat;
-  mix-blend-mode: screen;
-}
-
-/* Кромка: маска-кольцо — две копии силуэта, внешняя чуть больше герба,
-   внутренняя чуть меньше, и mask-composite: exclude вычитает одну из другой.
-   Слой сам на 6% шире логотипа (inset: -3%), поэтому в долях слоя это
-   99% и 92.5% — то есть 105% и 98% от самого герба: кольцо ложится на контур,
-   слегка заходит внутрь и ощутимо выходит наружу, не срезаясь границей лого. */
-.preloader-logo-edge {
-  inset: -3%; z-index: 3;
-  background-image: linear-gradient(105deg,
-    transparent 30%,
-    rgba(201, 168, 126, .35) 40%,
-    rgba(255, 240, 214, .85) 47%,
-    rgba(255, 253, 248, 1) 50%,
-    rgba(255, 240, 214, .85) 53%,
-    rgba(201, 168, 126, .35) 60%,
-    transparent 70%);
-  -webkit-mask-image: url('/img/logo-mark.png'), url('/img/logo-mark.png');
-  -webkit-mask-size: 99% 99%, 92.5% 92.5%;
-  -webkit-mask-position: center, center;
-  -webkit-mask-repeat: no-repeat, no-repeat;
-  -webkit-mask-composite: xor;
-  mask-image: url('/img/logo-mark.png'), url('/img/logo-mark.png');
-  mask-size: 99% 99%, 92.5% 92.5%;
-  mask-position: center, center;
-  mask-repeat: no-repeat, no-repeat;
-  mask-composite: exclude;
-  mix-blend-mode: screen;
-}
-.preloader-brand { font-size: 17px; font-weight: 600; letter-spacing: .3em; color: var(--ink); }
-.preloader-tag { color: var(--mut); font-family: var(--font-sans); font-size: 11px; letter-spacing: .12em; }
-.preloader-est { display: none; }
-.preloader-bar { width: 96px; height: 3px; margin-top: 26px; background: rgba(var(--line-rgb), .1); }
-.preloader-progress { background: var(--tint-fill); }
-
-/* Без движения: луч замирает на середине герба статичной подсветкой. */
+/* Без движения: остаётся только прозрачность — появление и уход без анимаций. */
 @media (prefers-reduced-motion: reduce) {
   .preloader-inner { animation: none; }
-  .preloader-logo-glow i,
-  .preloader-logo-sheen,
-  .preloader-logo-edge { animation: none; background-position: 50% 0; }
-  .preloader-progress { animation: none; width: 100%; }
+  .preloader { transition: none; }
 }
 
 /* ---------- Каркас ---------- */
@@ -458,7 +368,6 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 .profile-logout { margin-top: 12px; padding: 14px 16px; border: 0; border-radius: var(--r-card); background: var(--surface); color: var(--danger); text-align: center; font-size: 16px; }
 .profile-foot { margin-top: 24px; }
 .profile-foot-mark { font-size: 12px; letter-spacing: .28em; color: var(--mut); }
-.profile-foot-tag { font-size: 12px; }
 
 /* ---------- Отзывы ---------- */
 .editorial, .rv-hero { padding: 16px; }
@@ -591,7 +500,7 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 .about, .rule p, .sp-line, .rv-body, .rv-reply p, .step, .feat .f, .note,
 .stage-sub, .why-pair-body, .why-pair-lead, .disclaimer, .signal .s-s,
 .f-hint, .f-err, .cap-label, .ref-link, .chart-note, .about p, .empty,
-.chat-empty, .profile-foot-tag, .dep-line, .announce, .syncbar,
+.chat-empty, .dep-line, .announce, .syncbar,
 .profile-row-copy small, .broker-meta, .rv-who span, .h-sub, .metric-sub,
 .sp-sign, .stage-sub, .req-box, .tx-link, .msg-bubble, .rv-dist-percent,
 .profile-member, .profile-logout, .h-main, .h-top, .ref-stat, .contact,

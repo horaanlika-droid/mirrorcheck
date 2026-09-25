@@ -160,7 +160,7 @@ test('info explains why only BTC and GRAM; preloader dismisses after init', asyn
   const a = await app(t);
   const info = a.document.querySelector('#view-info').textContent;
   assert.match(info, /Почему только BTC и GRAM/);
-  assert.match(info, /est\. 2024/i);
+  assert.match(info, /since 2025/i);
   assert.match(info, /Bitcoin/);
   const pre = a.document.querySelector('#preloader');
   assert.ok(!pre || pre.classList.contains('done'));
