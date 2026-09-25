@@ -600,6 +600,21 @@ function settingsKb(s) {
     .text('↩️ Назад', 'm:home');
 }
 
+const fmtUsdRub = (n) => Number(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+
+// «🛰 Источники курса на связи: 10 из 12» — видно, если биржи начали отваливаться.
+function ratesHealthLine() {
+  const list = rates.status().sources;
+  const tried = list.filter((x) => x.tried);
+  if (!tried.length) return '';
+  const down = tried.filter((x) => !x.ok).map((x) => `${x.name} (${x.error})`);
+  return (
+    `🛰 Источники курса на связи: <b>${tried.length - down.length} из ${list.length}</b>` +
+    (down.length ? ` · на паузе: ${esc(down.join(', '))}` : '') +
+    '\n'
+  );
+}
+
 function settingsText(s) {
   const base = s.baseRateBTC
     ? `₿ ${fmtRub(s.baseRateBTC)} · G ${fmtRub(s.baseRateGRAM)}`
@@ -608,6 +623,8 @@ function settingsText(s) {
     `⚙️ <b>Настройки</b> (применяются мгновенно)\n\n` +
     `📊 Официальный курс (авто): <b>${base}</b>\n` +
     (s.rateUpdatedAt ? `Обновлён: ${fmtDate(s.rateUpdatedAt)} (${esc(s.rateSource || '?')})\n` : '') +
+    (s.usdRub ? `💱 Курс доллара: ${fmtUsdRub(s.usdRub)} (${esc(s.usdRubSource || '?')}${s.usdRubAt ? ', ' + fmtDate(s.usdRubAt) : ''})\n` : '') +
+    ratesHealthLine() +
     `💰 Комиссия: <b>${s.feePercent ?? 0}%</b> поверх официального\n` +
     `💵 Курс для клиентов: <b>₿ ${fmtRub(s.rateBTC)} · G ${fmtRub(s.rateGRAM)}</b>\n` +
     `Лимиты: ${fmtRub(s.minRub)} — ${fmtRub(s.maxRub)}\n` +
@@ -1654,9 +1671,18 @@ function register() {
     if (d === 's:refresh') {
       await ctx.answerCallbackQuery({ text: 'Обновляю курс…' }).catch(() => {});
       try {
-        const { source } = await rates.refreshRates();
+        const { official } = await rates.refreshRates();
         await settingsMenu(ctx, true);
-        return ctx.reply(`✅ Официальный курс обновлён (источник: ${source}). Курсы для клиентов пересчитаны с комиссией.`, { reply_markup: homeKb() });
+        const down = official.failed.length
+          ? `\n⏸ Не ответили: ${official.failed.map((f) => `${f.name} (${f.error})`).join(', ')} — повторим автоматически.`
+          : '';
+        return ctx.reply(
+          `✅ Официальный курс обновлён: ₿ ${fmtRub(official.btc)} · G ${fmtRub(official.gram)}\n` +
+            `Медиана по ${official.sources.length} ист.: ${official.sources.join(', ')}\n` +
+            `Курс доллара: ${fmtUsdRub(official.usdRub)} (${official.usdRubSource})\n` +
+            `Курсы для клиентов пересчитаны с комиссией.${down}`,
+          { reply_markup: homeKb() }
+        );
       } catch (e) {
         return ctx.reply(`⚠️ Не удалось обновить курс: ${e.message}. Действуют прежние курсы.`, { reply_markup: homeKb() });
       }
