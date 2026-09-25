@@ -51,6 +51,11 @@ const defaults = () => ({
     brokerDepositUsd: 20, // возвратный депозит стажёра, в $ (для текстов)
     brokerDepositBtc: 0.0002, // эквивалент депозита в BTC
     brokerDepositAddress: '', // куда брокер вносит депозит (задаёт админ)
+    // Разовый сбор за подключение брокера: процент от суммы депозита, но не больше
+    // лимита. Сбор считается сверх депозита и не возвращается — он не входит
+    // в возвратную сумму и всегда показывается брокеру отдельной строкой.
+    brokerDepositFeePercent: 10,
+    brokerDepositFeeMaxBtc: 0.0005,
     internMaxRub: 5000, // стажёр работает только с заявками до этой суммы, ₽
     internDays: 7, // длительность стажировки в днях
     adminBrokers: DEFAULT_ADMIN_BROKERS,
@@ -153,11 +158,24 @@ function load() {
       if (bs.brokerDepositUsd === undefined) bs.brokerDepositUsd = 20;
       if (bs.brokerDepositBtc === undefined) bs.brokerDepositBtc = 0.0002;
       if (bs.brokerDepositAddress === undefined) bs.brokerDepositAddress = '';
+      if (bs.brokerDepositFeePercent === undefined) bs.brokerDepositFeePercent = 10;
+      if (bs.brokerDepositFeeMaxBtc === undefined) bs.brokerDepositFeeMaxBtc = 0.0005;
       if (bs.internMaxRub === undefined) bs.internMaxRub = 5000;
       if (bs.internDays === undefined) bs.internDays = 7;
       if (!Array.isArray(bs.adminBrokers) || bs.adminBrokers.length === 0) bs.adminBrokers = DEFAULT_ADMIN_BROKERS;
       if (!db.brokerProfiles || typeof db.brokerProfiles !== 'object') db.brokerProfiles = {};
       if (!Array.isArray(db.brokerDeposits)) db.brokerDeposits = [];
+      for (const dep of db.brokerDeposits) {
+        // Заявки, созданные до появления сбора, шли ровно на сумму депозита.
+        if (dep.feeBtc === undefined) {
+          dep.feeBtc = 0;
+          dep.feePercent = 0;
+          dep.feeMaxBtc = 0;
+        }
+        dep.btc = Math.round((Number(dep.btc) || 0) * 1e8) / 1e8;
+        dep.feeBtc = Math.round((Number(dep.feeBtc) || 0) * 1e8) / 1e8;
+        if (dep.totalBtc === undefined || dep.totalBtc === null) dep.totalBtc = Math.round((dep.btc + dep.feeBtc) * 1e8) / 1e8;
+      }
       if (!Number.isFinite(db.depositSeq)) db.depositSeq = db.brokerDeposits.reduce((m, x) => Math.max(m, x.id || 0), 0) + 1;
       for (const o of db.orders || []) {
         if (o.broker === undefined) o.broker = null;
@@ -220,6 +238,12 @@ function publicSettings() {
     botUsername: s.botUsername,
     brokerMinPayoutBtc: s.brokerMinPayoutBtc,
     brokerSharePercent: s.brokerSharePercent,
+    brokerDepositUsd: s.brokerDepositUsd,
+    brokerDepositBtc: s.brokerDepositBtc,
+    brokerDepositFeePercent: s.brokerDepositFeePercent,
+    brokerDepositFeeMaxBtc: s.brokerDepositFeeMaxBtc,
+    internDays: s.internDays,
+    internMaxRub: s.internMaxRub,
     adminBrokers: (s.adminBrokers || DEFAULT_ADMIN_BROKERS).map((b) => ({
       login: b.login,
       name: b.name || b.login,
@@ -794,7 +818,7 @@ function brokerCanTake(login, rub) {
     return {
       ok: false,
       reason: 'deposit',
-      text: `Каждый может стать брокером, но торгует ровно на сумму своего депозита (например, положил $100 — торгуешь любой суммой до $100). Сначала внесите возвратный депозит $${s.brokerDepositUsd} (${s.brokerDepositBtc} BTC): он страхует клиентов — если выплата не пришла, мы компенсируем клиенту из депозита.`
+      text: `Каждый может стать брокером, но торгует ровно на сумму своего депозита (например, положил $100 — торгуешь любой суммой до $100). Сначала внесите возвратный депозит $${s.brokerDepositUsd} (${s.brokerDepositBtc} BTC) плюс разовый сбор за подключение: он страхует клиентов — если выплата не пришла, мы компенсируем клиенту из депозита.`
     };
   }
   const rateBTC = Number(s.rateBTC) || 10000000;
@@ -811,14 +835,41 @@ function brokerCanTake(login, rub) {
   return { ok: true };
 }
 
+/* ---------- сбор за подключение брокера ---------- */
+
+const roundBtc = (v) => Math.round((Number(v) || 0) * 1e8) / 1e8;
+
+// Сбор: percent от депозита, но не больше max. Считается от суммы депозита,
+// поэтому при базовом депозите 0.0002 BTC это 0.00002 BTC (10%).
+function brokerDepositFeeFor(btc) {
+  const s = db.settings;
+  const sum = roundBtc(btc);
+  const percent = Math.max(0, Number(s.brokerDepositFeePercent) || 0);
+  const cap = Math.max(0, Number(s.brokerDepositFeeMaxBtc) || 0);
+  if (!(sum > 0)) return 0;
+  const raw = (sum * percent) / 100;
+  return roundBtc(cap > 0 ? Math.min(raw, cap) : raw);
+}
+
+// Сколько брокер переводит «одним платежом»: депозит + сбор.
+const brokerDepositTotalBtc = (btc) => roundBtc(roundBtc(btc) + brokerDepositFeeFor(btc));
+
 function createBrokerDeposit(dep) {
+  const btc = roundBtc(dep.btc);
+  const feeBtc = dep.feeBtc != null ? roundBtc(dep.feeBtc) : brokerDepositFeeFor(btc);
   return mutate((d) => {
     const now = Date.now();
     const row = {
       id: d.depositSeq++,
       login: String(dep.login),
       tgId: String(dep.tgId),
-      btc: Math.round(Number(dep.btc) * 1e8) / 1e8,
+      btc,
+      // Сбор фиксируем в записи: ставку в настройках можно поменять позже,
+      // а у брокера уже названная сумма меняться не должна.
+      feeBtc,
+      feePercent: dep.feePercent != null ? dep.feePercent : Math.max(0, Number(d.settings.brokerDepositFeePercent) || 0),
+      feeMaxBtc: dep.feeMaxBtc != null ? dep.feeMaxBtc : Math.max(0, Number(d.settings.brokerDepositFeeMaxBtc) || 0),
+      totalBtc: roundBtc(btc + feeBtc),
       status: 'pending',
       createdAt: now,
       updatedAt: now,
@@ -918,6 +969,8 @@ module.exports = {
   getBrokerDeposit,
   updateBrokerDeposit,
   brokerDepositsByStatus,
+  brokerDepositFeeFor,
+  brokerDepositTotalBtc,
   brokerDepositRefundable,
   accrueBroker,
   brokerLedgerFor,
