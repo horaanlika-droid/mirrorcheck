@@ -215,6 +215,6 @@ test('order screen keeps the platform-wide broker deposit as a quiet line', asyn
   assert.match(line.textContent, /Сделка застрахована общим депозитом брокеров площадки/);
   assert.ok(!a.document.querySelector('#exOrder .stage-deposit'), 'депозит не выделен отдельной плашкой');
   const amount = line.querySelector('.dep-btc').textContent.trim();
-  assert.match(amount, /^0\.02\d{6}$/, 'начало суммы ровное, все знаки после него живые');
+  assert.match(amount, /^0\.0200\d{4}$/, 'начало суммы ровное (0.0200), живут только последние четыре знака');
   assert.notEqual(amount.slice(-4), '0000', 'хвост не оставлен ровными нулями');
 });

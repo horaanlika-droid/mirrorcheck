@@ -81,18 +81,23 @@
   /* ---------- общий гарантийный депозит брокеров ---------- */
   // Это депозит ВСЕХ брокеров площадки — общий фонд, которым страхуется каждая
   // сделка. Сумму задаёт оператор в боте («🤝 Брокеры → 🛡 Общий депозит клиентам»),
-  // сейчас это 0.02 BTC. Ровное начало суммы (0.02) показывается как есть, а знаки
-  // после него живут своей жизнью: фонд читается как настоящий, а не как
-  // нарисованная круглая цифра. Нигде это не подчёркивается: клиент видит только
-  // тихую строку-справку — мелким приглушённым текстом, без плашки, иконки и
-  // акцентного цвета.
+  // сейчас это 0.02 BTC. Сумма показывается как задана («0.0200…»), а живут только
+  // ПОСЛЕДНИЕ ЧЕТЫРЕ знака сатоши — и живут пошагово: каждое движение это плюс или
+  // минус несколько сатоши от предыдущего значения, а не прыжок к случайному числу.
+  // Ход детерминирован по времени: у всех клиентов и после перезагрузки цифра одна и
+  // та же, поэтому она не «скачет» между открытиями приложения. Нигде это не
+  // подчёркивается: клиент видит только тихую строку-справку — мелким приглушённым
+  // текстом, без плашки, иконки и акцентного цвета.
   const DEPOSIT_FALLBACK_BTC = 0.02;
-  // Живая часть — до 15 % от суммы фонда: этого хватает, чтобы после «0.02»
-  // шевелились ВСЕ шесть знаков, включая первый, и при этом сумма не выглядела
-  // выдуманной (фонд растёт, когда брокеры вносят депозит).
-  const DEPOSIT_FLOAT_FRACTION = 0.15;
-  const DEPOSIT_MARKET_BAND = 0.028; // ±2.8 % — суточный ход курса
-  const DEPOSIT_BREATHE_BAND = 0.0016; // ±0.16 % — дыхание, когда рынок стоит
+  const DEPOSIT_TAIL_DIGITS = 4; // живут только последние четыре знака (0000–9999 сатоши)
+  const DEPOSIT_TAIL_MOD = 10 ** DEPOSIT_TAIL_DIGITS;
+  const DEPOSIT_STEP_MS = 6000; // один шаг хода
+  const DEPOSIT_SEGMENT_STEPS = 600; // отрезок хода — час (600 шагов по 6 с)
+  const DEPOSIT_STEP_MAX = 12; // самый крупный шаг, сатоши; чаще всего шаг 1–3
+  const DEPOSIT_TAIL_EDGE = 700; // центр хода держится подальше от краёв 0000 и 9999
+  // Куда хвост дрейфует за часы: медленные волны с несоизмеримыми периодами (16 ч,
+  // 6.5 ч, 2.5 ч) — за сутки меняются все четыре знака, но не рывками.
+  const DEPOSIT_DRIFT_WAVES = [[0.5, 16 * 60, 0.6], [0.32, 6.5 * 60, 2.3], [0.18, 2.5 * 60, 4.4]];
 
   function depositCore() {
     const s = S.settings || {};
@@ -100,48 +105,80 @@
     return { btc, satoshi: Math.max(1, Math.round(btc * 1e8)) };
   }
 
-  // Курс суточной давности — опора для рыночного хода фонда.
-  function depositAnchorRate(now = Date.now()) {
-    const pts = (S.history.points || []).filter((p) => Number(p.btc) > 0);
-    if (pts.length < 2) return 0;
-    const target = now - 24 * 3600 * 1000;
-    const closest = pts.reduce((best, p) => (Math.abs(p.at - target) < Math.abs(best.at - target) ? p : best), pts[0]);
-    return Number(closest.btc) || 0;
+  // Детерминированный «бросок» для шага (отрезок, номер шага) → [0, 1): без состояния
+  // и без Math.random, чтобы одно и то же время всегда давало одну и ту же цифру.
+  function hash01(a, b) {
+    let h = (Math.imul(a | 0, 0x9E3779B1) ^ Math.imul((b | 0) + 0x7F4A7C15, 0x85EBCA77)) >>> 0;
+    h = Math.imul(h ^ (h >>> 15), 0x2C1B3C6D) >>> 0;
+    h = Math.imul(h ^ (h >>> 12), 0x297A2D39) >>> 0;
+    h ^= h >>> 15;
+    return (h >>> 0) / 4294967296;
+  }
+
+  // Один шаг хода: знак — монетка, размер — чаще 1–3 сатоши, изредка до DEPOSIT_STEP_MAX.
+  function depositStep(segment, index) {
+    const dir = hash01(segment, index) < 0.5 ? -1 : 1;
+    const size = 1 + Math.floor(Math.pow(hash01(segment, index + 0x40000), 3) * DEPOSIT_STEP_MAX);
+    return dir * size;
+  }
+
+  const depositSegmentSums = new Map();
+  function depositSegmentSum(segment) {
+    if (!depositSegmentSums.has(segment)) {
+      if (depositSegmentSums.size > 48) depositSegmentSums.clear();
+      let sum = 0;
+      for (let i = 1; i <= DEPOSIT_SEGMENT_STEPS; i += 1) sum += depositStep(segment, i);
+      depositSegmentSums.set(segment, sum);
+    }
+    return depositSegmentSums.get(segment);
+  }
+
+  // Опорная точка хвоста на границе отрезка: медленный дрейф внутри [lo, hi] с отступом
+  // от краёв, чтобы хвост не упирался в 0000 или 9999.
+  function depositDriftBase(segment, lo, hi) {
+    const ms = segment * DEPOSIT_SEGMENT_STEPS * DEPOSIT_STEP_MS;
+    const margin = Math.min(DEPOSIT_TAIL_EDGE, Math.floor((hi - lo) / 4));
+    return lo + margin + Math.round(organicWave(ms, DEPOSIT_DRIFT_WAVES) * (hi - lo - 2 * margin));
+  }
+
+  // Последние четыре знака в момент `now`: пошаговое блуждание, натянутое между
+  // опорными точками соседних отрезков (случайный «мост»). Каждый шаг — ± несколько
+  // сатоши, на стыке отрезков разрыва нет, а за часы хвост уходит вслед за дрейфом.
+  function depositTail(now, lo, hi) {
+    if (hi <= lo) return lo;
+    const step = Math.floor(now / DEPOSIT_STEP_MS);
+    const segment = Math.floor(step / DEPOSIT_SEGMENT_STEPS);
+    const k = step - segment * DEPOSIT_SEGMENT_STEPS; // 0 … DEPOSIT_SEGMENT_STEPS-1
+    let walked = 0;
+    for (let i = 1; i <= k; i += 1) walked += depositStep(segment, i);
+    const from = depositDriftBase(segment, lo, hi);
+    const to = depositDriftBase(segment + 1, lo, hi);
+    const t = k / DEPOSIT_SEGMENT_STEPS;
+    const value = walked - t * depositSegmentSum(segment) + from + t * (to - from);
+    return Math.max(lo, Math.min(hi, Math.round(value)));
+  }
+
+  // Сатоши → строка BTC с восемью знаками, без плавающей точки: «2003412» → «0.02003412».
+  function fmtSatoshi(sat) {
+    const n = Math.max(0, Math.round(Number(sat) || 0));
+    return `${Math.floor(n / 1e8)}.${String(n % 1e8).padStart(8, '0')}`;
   }
 
   function depositLive(now = Date.now()) {
-    const s = S.settings || {};
     const { satoshi: coreSat } = depositCore();
-    // Ровное начало суммы: «0.02». Плавающая часть — все знаки после него,
-    // вплоть до восьмого (последняя сатоши).
-    const coreText = (coreSat / 1e8).toFixed(8).replace(/0+$/, '').replace(/\.$/, '');
-    const decimals = (coreText.split('.')[1] || '').length;
-    const floatDigits = Math.max(1, 8 - decimals);
-    const span = Math.min(10 ** floatDigits - 1, Math.round(coreSat * DEPOSIT_FLOAT_FRACTION));
-
-    const cur = Number(s.rateBTC) || 0;
-    const anchor = depositAnchorRate(now);
-    const market = cur > 0 && anchor > 0
-      ? Math.max(-1, Math.min(1, (anchor - cur) / anchor)) * DEPOSIT_MARKET_BAND
-      : 0;
-    const breathe = DEPOSIT_BREATHE_BAND * (0.6 * wave(now, 7.3, 0.4) + 0.4 * wave(now, 2.9, 2.2));
-    const w = organicWave(now, [[0.5, 27, 0.6], [0.32, 9.3, 2.3], [0.18, 3.4, 4.4]]);
-    const float = Math.round(span * clamp01(0.06 + 0.88 * w + (market + breathe) * 8));
-    const tailSat = Math.max(1, Math.min(span, float));
-    const total = coreSat + tailSat;
-    return {
-      btc: total / 1e8,
-      satoshi: total,
-      coreText,
-      floatText: String(tailSat).padStart(floatDigits, '0'),
-      at: Number(s.rateUpdatedAt) || now,
-    };
+    // Голова суммы — всё, кроме последних четырёх знаков — стоит как задал оператор
+    // («0.0200»). Хвост живёт от заданного значения вверх, так что фонд никогда не
+    // показывается меньше настроенного.
+    const head = coreSat - (coreSat % DEPOSIT_TAIL_MOD);
+    const tail = depositTail(now, coreSat - head, DEPOSIT_TAIL_MOD - 1);
+    const total = head + tail;
+    return { btc: total / 1e8, satoshi: total, text: fmtSatoshi(total) };
   }
 
   // Сумма в том виде, в каком её читает клиент: одной цифрой одного цвета — деления
   // на «ровную» и «живую» часть снаружи не видно.
   function depositAmountHtml(dep = depositLive()) {
-    return esc(dep.coreText + dep.floatText);
+    return esc(dep.text);
   }
 
   // Тихое упоминание депозита: одна строка мелким приглушённым текстом, без плашки,
