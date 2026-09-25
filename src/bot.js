@@ -8,7 +8,28 @@ const receipts = require('./receipts');
 const { esc, fmtRub, fmtCrypto, fmtDate, fmtSize, parseNum, fmtMsk, parseMsk } = require('./util');
 
 let bot = null;
-const flows = new Map(); // adminId -> { type, orderId?, userId? }
+const flows = new Map(); // adminId -> { type, orderId?, userId?, at }
+const FLOW_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function setFlow(id, data) {
+  flows.set(id, { ...data, at: Date.now() });
+}
+function getFlow(id) {
+  const f = flows.get(id);
+  if (!f) return null;
+  if (Date.now() - (f.at || 0) > FLOW_TTL_MS) {
+    flows.delete(id);
+    return null;
+  }
+  return f;
+}
+function clearExpiredFlows() {
+  const now = Date.now();
+  for (const [k, v] of flows) {
+    if (now - (v.at || 0) > FLOW_TTL_MS) flows.delete(k);
+  }
+}
+setInterval(clearExpiredFlows, 60_000).unref?.();
 
 const isAdmin = (ctx) => ctx.chat?.type === 'private' && admins.has(ctx.from?.id);
 
@@ -489,7 +510,7 @@ const rateKb = (prefix, back) => {
 };
 
 function reviewAddPrompt(ctx, draft, step) {
-  flows.set(ctx.from.id, { type: 'rvadd', step, draft });
+  setFlow(ctx.from.id, { type: 'rvadd', step, draft });
   const text = `➕ <b>Новый отзыв</b>\n${REVIEW_ADD_STEPS[step]}\n/cancel — отмена`;
   if (step === 'rate') return ctx.reply(text, { parse_mode: 'HTML', reply_markup: rateKb('rva:rate:') });
   if (step === 'date') return ctx.reply(text, { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🕒 Сейчас', 'rva:date:now') });
@@ -538,7 +559,7 @@ async function reviewReplyStep(ctx, f, value) {
   }
   if (f.step === 'text') {
     if (!value || value.length > store.REVIEW_TEXT_MAX) return ctx.reply(`Ответ — от 1 до ${store.REVIEW_TEXT_MAX} символов.`);
-    flows.set(ctx.from.id, { type: 'rvreply', step: 'date', reviewId: r.id, text: value });
+    setFlow(ctx.from.id, { type: 'rvreply', step: 'date', reviewId: r.id, text: value });
     return ctx.reply(
       `📅 Отзыв #${r.id}. Шаг 2/2 — <b>дата ответа</b> по Москве: <code>24.09.2026 14:30</code>, <code>24.09 14:30</code> или «сейчас».\n/cancel — отмена`,
       { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🕒 Сейчас', 'rvr:now') }
@@ -640,14 +661,14 @@ async function onReviewCallback(ctx, d, prevFlow) {
     return syncReviewCards(upd, here);
   }
   if (act === 'reply') {
-    flows.set(ctx.from.id, { type: 'rvreply', step: 'text', reviewId: r.id });
+    setFlow(ctx.from.id, { type: 'rvreply', step: 'text', reviewId: r.id });
     return ctx.reply(
       `💬 Отзыв #${r.id}. Напишите <b>ответ</b> от имени PRICELEX (1–${store.REVIEW_TEXT_MAX} символов).\n/cancel — отмена`,
       { parse_mode: 'HTML' }
     );
   }
   if (act === 'replyedit') {
-    flows.set(ctx.from.id, { type: 'rvedit', field: 'reply', reviewId: r.id });
+    setFlow(ctx.from.id, { type: 'rvedit', field: 'reply', reviewId: r.id });
     const current = r.reply && r.reply.text ? `«${esc(r.reply.text)}»` : '— нет —';
     return ctx.reply(
       `✏️ Отзыв #${r.id}. Отправьте новый <b>текст ответа</b> (1–${store.REVIEW_TEXT_MAX} символов).\n\nСейчас: ${current}\n/cancel — отмена`,
@@ -661,7 +682,7 @@ async function onReviewCallback(ctx, d, prevFlow) {
       await reviewView(ctx, upd, true);
       return syncReviewCards(upd, here);
     }
-    flows.set(ctx.from.id, { type: 'rvedit', field: 'replydate', reviewId: r.id });
+    setFlow(ctx.from.id, { type: 'rvedit', field: 'replydate', reviewId: r.id });
     return ctx.reply(
       `📅 Отзыв #${r.id}. Отправьте <b>дату ответа</b> по Москве: <code>24.09.2026 14:30</code>, <code>24.09 14:30</code> или «сейчас».\n\nСейчас: ${fmtMsk(r.reply.at)} (МСК)\n/cancel — отмена`,
       { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🕒 Сейчас', `rv:${r.id}:replydate:now`) }
@@ -673,7 +694,7 @@ async function onReviewCallback(ctx, d, prevFlow) {
     return syncReviewCards(upd, here);
   }
   if (REVIEW_EDIT[act]) {
-    flows.set(ctx.from.id, { type: 'rvedit', field: act, reviewId: r.id });
+    setFlow(ctx.from.id, { type: 'rvedit', field: act, reviewId: r.id });
     const current = act === 'date' ? fmtMsk(r.createdAt) + ' (МСК)' : act === 'name' ? esc(r.name) : `«${esc(r.text)}»`;
     const kb = act === 'date' ? new InlineKeyboard().text('🕒 Сейчас', `rv:${r.id}:date:now`) : undefined;
     return ctx.reply(`✏️ Отзыв #${r.id}. Отправьте ${REVIEW_EDIT[act]}.\n\nСейчас: ${current}\n/cancel — отмена`,
@@ -864,7 +885,7 @@ const SET_FIELDS = {
 };
 
 async function requisitesPrompt(ctx, o, payRub = o.rub) {
-  flows.set(ctx.from.id, { type: 'req', orderId: o.id, version: o.version || 0, payRub });
+  setFlow(ctx.from.id, { type: 'req', orderId: o.id, version: o.version || 0, payRub });
   return ctx.reply(
     `💳 Заявка #${o.id}. Отправьте одним сообщением реквизиты (карта / СБП / счёт, банк и получатель).\n\nОни СРАЗУ появятся у клиента с суммой ${fmtRub(payRub)}. Если нужна другая сумма, сначала нажмите кнопку ниже.\n/cancel — отмена`,
     { reply_markup: new InlineKeyboard().text('✏️ Сначала изменить сумму', `o:${o.id}:quote`) }
@@ -872,7 +893,7 @@ async function requisitesPrompt(ctx, o, payRub = o.rub) {
 }
 
 async function txPrompt(ctx, o) {
-  flows.set(ctx.from.id, { type: 'tx', orderId: o.id, version: o.version || 0 });
+  setFlow(ctx.from.id, { type: 'tx', orderId: o.id, version: o.version || 0 });
   return ctx.reply(
     `🔗 Заявка #${o.id} — отправьте ссылку на транзакцию в блокчейне (например https://blockchair.com/bitcoin/transaction/… или https://blockchair.com/gram/transaction/…).\n\nСсылка появится у клиента в завершённой заявке. Это опционально — можно оставить пустым, отправив /cancel.\n\nТекущая: ${o.txUrl ? esc(o.txUrl) : '— нет —'}\n/cancel — отмена`,
     { parse_mode: 'HTML' }
@@ -880,7 +901,7 @@ async function txPrompt(ctx, o) {
 }
 
 async function supportReplyPrompt(ctx, userId) {
-  flows.set(ctx.from.id, { type: 'support', userId: String(userId) });
+  setFlow(ctx.from.id, { type: 'support', userId: String(userId) });
   const user = store.getUser(userId);
   return ctx.reply(
     `💬 Ответ клиенту ${user ? esc(user.name) + ' ' : ''}<code>${esc(userId)}</code>.\nНапишите сообщение — оно сразу появится у клиента в приложении и уйдёт ему в Telegram, если он запускал бота.\n/cancel — отмена`,
@@ -889,7 +910,7 @@ async function supportReplyPrompt(ctx, userId) {
 }
 
 async function handleAdminText(ctx) {
-  const f = flows.get(ctx.from.id);
+  const f = getFlow(ctx.from.id);
   if (!f) return ctx.reply('Выберите заявку через /menu, затем нажмите «Выдать реквизиты» или откройте чат поддержки.');
   const text = ctx.message.text.trim();
   if (/^\/(cancel|stop)(?:@\w+)?(?:\s|$)|^отмена$/i.test(text)) {
@@ -1134,7 +1155,7 @@ async function brokerAuthStart(ctx) {
       'Если вы подали заявку через приложение, ожидайте контакта.'
     );
   }
-  flows.set(ctx.from.id, { type: 'blogin' });
+  setFlow(ctx.from.id, { type: 'blogin' });
   return ctx.reply(
     '🤝 <b>Вход в кабинет брокера</b>\n\nВведите логин, который выдала администрация. /cancel — отмена',
     { parse_mode: 'HTML' }
@@ -1411,7 +1432,7 @@ function brokerInvestMessage(login) {
 /* ---------- текстовые сценарии брокера ---------- */
 
 async function requisitesPromptBroker(ctx, o) {
-  flows.set(ctx.from.id, { type: 'breq', orderId: o.id, version: o.version || 0, payRub: o.rub });
+  setFlow(ctx.from.id, { type: 'breq', orderId: o.id, version: o.version || 0, payRub: o.rub });
   return ctx.reply(
     `💳 Заявка #${o.id}. Отправьте одним сообщением реквизиты (карта / СБП / счёт, банк и получатель).\n\n` +
     `Они СРАЗУ появятся у клиента с суммой ${fmtRub(o.rub)}.\n/cancel — отмена`,
@@ -1419,7 +1440,7 @@ async function requisitesPromptBroker(ctx, o) {
 }
 
 async function handleBrokerText(ctx) {
-  const f = flows.get(ctx.from.id);
+  const f = getFlow(ctx.from.id);
   const text = ctx.message.text.trim();
   if (!f) return brokerHome(ctx, false);
   if (/^\/(cancel|stop)(?:@\w+)?(?:\s|$)|^отмена$/i.test(text)) {
@@ -1431,7 +1452,7 @@ async function handleBrokerText(ctx) {
     const isMaster = creds.active && text === creds.login;
     const isAdminBrk = creds.active && store.isAdminBroker && store.isAdminBroker(text);
     if (!isMaster && !isAdminBrk) return ctx.reply('Логин не подходит. Проверьте и отправьте ещё раз. /cancel — отмена');
-    flows.set(ctx.from.id, { type: 'bpass', login: text });
+    setFlow(ctx.from.id, { type: 'bpass', login: text });
     return ctx.reply('Теперь пароль:');
   }
   if (f.type === 'bpass') {
@@ -1524,14 +1545,14 @@ async function handleBrokerCallback(ctx, d) {
     await ctx.answerCallbackQuery({ text: 'Сессия истекла — войдите заново: /broker' }).catch(() => {});
     return;
   }
-  const prevFlow = flows.get(ctx.from.id);
+  const prevFlow = getFlow(ctx.from.id);
   flows.delete(ctx.from.id);
 
   if (d === 'b:noop') return;
   if (d === 'b:home') return brokerHome(ctx, true);
   if (d === 'b:chat') return brokerChatOpen(ctx, true);
   if (d === 'b:chat:reply') {
-    flows.set(ctx.from.id, { type: 'bchat' });
+    setFlow(ctx.from.id, { type: 'bchat' });
     return ctx.reply('✍️ <b>Сообщение для площадки</b>\\nНапишите текст — он сразу появится в вашем чате с PRICELEX. /cancel — отмена', { parse_mode: 'HTML' });
   }
   if (d === 'b:orders') return brokerOrdersMenu(ctx, true);
@@ -1548,7 +1569,7 @@ async function handleBrokerCallback(ctx, d) {
     if (avail < min) {
       return ctx.reply(`Для вывода нужно минимум ${fmtBtc(min)} — сейчас доступно ${fmtBtc(avail)}. Завершите ещё сделку.`);
     }
-    flows.set(ctx.from.id, { type: 'bwithdraw' });
+    setFlow(ctx.from.id, { type: 'bwithdraw' });
     return ctx.reply(`💸 Вывод <b>${fmtBtc(avail)}</b> (весь доступный остаток).\nПришлите BTC-адрес для выплаты. /cancel — отмена`, { parse_mode: 'HTML' });
   }
   if (d === 'b:dep:made') {
@@ -1574,7 +1595,7 @@ async function handleBrokerCallback(ctx, d) {
     if (!r.ok) {
       return ctx.reply(r.reason === 'intern' ? `Депозит вернётся через ~${r.left} дн. после стажировки.` : 'Возврат сейчас недоступен.');
     }
-    flows.set(ctx.from.id, { type: 'brefund' });
+    setFlow(ctx.from.id, { type: 'brefund' });
     return ctx.reply(`💸 Возврат депозита <b>${fmtBtc(r.btc)}</b>.\nПришлите BTC-адрес. /cancel — отмена`, { parse_mode: 'HTML' });
   }
   const m = d.match(/^b:o:(\d+)(?::(\w+))?$/);
@@ -1611,7 +1632,7 @@ async function handleBrokerCallback(ctx, d) {
   }
   if (act === 'req' && o.status === 'new') return requisitesPromptBroker(ctx, o);
   if (act === 'amt' && o.status === 'details') {
-    flows.set(ctx.from.id, { type: 'bamt', orderId: o.id, version: o.version || 0 });
+    setFlow(ctx.from.id, { type: 'bamt', orderId: o.id, version: o.version || 0 });
     return ctx.reply(`✏️ Заявка #${o.id}. Отправьте точную сумму к оплате в ₽ (сейчас ${fmtRub(o.payRub || o.rub)}).\n/cancel — отмена`);
   }
   if (act === 'receipt') {
@@ -1902,7 +1923,7 @@ function register() {
     const d = d0;
     await ctx.answerCallbackQuery().catch(() => {});
     if (!isAdmin(ctx)) return;
-    const prevFlow = flows.get(ctx.from.id);
+    const prevFlow = getFlow(ctx.from.id);
     flows.delete(ctx.from.id);
 
     // Админские карточки брокеров: депозиты, выплаты, заявки «стать брокером».
@@ -1914,7 +1935,7 @@ function register() {
     }
     if (d.startsWith('bchre:')) {
       const [, userId, login] = d.split(':');
-      flows.set(ctx.from.id, { type: 'achreply', userId, broker: login });
+      setFlow(ctx.from.id, { type: 'achreply', userId, broker: login });
       return ctx.reply('✍️ Ответ брокеру — напишите сообщение, оно сразу появится в его чате. /cancel — отмена');
     }
     if (d.startsWith('bb:')) {
@@ -1963,7 +1984,7 @@ function register() {
     if (d.startsWith('sb:')) {
       const key = d.slice(3);
       if (SET_FIELDS[key]) {
-        flows.set(ctx.from.id, { type: 'setb:' + key });
+        setFlow(ctx.from.id, { type: 'setb:' + key });
         await ctx.editMessageText(`✍️ Отправьте ${SET_FIELDS[key].label}.\n( /cancel — отмена )`, {
           parse_mode: 'HTML',
         }).catch(() => {});
@@ -2008,7 +2029,7 @@ function register() {
     if (d.startsWith('s:')) {
       const key = d.slice(2);
       if (SET_FIELDS[key]) {
-        flows.set(ctx.from.id, { type: 'set:' + key });
+        setFlow(ctx.from.id, { type: 'set:' + key });
         await ctx.editMessageText(`✍️ Отправьте ${SET_FIELDS[key].label}.\n( /cancel — отмена )`, {
           parse_mode: 'HTML',
         }).catch(() => {});
@@ -2042,7 +2063,7 @@ function register() {
       }
       if (act === 'req') return requisitesPrompt(ctx, o);
       if (act === 'quote' || act === 'amt') {
-        flows.set(ctx.from.id, { type: act, orderId: id, version: o.version || 0 });
+        setFlow(ctx.from.id, { type: act, orderId: id, version: o.version || 0 });
         return ctx.reply(`✏️ Заявка #${id}. Отправьте точную сумму к оплате в ₽ (сейчас ${fmtRub(o.payRub || o.rub)}).\n/cancel — отмена`);
       }
       if (act === 'reject') {
@@ -2080,7 +2101,7 @@ function register() {
 
   bot.on('message:text', async (ctx) => {
     // Брокерские сценарии (blogin/bpass/breq/bamt/bwithdraw/brefund) — до админ-гейта.
-    const f = flows.get(ctx.from.id);
+    const f = getFlow(ctx.from.id);
     if (f && String(f.type).startsWith('b')) return handleBrokerText(ctx);
     if (!isAdmin(ctx)) {
       // не-админ без флоу: подскажем про кабинет брокера

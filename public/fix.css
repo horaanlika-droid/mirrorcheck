@@ -247,3 +247,67 @@
   text-align: left !important;
   text-align-last: left !important;
 }
+
+/* 7. Фикс рефералов и ответов: левый край не обрезается, номера и заголовок ответа
+   не наезжают на границу карточки (баг на скриншотах IMG_1244/1245). */
+#view-refs .steps {
+  padding-left: 2px !important;
+  padding-right: 2px !important;
+  gap: 16px !important;
+  margin-top: 20px !important;
+}
+#view-refs .step {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  gap: 14px !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+#view-refs .step .n {
+  flex: 0 0 28px !important;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
+  margin-top: 0 !important;
+  display: grid !important;
+  place-items: center !important;
+  border-radius: 50% !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+}
+#view-refs .step .step-copy {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  display: block !important;
+  line-height: 1.5 !important;
+  padding-top: 2px !important;
+}
+
+/* Ответ PRICELEX — шапка не ломается, дата не наезжает, левый край не обрезан */
+.rv-item .rv-reply {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding: 14px 16px !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+}
+.rv-item .rv-reply-h {
+  display: flex !important;
+  flex-direction: row !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  gap: 12px !important;
+  flex-wrap: nowrap !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  line-height: 1.3 !important;
+}
+.rv-item .rv-reply-h span {
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  margin-left: auto !important;
+  text-align: right !important;
+}

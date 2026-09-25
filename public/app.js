@@ -954,6 +954,7 @@
     const s = S.settings;
     const err = $('#fErr');
     err.textContent = '';
+    if (!s) return (err.textContent = 'Курс загружается — подождите пару секунд.');
     const rate = S.currency === 'BTC' ? s.rateBTC : s.rateGRAM;
     const rawRub = parseFloat($('#inRub').value);
     const rawCrypto = parseFloat($('#inCrypto').value);
@@ -964,7 +965,7 @@
     if (!s.online) return (err.textContent = '⛔ Обмен временно недоступен — загляните позже.');
     if (!isFinite(rub) || rub < s.minRub) return (err.textContent = `Минимальная сумма обмена — ${fmtRub(s.minRub)} (≈ ${fmtTrim(cryptoFromRub(s.minRub, rate))} ${S.currency}).`);
     if (rub > s.maxRub) return (err.textContent = `Максимальная сумма обмена — ${fmtRub(s.maxRub)} (≈ ${fmtTrim(cryptoFromRub(s.maxRub, rate))} ${S.currency}).`);
-    if (!/^[a-zA-Z0-9]{26,90}$/.test(wallet)) return (err.textContent = 'Проверьте адрес кошелька — он выглядит некорректно.');
+    if (wallet.length < 26 || wallet.length > 128 || /\s/.test(wallet)) return (err.textContent = 'Проверьте адрес кошелька — он выглядит некорректно.');
     const cap = captchaPayload('capOrder');
     if (!cap.captchaAnswer) return (err.textContent = 'Решите проверочный пример — это защита от ботов.');
     const btn = $('#btnGo');
@@ -1484,9 +1485,9 @@
   }
 
   function renderRefs() {
-    const s = S.settings;
+    const s = S.settings || {};
     const v = $('#view-refs');
-    const link = s.botUsername ? `https://t.me/${s.botUsername}?startapp=ref${S.me.id}` : null;
+    const link = s.botUsername ? `https://t.me/${s.botUsername}?startapp=ref${S.me?.id || ''}` : null;
     v.innerHTML = `
       <section class="card editorial">
         <div class="ed-art" style="background-image:url('/img/refs.jpg')" aria-hidden="true"></div>
@@ -1637,8 +1638,8 @@
   function renderBroker() {
     const v = $('#view-broker');
     const app = S.brokerApp;
-    const s = S.settings;
-    const kb = s && s.botUsername ? `https://t.me/${s.botUsername}` : null;
+    const s = S.settings || {};
+    const kb = s.botUsername ? `https://t.me/${s.botUsername}` : null;
     const features = `
       <div class="feat">
         <div class="f"><span class="i">◆</span><b>Каждый может стать брокером:</b> прозрачные условия и равный доступ для всех участников</div>
@@ -1757,7 +1758,7 @@
       : '';
 
   function renderInfo() {
-    const s = S.settings;
+    const s = S.settings || {};
     $('#view-info').innerHTML = `
       <section class="card speech" id="speech">
         <div class="sp-art" style="background-image:url('/img/speech.jpg')" aria-hidden="true"></div>

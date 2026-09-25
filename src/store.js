@@ -1,7 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+let DATA_DIR;
+try {
+  const cfg = require('./config');
+  DATA_DIR = cfg.dataDir || process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+} catch {
+  DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+}
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 const DEFAULT_ADMIN_BROKERS = [
@@ -201,19 +207,31 @@ function load() {
   save();
 }
 
+function saveNow() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tmp = DB_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
+    fs.renameSync(tmp, DB_FILE);
+  } catch (e) {
+    console.error('[store] save error:', e.message);
+  }
+}
+
 function save() {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    try {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-      const tmp = DB_FILE + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-      fs.renameSync(tmp, DB_FILE);
-    } catch (e) {
-      console.error('[store] save error:', e.message);
-    }
+    saveNow();
   }, 150);
+}
+
+function flush() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  saveNow();
 }
 
 const get = () => db;
@@ -222,6 +240,13 @@ const mutate = (fn) => {
   save();
   return r;
 };
+
+// Ensure data is flushed on graceful shutdown
+try {
+  process.on('SIGINT', () => { try { flush(); } catch {} });
+  process.on('SIGTERM', () => { try { flush(); } catch {} });
+  process.on('beforeExit', () => { try { if (saveTimer) flush(); } catch {} });
+} catch {}
 
 function publicSettings() {
   const s = db.settings;

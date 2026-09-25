@@ -20,7 +20,7 @@
 
     if (platform === 'android' || /android/i.test(ua)) return 'android';
     if (/ipad/i.test(ua)) return 'ipad';
-    if (/iphone/i.test(ua)) return 'iphone';
+    if (/iphone|ipod/i.test(ua)) return 'iphone';
     // Telegram на iOS отдаёт platform «ios» и для iPhone, и для iPad —
     // различаем по стороне экрана: у телефонов она меньше 700 px.
     if (platform === 'ios') return screenMin >= 700 || width >= 700 ? 'ipad' : 'iphone';
