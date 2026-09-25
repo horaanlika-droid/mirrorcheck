@@ -637,10 +637,9 @@ button:focus:not(:focus-visible) { outline: none; }
 .profile-toggle i { width: 14px; height: 14px; display: block; margin-left: auto; border-radius: 50%; background: var(--sand-1); box-shadow: 0 1px 2px rgba(var(--shade-rgb),.2); }
 .language-icon { font-size: 13px; font-weight: 600; }
 .profile-logout { width: 100%; margin-top: 8px; padding: 14px; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--txt-2); text-align: left; font-size: 11px; cursor: pointer; }
-/* Подвал профиля — логотип-слово PRICELEX и строка кампании «тихие деньги». */
+/* Подвал профиля — только логотип-слово PRICELEX, без кампании-девиза. */
 .profile-foot { margin: 18px 0 4px; display: grid; gap: 7px; justify-items: center; text-align: center; }
 .profile-foot-mark { color: var(--sand-3); font-size: 11px; font-weight: 600; letter-spacing: .34em; }
-.profile-foot-tag { color: var(--dim); font-size: 9px; letter-spacing: .04em; }
 
 /* Reviews. */
 .editorial, .rv-hero { min-height: 0; padding: 17px; border-radius: 16px; background: var(--bg-3); }
@@ -804,7 +803,7 @@ button:focus:not(:focus-visible) { outline: none; }
 .about, .rule p, .sp-line, .rv-body, .rv-reply p, .step, .feat .f, .note,
 .stage-sub, .why-pair-body, .why-pair-lead, .disclaimer, .signal .s-s,
 .f-hint, .f-err, .cap-label, .ref-link, .chart-note, .about p, .empty,
-.chat-empty, .profile-foot-tag, .dep-line, .announce, .syncbar,
+.chat-empty, .dep-line, .announce, .syncbar,
 .profile-row-copy small, .broker-meta, .rv-who span, .h-sub, .metric-sub,
 .sp-sign, .stage-sub, .req-box, .tx-link, .msg-bubble, .rv-dist-percent,
 .profile-member, .profile-logout, .h-main, .h-top, .ref-stat, .contact,

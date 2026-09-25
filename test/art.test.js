@@ -75,14 +75,13 @@ test('весь арт сведён к одному оттенку бронзы: 
   assert.ok(spread < 6, `набор не различается по оттенкам: разброс ${spread.toFixed(2)}°`);
 });
 
-// Блик по кромке герба, его слои и вибрация прелоадинга — test/preloader.test.js.
-test('прелоадер: слои блика описаны в ios.css, герб остаётся без фильтров', () => {
-  assert.match(html, /<div class="preloader-logo-wrap">/, 'логотип обёрнут для блика');
-  assert.match(iosCss, /\.preloader-logo-edge \{/, 'кромка — слой над логотипом');
-  assert.match(iosCss, /mask: url\('\/img\/logo-mark\.png'\) center \/ contain no-repeat;/, 'маска — альфа самого герба');
-  assert.match(iosCss, /mix-blend-mode: screen;/, 'свет прибавляется к металлу');
-  assert.match(iosCss, /@keyframes preloader-shine \{/, 'анимация проскальзывания');
-  assert.match(iosCss, /\.preloader-logo \{[\s\S]*?filter: none;/, 'сам герб не подкрашен');
+// Прелоадер: большой герб, полный текст и никаких световых слоёв —
+// разметка, шкалы и отклик разобраны в test/preloader.test.js.
+test('прелоадер: герб статичен — без слоёв света, масок и фильтров', () => {
+  assert.match(html, /class="preloader-logo" src="\/img\/logo-mark\.png"/, 'лого — та же монограмма, что и в шапке');
+  assert.match(iosCss, /\.preloader-logo \{[^\n]*filter: none;[^\n]*\}/, 'сам герб не подкрашен и не подсвечен');
+  const pre = iosCss.split('\n').filter((l) => /\.preloader/.test(l)).join('\n');
+  assert.doesNotMatch(pre, /mix-blend-mode|mask-image|mask-composite|animation: (?!none)/, 'световых слоёв и анимаций над гербом нет');
 });
 
 test('кнопки и сегменты — шампанские пилюли по референсу IMG_1230', () => {

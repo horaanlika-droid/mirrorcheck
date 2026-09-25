@@ -412,15 +412,64 @@ test('info tab carries the founder speech word for word and never mentions a fee
   await tick();
   const lines = [...a.document.querySelectorAll('#speech .sp-line')].map((p) => p.textContent.replace(/\s+/g, ' ').trim());
   assert.deepEqual(lines, [
-    'PRICELEX — это не просто обменник.',
-    'Это экосистема, где каждый сотрудник прошёл непростой путь, но на этом пути он овладевал навыками в мире криптовалют.',
-    'И теперь мы экономим ваше время и нервы.',
-    'Мы не обменник. Мы агентство брокеров — проверенная и быстрая команда профессионалов.',
-    'Да, иногда приходится подождать.',
-    'Но мы знаем, кто мы. Мы отвечаем за качество репутацией.',
+    'PRICELEX — private crypto brokerage.',
+    'Здесь брокер работает в рамках своего депозита и ведёт операции на собственный капитал.',
+    'Не нужно ждать начальника. Не нужно собирать десять согласований. Не нужно объяснять человеку, который вчера узнал, что такое USDT, почему возможность есть именно сейчас.',
+    'Ты увидел возможность — ты должен быть способен действовать.',
+    'Здесь деньги — это инструмент. А главное преимущество — скорость, опыт и понимание рынка.',
+    'Нам не нужен тот, кто хочет научиться. Нам нужен тот, кто уже умеет: держит несколько источников одновременно, знает рынок, понимает ликвидность и считает риск до того, как нажмёт кнопку.',
+    'И не теряется, когда возможность живёт несколько минут.',
+    'Если ты такой человек — PRICELEX тебе подходит.',
+    'Не потому что мы обещаем лёгкие деньги. А потому что мы создаём среду, где твой опыт и твой капитал можно использовать профессионально.',
+    'Отдельно — к вам, к клиенту.',
+    'Вам не нужно ничего доказывать и никуда спешить. Сделку ведёт живой брокер, сумма к оплате известна заранее, а на каждом шаге остаётся след: заявка, чек, ссылка на транзакцию.',
+    'Мы отвечаем за качество репутацией и гарантийным депозитом — и просим вас держать свои ключи при себе. Как именно это устроено — в блоке «Безопасность» ниже.',
+    'PRICELEX. Private crypto brokerage.',
   ]);
+  assert.equal(a.document.querySelector('#speech .sp-sign').textContent.trim(), 'since 2025', 'речь подписана годом');
+  assert.ok(!/тихие деньги/i.test(a.document.querySelector('#view-info').textContent), 'прежний девиз из продукта убран');
   assert.ok(!/комисси/i.test(a.document.querySelector('#view-info').textContent));
   assert.equal(a.document.querySelector('#view-info .contact').href, 'https://t.me/test');
+});
+
+test('info speech addresses the client on safety: keys, requisites, escrow, real channels', async (t) => {
+  const a = await app(t);
+  a.document.querySelector('.nav button[data-tab="profile"]').click();
+  a.document.querySelector('#view-profile [data-go="info"]').click();
+  await tick();
+  const info = a.document.querySelector('#view-info');
+  const cards = [...info.querySelectorAll('.card')];
+  const card = cards[1];
+  assert.ok(card, 'блок безопасности следует сразу за речью');
+  assert.match(card.querySelector('.card-title').textContent, /Безопасность/);
+  const text = card.textContent.replace(/\s+/g, ' ');
+  assert.match(text, /Реквизиты сообщает только брокер внутри вашей заявки/);
+  assert.match(text, /не спрашивает seed-фразу, приватный ключ, пароль от кошелька и код из SMS/);
+  assert.match(text, /первые и последние шесть символов/);
+  assert.match(text, /заморожены на гарантийном счёте/);
+  assert.match(text, /гарантийный депозит брокеров — 0\.02\d+ BTC/, 'размер депозита подставляется живой');
+  assert.match(text, /Официальные адреса только эти/, 'указаны канал, чат и поддержка');
+  assert.match(text, /инвестиционных рекомендаций здесь нет/);
+  assert.match(text, /не является банком, платёжной системой/, 'дисклеймер в тон правилам');
+  const links = [...card.querySelectorAll('a.inline-link')].map((x) => x.href);
+  assert.deepEqual(links, ['https://t.me/test', 'https://t.me/test'], 'ссылки — из настроек, а не хардкод');
+});
+
+test('штаб-квартира: адрес в контактах и в правилах, ссылка ведёт на карту', async (t) => {
+  const a = await app(t);
+  a.document.querySelector('.nav button[data-tab="profile"]').click();
+  a.document.querySelector('#view-profile [data-go="info"]').click();
+  await tick();
+  const info = a.document.querySelector('#view-info');
+  const hq = [...info.querySelectorAll('a.contact')].find((x) => /Штаб-квартира/.test(x.textContent));
+  assert.ok(hq, 'строка со штаб-квартирой есть среди контактов');
+  assert.match(hq.textContent, /Street 11B 243\/3 — Umm Al Sheif — Dubai — ОАЭ/);
+  assert.match(hq.href, /^https:\/\/www\.google\.com\/maps\/search\//, 'адрес открывается на карте');
+  assert.match(hq.href, /Umm%20Al%20Sheif/, 'запрос на карту нормализован, а не взят из строки как есть');
+  assert.equal(hq.getAttribute('rel'), 'noopener');
+  assert.match(info.textContent, /Деятельность Платформа ведёт из штаб-квартиры: Street 11B 243\/3/, 'тот же адрес — в общих положениях');
+  assert.match(info.textContent, /вне его Платформа с Пользователем не общается и ничего не запрашивает/);
+  assert.equal(info.querySelectorAll('a.contact').length, 4, 'поддержка, канал, чат и адрес');
 });
 
 test('active order in details stage renders broker info, call-admin button and connects to chat on problem', async (t) => {

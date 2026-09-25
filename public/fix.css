@@ -19,10 +19,6 @@
   margin-right: auto !important;
   display: block !important;
 }
-.preloader-bar {
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
 
 /* 2. Все заголовки — по центру */
 .hdr-logo,
@@ -104,7 +100,6 @@
 .cap-label,
 .ref-link,
 .about p,
-.profile-foot-tag,
 .dep-line,
 .announce,
 .syncbar,
@@ -220,7 +215,7 @@
 .about, .rule p, .sp-line, .rv-body, .rv-reply p, .step, .feat .f, .note,
 .stage-sub, .why-pair-body, .why-pair-lead, .disclaimer, .signal .s-s,
 .f-hint, .f-err, .cap-label, .ref-link, .chart-note, .about p, .empty,
-.chat-empty, .profile-foot-tag, .dep-line, .announce, .syncbar,
+.chat-empty, .dep-line, .announce, .syncbar,
 .profile-row-copy small, .broker-meta, .rv-who span, .h-sub, .metric-sub,
 .sp-sign, .stage-sub, .req-box, .tx-link, .msg-bubble, .rv-dist-percent,
 .profile-member {

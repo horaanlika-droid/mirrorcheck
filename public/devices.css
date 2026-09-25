@@ -254,11 +254,13 @@ html[data-device] .nav button .nav-art {
   html[data-device] .msg-bubble { font-size: 16px; }
   html[data-device] .chat-input textarea { font-size: 16px; }
 
-  /* Прелоадер крупнее, но строго в пропорции герба: слои блика считают
-     маску в процентах от той же коробки, и растянутый квадрат разошёлся бы
-     с самой картинкой. */
-  html[data-device] .preloader-logo { width: 160px; height: auto; }
-  html[data-device] .preloader-logo-glow { filter: blur(12px); }
+  /* Прелоадер крупнее, но строго в пропорции герба: квадратная монограмма не
+     должна быть ни растянута, ни прижата к набору — воздух до букв растёт
+     вместе с самим лого. */
+  html[data-device] .preloader-logo { width: 300px; height: auto; margin-bottom: 56px; }
+  html[data-device] .preloader-brand { font-size: 22px; letter-spacing: .4em; }
+  html[data-device] .preloader-tag { font-size: 12px; }
+  html[data-device] .preloader-est { font-size: 11px; }
 }
 
 /* === ВЫРАВНИВАНИЕ: заголовки по центру (и прелоадер), инфо-текст строго по строкам, без двух колонок — последний слой === */
@@ -280,7 +282,7 @@ html[data-device] .nav button .nav-art {
 .about, .rule p, .sp-line, .rv-body, .rv-reply p, .step, .feat .f, .note,
 .stage-sub, .why-pair-body, .why-pair-lead, .disclaimer, .signal .s-s,
 .f-hint, .f-err, .cap-label, .ref-link, .chart-note, .about p, .empty,
-.chat-empty, .profile-foot-tag, .dep-line, .announce, .syncbar,
+.chat-empty, .dep-line, .announce, .syncbar,
 .profile-row-copy small, .broker-meta, .rv-who span, .h-sub, .metric-sub,
 .sp-sign, .stage-sub, .req-box, .tx-link, .msg-bubble, .rv-dist-percent,
 .profile-member, .profile-logout, .h-main, .h-top, .ref-stat, .contact,
