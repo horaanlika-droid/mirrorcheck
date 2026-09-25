@@ -80,7 +80,9 @@ test('прелоадер: большое лого и полный текст —
   assert.match(html, /class="preloader-wordmark" src="\/img\/logo-full\.png"/);
   assert.match(html, /alt="PRICELEX — Since 2025" width="1200" height="561"/);
   assert.match(html, /<div class="preloader-tag">Private Crypto Brokerage<\/div>/);
-  assert.doesNotMatch(html, /preloader-logo-wrap|preloader-logo-sheen|preloader-bar|preloader-progress/);
+  assert.doesNotMatch(html, /preloader-logo-wrap|preloader-logo-sheen/);
+  assert.match(html, /class="preloader-bar"/);
+  assert.match(html, /class="preloader-progress"/);
   assert.match(pub('glass.css'), /\.preloader-inner \{[^}]*animation: none;/);
   assert.doesNotMatch(html, /class="preloader-brand"|class="preloader-est"/,
     'полное название и год уже внутри логотипа, не дублируются');
@@ -109,12 +111,12 @@ test('шкалы: лого крупное и не прижато к буквам
   assert.match(tablet, /width: 300px; height: auto; margin-bottom: 56px;/, 'планшет: пропорции и воздух сохранены');
 });
 
-test('прелоадер не анимируется: ни блика, ни заполнения, ни бесконечных циклов', () => {
+test('прелоадер: линия загрузки и статичный герб без бесконечных циклов', () => {
   assert.doesNotMatch(iosCss, /@keyframes preloader-shine/, 'анимация блика удалена из css');
-  assert.doesNotMatch(styleCss, /@keyframes preloader-fill/, 'анимация заполнения бара удалена из css');
+  assert.match(styleCss, /@keyframes preloader-fill/, 'линия загрузки плавно заполняется');
   assert.doesNotMatch(preloaderRules(iosCss), /animation: (?!none)/, 'в iOS-правилах прелоадера нет ни одной анимации');
   assert.doesNotMatch(preloaderRules(styleCss), /animation: (?!none)[^;]*infinite/, 'бесконечных циклов на прелоадинге нет');
-  // Единственное движение — прозрачность появления и ухода.
+  // Единственное движение — линия загрузки и прозрачность появления и ухода.
   assert.match(styleCss, /@keyframes preloader-in \{\n\s*from \{ opacity: 0; \}\n\s*to \{ opacity: 1; \}\n\}/, 'только смена прозрачности');
   assert.match(styleCss, /\.preloader \{\n\s*position: fixed;[\s\S]*?transition: opacity \.8s var\(--ease-o\), visibility \.8s;/, 'уход — медленное растворение');
 });

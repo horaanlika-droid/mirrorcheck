@@ -709,7 +709,6 @@
           <span>Брокеры на линии</span>
           <span class="pill"><span class="dot"></span>Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b></span>
         </div>
-        <div class="brokers-pool-sub">Проверенные специалисты под управлением администрации — всегда онлайн:</div>
         <div class="brokers-list">
           ${ADMIN_BROKERS.map((b) => `
             <div class="broker-row">
@@ -725,13 +724,13 @@
       </div>
       <div class="card">
         <div class="feat">
-          <div class="f"><span class="i">◆</span>Сделку ведёт живой брокер из проверенной команды — быстро и вручную</div>
-          <div class="f"><span class="i">◆</span>Брокеры торгуют под залог общего депозита — сейчас ${depositInlineHtml()}: если выплата не пришла, площадка гарантированно компенсирует средства клиенту</div>
-          <div class="f"><span class="i">◆</span>Средства на время сделки лежат на гарантийном счёте и размораживаются после подтверждения оплаты</div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Сделку ведёт живой брокер из проверенной команды — быстро и вручную</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Брокеры торгуют под залог общего депозита — сейчас ${depositInlineHtml()}: если выплата не пришла, площадка гарантированно компенсирует средства клиенту</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Средства на время сделки лежат на гарантийном счёте и размораживаются после подтверждения оплаты</span></div>
         </div>
         <button class="btn btn-primary mt" id="deskGo">${ICONS.bolt}<span>Обменять сейчас</span></button>
       </div>
-      <div class="signature">PRICELEX<span>— быстро · надёжно · по-честному —</span></div>`;
+      <div class="signature">PRICELEX</div>`;
     $('#deskGo').addEventListener('click', () => { haptic('light'); goTab('exchange'); });
   }
 

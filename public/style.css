@@ -124,6 +124,25 @@ html, body { height: 100%; }
   letter-spacing: 0.28em; text-transform: uppercase;
   color: var(--dim);
 }
+.preloader-bar {
+  width: 140px; height: 3px; margin: 22px auto 0;
+  background: rgba(var(--line-rgb), 0.1);
+  border-radius: 999px; overflow: hidden;
+  position: relative;
+}
+.preloader-progress {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
+  background: var(--sand-3);
+  border-radius: 999px;
+  animation: preloader-fill 4.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes preloader-fill {
+  0% { width: 0%; }
+  25% { width: 35%; }
+  50% { width: 70%; }
+  80% { width: 90%; }
+  100% { width: 100%; }
+}
 
 body {
   font-family: var(--font-sans);
