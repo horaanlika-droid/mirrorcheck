@@ -82,7 +82,7 @@ html, body { height: 100%; }
 .preloader-logo {
   width: 168px; height: 168px; object-fit: contain;
   display: block; margin: 0 auto 6px;
-  filter: drop-shadow(0 0 28px rgba(217, 120, 56, 0.22));
+  filter: none;
 }
 .preloader-brand {
   font-family: var(--font-sans);
@@ -109,7 +109,7 @@ html, body { height: 100%; }
 }
 .preloader-progress {
   position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
-  background: linear-gradient(90deg, #c9a87e, #f3dab6);
+  background: #c9a87e;
   border-radius: 999px;
   animation: preloader-fill 2.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
@@ -194,7 +194,7 @@ body {
 }
 .hdr::after {
   content: ''; position: absolute; left: 2px; right: 2px; bottom: 0; height: 1px;
-  background: linear-gradient(90deg, var(--amber-hi) 0, var(--amber-line) 34px, rgba(255, 255, 255, 0.09) 34px, rgba(255, 255, 255, 0.09) 100%);
+  background: #c9a87e;
 }
 .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .brand-mark {
