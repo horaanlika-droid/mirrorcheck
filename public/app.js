@@ -1492,7 +1492,6 @@
       <section class="card editorial">
         <div class="ed-art" style="background-image:url('/img/refs.jpg')" aria-hidden="true"></div>
         <div class="ed-body">
-          <div class="kicker">Приведи друга — <em>заработай вместе</em></div>
           <div class="display">${s.refPercent}% с каждого<br>обмена друга</div>
         </div>
       </section>
@@ -1509,9 +1508,9 @@
           <div class="ref-stat"><div class="v">${s.refPercent}%</div><div class="l">бонус с обмена</div></div>
         </div>
         <div class="steps">
-          <div class="step"><div class="n">1</div>Отправьте ссылку другу — она закрепит его за вами навсегда.</div>
-          <div class="step"><div class="n">2</div>Друг совершает обмен в PRICELEX через ваше приложение.</div>
-          <div class="step"><div class="n">3</div>Вы получаете ${s.refPercent}% с каждого его обмена — без лимитов.</div>
+          <div class="step"><div class="n">1</div><span class="step-copy">Отправьте ссылку другу — она закрепит его за вами навсегда.</span></div>
+          <div class="step"><div class="n">2</div><span class="step-copy">Друг совершает обмен в PRICELEX через ваше приложение.</span></div>
+          <div class="step"><div class="n">3</div><span class="step-copy">Вы получаете ${s.refPercent}% с каждого его обмена — без лимитов.</span></div>
         </div>
       </div>`;
     const cp = $('#cpRef');
@@ -2432,7 +2431,7 @@
       // прочитаться, а не мелькнуть. Прогресс здесь не изображается —
       // прелоадер уходит целиком, когда данные готовы.
       const elapsed = Date.now() - initStartTime;
-      const minDuration = 3400;
+      const minDuration = 5200;
       const remaining = Math.max(0, minDuration - elapsed);
       setTimeout(() => {
         clearTimeout(preloaderFallback);

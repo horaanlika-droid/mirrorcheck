@@ -78,7 +78,7 @@ test('весь арт сведён к одному оттенку бронзы: 
 // Прелоадер: большой герб, полный текст и никаких световых слоёв —
 // разметка, шкалы и отклик разобраны в test/preloader.test.js.
 test('прелоадер: герб статичен — без слоёв света, масок и фильтров', () => {
-  assert.match(html, /class="preloader-logo" src="\/img\/logo-mark\.png"/, 'лого — та же монограмма, что и в шапке');
+  assert.match(html, /class="preloader-wordmark" src="\/img\/logo-full\.png"/, 'на прелоадере — полный логотип с годом');
   assert.match(iosCss, /\.preloader-logo \{[^\n]*filter: none;[^\n]*\}/, 'сам герб не подкрашен и не подсвечен');
   const pre = iosCss.split('\n').filter((l) => /\.preloader/.test(l)).join('\n');
   assert.doesNotMatch(pre, /mix-blend-mode|mask-image|mask-composite|animation: (?!none)/, 'световых слоёв и анимаций над гербом нет');

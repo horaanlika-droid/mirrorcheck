@@ -1,0 +1,96 @@
+/* Final material layer: graphite glass, bronze identity, static banknote. */
+:root {
+  --surface: rgba(21, 27, 32, .58);
+  --surface-2: rgba(29, 36, 42, .52);
+  --glass-edge: rgba(225, 231, 235, .13);
+  --sep: rgba(225, 231, 235, .09);
+}
+/* Establish a local stacking context so the negative background stays visible. */
+body { isolation: isolate; }
+.bg-img {
+  background-size: auto max(115vh, 900px);
+  background-position: 65% 24%;
+  opacity: .21;
+  transform: rotate(-12deg);
+  filter: sepia(.2);
+  -webkit-mask-image: radial-gradient(ellipse at 72% 28%, #000 12%, transparent 76%);
+  mask-image: radial-gradient(ellipse at 72% 28%, #000 12%, transparent 76%);
+}
+.bg-grid {
+  background-size: auto max(100vh, 800px);
+  background-position: 28% 85%;
+  opacity: .12;
+  filter: blur(7px);
+}
+.bg-glow { opacity: .10; filter: blur(12px); }
+.bg-veil {
+  background: linear-gradient(180deg, rgba(8,13,17,.72), transparent 24%, rgba(8,13,17,.14) 65%, rgba(8,13,17,.88)),
+    radial-gradient(ellipse at 60% 35%, transparent 15%, rgba(8,13,17,.52) 100%);
+}
+
+/* A complete wordmark, not the standalone monogram. No pulsing or sheen. */
+.preloader { overflow: auto; background: #080d11; isolation: isolate; }
+.preloader::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: url('/img/dollar-scan.jpg') 70% 30% / auto 125% no-repeat;
+  opacity: .12; filter: blur(3px);
+  -webkit-mask-image: radial-gradient(ellipse at 76% 25%, #000, transparent 74%);
+  mask-image: radial-gradient(ellipse at 76% 25%, #000, transparent 74%);
+}
+.preloader-inner { width: 100%; max-width: 860px; padding: 36px 22px; animation: none; }
+.preloader-wordmark { display: block; width: 100%; height: auto; max-height: 65svh; object-fit: contain; }
+.preloader .preloader-tag { margin-top: 32px; font-size: 10px; letter-spacing: .22em; color: #a6adb2; }
+
+/* One material for panel frames; inner controls remain cheaper to composite. */
+.card, .card-hero, .editorial, .rv-hero, .speech, .h-item, .rv-item, .contact,
+.ref-stat, .broker-row, .stage-matched-card, .active-order, .req-box, .chat-box,
+.stage-steps-bar, .announce, .syncbar, .profile-logout {
+  border: 1px solid var(--glass-edge) !important;
+  background: linear-gradient(145deg, rgba(255,255,255,.035), transparent 58%), var(--surface) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 8px 28px rgba(0,0,0,.12) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(110%);
+  backdrop-filter: blur(16px) saturate(110%);
+}
+.field, .seg, .ref-link, .tx-box, .file-box, .rv-text, .rv-select, .chat-input,
+.rv-reply, .stage-online-bar, .pool-chip {
+  border: 1px solid var(--glass-edge);
+  background: var(--surface-2);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
+}
+.field:focus-within, .chat-input:focus-within, .rv-text:focus, .rv-select:focus {
+  border: 1px solid var(--tint);
+  box-shadow: 0 0 0 2px rgba(var(--tint-rgb), .14);
+}
+.hdr, .nav {
+  background: rgba(8,13,17,.72);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+}
+.nav { border-top: 1px solid var(--glass-edge); }
+
+/* Screenshot corrections: a real gap, including wrapped descriptions. */
+html[data-device] .profile-row, html[data-device] .profile-link {
+  column-gap: 18px;
+  padding-top: 13px;
+  padding-bottom: 13px;
+}
+.profile-row-icon { flex-shrink: 0; }
+.profile-row-copy { gap: 5px; }
+#view-refs .ref-stat { padding: 18px 16px; }
+#view-refs .ref-stat .l { margin-top: 12px; line-height: 1.5; letter-spacing: .04em; }
+#view-refs .steps { margin-top: 26px; gap: 20px; padding: 0 0 8px; }
+#view-refs .step { gap: 16px; align-items: flex-start; line-height: 1.65; }
+#view-refs .step .n { margin-top: 1px; flex: 0 0 25px; height: 25px; }
+.step-copy { display: block; min-width: 0; }
+@media (min-width: 700px) {
+  html[data-device] .profile-row, html[data-device] .profile-link { column-gap: 22px; }
+  #view-refs .step { gap: 20px; }
+  .preloader-inner { padding: 48px; }
+  .preloader .preloader-tag { margin-top: 40px; font-size: 12px; }
+}
+/* Readable fallback for WebViews without backdrop filtering. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root { --surface: rgba(21,27,32,.92); --surface-2: rgba(29,36,42,.9); }
+  .hdr, .nav { background: rgba(8,13,17,.96); }
+}
+@media (prefers-reduced-motion: reduce) { .preloader { transition: none; } }
