@@ -445,3 +445,29 @@ test('active order in details stage renders broker info, call-admin button and c
   assert.ok(btnCall, 'кнопка вызова админа на этапе заявки присутствует');
   assert.match(btnCall.textContent, /Позвать админа|Проблема/);
 });
+
+test('капча: поле ответа стоит вплотную к примеру, а не у края строки', async (t) => {
+  const a = await app(t);
+  const box = a.document.querySelector('#capOrder');
+  assert.ok(box, 'блок капчи отрисован на форме обмена');
+  const label = box.querySelector('.cap-label');
+  const input = box.querySelector('input');
+  assert.ok(label && input, 'в блоке есть подпись и поле ответа');
+  assert.match(label.textContent, /3 \+ 4 = \?/, 'в подписи — сам пример');
+  assert.ok(label.querySelector('.cap-expr'), 'пример выделен в подписи отдельно');
+  // Порядок в разметке: пример, сразу за ним поле — между ними только gap.
+  assert.equal(label.nextElementSibling, input, 'поле идёт сразу за примером');
+  assert.ok(label.textContent.trimEnd().endsWith('?'), 'за примером в подписи больше ничего нет');
+});
+
+test('капча: подпись не растягивается на всю строку и не уносит поле вправо', () => {
+  const iosCss = fs.readFileSync(path.join(__dirname, '../public/ios.css'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(__dirname, '../public/style.css'), 'utf8');
+  for (const [name, css] of [['ios.css', iosCss], ['style.css', styleCss]]) {
+    const cap = css.match(/\.cap-label \{[^}]*\}/)[0];
+    assert.doesNotMatch(cap, /flex: 1 1 auto/, `${name}: подпись не занимает всю строку`);
+    assert.match(cap, /flex: 0 1 auto/, `${name}: подпись сжимается по тексту`);
+  }
+  assert.match(iosCss, /\.captcha \{[^}]*gap: 8px;/, 'между примером и полем — маленький отступ');
+  assert.match(iosCss, /\.captcha input \{[^}]*flex: 0 0 auto;/, 'поле ответа не растягивается');
+});

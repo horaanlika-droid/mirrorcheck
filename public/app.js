@@ -6,11 +6,17 @@
   let initData = '';
   let startParam = '';
   let demo = null;
+  // Единственная тема — тёмная: хром Telegram красится в её цвет здесь же,
+  // где Web App становится ready() (до ready() цвета не принимаются).
+  const CHROME_COLOR = '#080d11';
   if (tg) {
     try {
       tg.ready();
       tg.expand();
-      // Цвета шапки и фона Telegram ставит theme.js под текущую тему оформления.
+      try {
+        if (typeof tg.setHeaderColor === 'function') tg.setHeaderColor(CHROME_COLOR);
+        if (typeof tg.setBackgroundColor === 'function') tg.setBackgroundColor(CHROME_COLOR);
+      } catch (e) { /* старые версии Web App без управления цветом */ }
     } catch (e) {}
     initData = tg.initData || '';
     startParam = tg.startParam || '';
@@ -1462,23 +1468,6 @@
     if (cp) cp.addEventListener('click', () => copyText(link, 'Ссылка скопирована'));
   }
 
-  /* ---------- тема оформления: тёмная, светлая, авто ---------- */
-  // Палитру переключает слой theme.css по <html data-theme>; theme.js разрешает
-  // режим (сохранённый выбор → тема Telegram → системная). Здесь — переключатель
-  // в профиле и живая подпись текущего состояния.
-  const THEME_MODES = ['light', 'dark', 'system'];
-  const THEME_MODE_LABEL = { light: 'Светлая', dark: 'Тёмная', system: 'Авто' };
-  const themeApi = () => window.PRICELEX_THEME || null;
-  const themeState = () => {
-    const api = themeApi();
-    return api ? api.get() : { mode: 'dark', theme: 'dark' };
-  };
-  const themeValueLabel = () => {
-    const st = themeState();
-    const base = st.theme === 'light' ? 'Светлая' : 'Тёмная';
-    return st.mode === 'system' ? `${base} · авто` : base;
-  };
-
   function renderProfile() {
     const view = $('#view-profile');
     const me = S.me || {};
@@ -1506,16 +1495,6 @@
           <span class="profile-row-copy"><b>Уведомления</b><small>Статус и сообщения по заявкам</small></span>
           <span class="profile-toggle" aria-hidden="true"><i></i></span>
         </button>
-        <div class="profile-row static-row theme-row">
-          <span class="profile-row-icon">${ICONS.theme}</span>
-          <span class="profile-row-copy"><b>Тема</b><small>Авто — как в Telegram и системе</small></span>
-          <span class="profile-value" id="themeValue">${esc(themeValueLabel())}</span>
-        </div>
-        <div class="theme-picker">
-          <div class="seg" id="themeSeg" role="group" aria-label="Тема оформления">
-            ${THEME_MODES.map((m) => `<button type="button" data-theme-mode="${m}" class="${themeState().mode === m ? 'on' : ''}">${THEME_MODE_LABEL[m]}</button>`).join('')}
-          </div>
-        </div>
         <div class="profile-row static-row">
           <span class="profile-row-icon language-icon">А</span>
           <span class="profile-row-copy"><b>Язык</b></span>
@@ -1551,18 +1530,6 @@
       renderHeader();
       renderNav();
     });
-    const themeSeg = $('#themeSeg');
-    if (themeSeg) themeSeg.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
-      const api = themeApi();
-      if (!api) return;
-      haptic('light');
-      api.set(button.dataset.themeMode);
-      syncThemeControls();
-      const st = api.get();
-      toast(st.mode === 'system'
-        ? 'Тема — авто, как в Telegram'
-        : st.theme === 'light' ? 'Светлая тема включена' : 'Тёмная тема включена');
-    }));
     $('#profileNotifications').addEventListener('click', () => {
       if (tg && typeof tg.requestWriteAccess === 'function') {
         try {
@@ -1577,21 +1544,6 @@
       if (tg && typeof tg.close === 'function') tg.close();
       else toast('Демо-сеанс сохранён в этом браузере');
     });
-  }
-
-  // Подпись и сегменты переключателя — по фактическому состоянию темы.
-  function syncThemeControls() {
-    const st = themeState();
-    const value = $('#themeValue');
-    if (value) value.textContent = themeValueLabel();
-    const seg = $('#themeSeg');
-    if (seg) seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.themeMode === st.mode));
-  }
-
-  // Живые смены темы (кнопка в профиле, themeChanged Telegram, системная тема).
-  function subscribeTheme() {
-    const api = themeApi();
-    if (api && typeof api.subscribe === 'function') api.subscribe(syncThemeControls);
   }
 
   /* ---------- капча ---------- */
@@ -1612,7 +1564,7 @@
       const box = document.getElementById(boxId);
       if (!box) continue;
       box.innerHTML = S.captcha
-        ? `<label class="cap-label" for="${boxId}In">Проверка: ${esc(S.captcha.question)}</label>
+        ? `<label class="cap-label" for="${boxId}In">Проверка: <b class="cap-expr">${esc(S.captcha.question)}</b></label>
            <input id="${boxId}In" inputmode="numeric" autocomplete="off" placeholder="Ответ">`
         : '';
       const inp = document.getElementById(boxId + 'In');
@@ -2278,14 +2230,45 @@
     window.addEventListener('resize', () => { if (S.tab === 'exchange') renderHero(); if (S.tab === 'history') renderHistory(); });
   }
 
+  /* ---------- вибрация на прелоадинге ---------- */
+  // Тактильный рисунок загрузки: мягкий толчок на старте, короткий импульс в
+  // момент, когда блик проезжает по середине герба, и лёгкий отклик, когда
+  // приложение готово. Длительность цикла и доля цикла совпадают с бликом
+  // (@keyframes preloader-shine в ios.css: 2.6 s, проход занимает 70 % цикла
+  // и разогнан cubic-bezier(.42, 0, .2, 1), поэтому ядро луча оказывается на
+  // середине герба около четверти цикла — 0.7 × 0.357 ≈ 0.25).
+  // В Telegram — HapticFeedback, в обычном браузере — navigator.vibrate;
+  // при prefers-reduced-motion рисунок молчит.
+  const SHINE_MS = 2600;
+  const SHINE_PEAK = 0.25;
+  const preloaderHaptics = [];
+  function reducedMotion() {
+    try {
+      return Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (e) { return false; }
+  }
+  function startPreloaderHaptics() {
+    if (reducedMotion()) return;
+    const beat = (ms, kind) => preloaderHaptics.push(setTimeout(() => haptic(kind), ms));
+    beat(140, 'soft');                                      // приложение проснулось
+    beat(Math.round(SHINE_MS * SHINE_PEAK), 'light');       // луч прошёл по гербу
+    beat(Math.round(SHINE_MS * (1 + SHINE_PEAK)), 'light'); // второй проход луча
+  }
+  function stopPreloaderHaptics() {
+    while (preloaderHaptics.length) clearTimeout(preloaderHaptics.pop());
+  }
+
   const initStartTime = Date.now();
-  function hidePreloader() {
+  function hidePreloader(opts = {}) {
     const el = document.getElementById('preloader');
     if (!el || el.classList.contains('done')) return;
+    stopPreloaderHaptics();
     el.classList.add('done');
     el.setAttribute('aria-hidden', 'true');
+    if (!opts.silent && !reducedMotion()) haptic('selection'); // приложение готово
   }
-  const preloaderFallback = setTimeout(hidePreloader, 8000);
+  const preloaderFallback = setTimeout(() => hidePreloader(), 8000);
+  startPreloaderHaptics();
 
   (async () => {
     try {
@@ -2308,7 +2291,7 @@
       document.getElementById('announce').textContent = '⚠️ Не удалось подключиться к серверу. Обновите страницу.';
       document.getElementById('announce').classList.remove('hidden');
       clearTimeout(preloaderFallback);
-      hidePreloader();
+      hidePreloader({ silent: true }); // ошибка — не отзываемся как о готовности
       return;
     }
     renderHeader();
@@ -2327,7 +2310,6 @@
     $('#view-' + S.tab).classList.remove('hidden');
     renderDemoAdmin();
     initParallax();
-    subscribeTheme();
     startPolling();
     function tickBrokerLoop() {
       tickLiveNumbers();

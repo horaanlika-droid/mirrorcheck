@@ -75,12 +75,14 @@ test('весь арт сведён к одному оттенку бронзы: 
   assert.ok(spread < 6, `набор не различается по оттенкам: разброс ${spread.toFixed(2)}°`);
 });
 
-test('прелоадер: блик скользит по силуэту герба через альфа-маску логотипа', () => {
+// Блик по кромке герба, его слои и вибрация прелоадинга — test/preloader.test.js.
+test('прелоадер: слои блика описаны в ios.css, герб остаётся без фильтров', () => {
   assert.match(html, /<div class="preloader-logo-wrap">/, 'логотип обёрнут для блика');
-  assert.match(iosCss, /\.preloader-logo-wrap::after \{/, 'блик — слой над логотипом');
+  assert.match(iosCss, /\.preloader-logo-edge \{/, 'кромка — слой над логотипом');
   assert.match(iosCss, /mask: url\('\/img\/logo-mark\.png'\) center \/ contain no-repeat;/, 'маска — альфа самого герба');
   assert.match(iosCss, /mix-blend-mode: screen;/, 'свет прибавляется к металлу');
   assert.match(iosCss, /@keyframes preloader-shine \{/, 'анимация проскальзывания');
+  assert.match(iosCss, /\.preloader-logo \{[\s\S]*?filter: none;/, 'сам герб не подкрашен');
 });
 
 test('кнопки и сегменты — шампанские пилюли по референсу IMG_1230', () => {
