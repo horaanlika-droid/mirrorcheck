@@ -25,6 +25,7 @@
   --danger: #cf8a8a;
   --r-card: 16px;
   --r-ctl: 12px;
+  --gap-icon: 10px;         /* отступ текста от иконки */
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Inter', 'Segoe UI', Roboto, Arial, sans-serif;
   --font-mono: var(--font-sans);
   --shadow: none;
@@ -39,29 +40,110 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 
 /* ---------- Прелоадер ---------- */
 .preloader { background: var(--bg-1); }
-.preloader-logo-wrap { position: relative; display: inline-block; }
-/* Проскользающий блик по силуэту герба: маска — альфа самого логотипа,
-   световая полоса едет background-position'ом поверх металла (screen). */
-.preloader-logo-wrap::after {
-  content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(115deg, transparent 40%, rgba(255, 246, 232, .5) 46%, rgba(255, 255, 255, .9) 50%, rgba(255, 246, 232, .5) 54%, transparent 60%) no-repeat;
-  background-size: 260% 100%;
+/* Слои блика живут внутри обёртки герба: isolate держит их screen-смешивание
+   внутри группы, поэтому свет ложится только на сам герб и его ореол. */
+.preloader-logo-wrap { position: relative; display: inline-block; isolation: isolate; }
+
+/* Световая полоса: узкое горячее ядро, широкие мягкие плечи, тёплый шампанский
+   оттенок по краям ядра. Одна геометрия на все слои — полоса проходит по ним
+   синхронно, как один луч по металлу. */
+.preloader-logo-glow i,
+.preloader-logo-sheen,
+.preloader-logo-edge {
+  position: absolute; inset: 0; display: block; pointer-events: none;
+  background-repeat: no-repeat;
+  background-size: 300% 100%;
   background-position: 0% 0;
-  -webkit-mask: url('/img/logo-mark.png') center / contain no-repeat;
-  mask: url('/img/logo-mark.png') center / contain no-repeat;
-  mix-blend-mode: screen;
-  animation: preloader-shine 2.8s cubic-bezier(.45, 0, .25, 1) infinite;
+  animation: preloader-shine 2.6s cubic-bezier(.42, 0, .2, 1) infinite;
 }
 @keyframes preloader-shine {
   0% { background-position: 0% 0; }
-  55%, 100% { background-position: 100% 0; }
+  70%, 100% { background-position: 100% 0; }
 }
-.preloader-logo { display: block; width: 120px; height: auto; margin-bottom: 18px; filter: none; }
+
+/* Ореол: размытая копия силуэта лежит ЗА гербом — снаружи виден только свет,
+   который вышел за кромку. Даёт эффект подсветки из-за границы логотипа. */
+.preloader-logo-glow {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  filter: blur(9px);
+  mix-blend-mode: screen;
+  opacity: .7;
+}
+.preloader-logo-glow i {
+  background-image: linear-gradient(105deg,
+    transparent 26%,
+    rgba(201, 168, 126, .30) 38%,
+    rgba(255, 232, 200, .80) 48%,
+    rgba(255, 246, 232, .95) 52%,
+    rgba(255, 232, 200, .80) 56%,
+    rgba(201, 168, 126, .30) 68%,
+    transparent 80%);
+  -webkit-mask: url('/img/logo-mark.png') center / contain no-repeat;
+  mask: url('/img/logo-mark.png') center / contain no-repeat;
+}
+
+/* Сам герб — над ореолом: перекрывает его середину, оставляя снаружи свет. */
+.preloader-logo {
+  position: relative; z-index: 1;
+  display: block; width: 120px; height: auto; margin-bottom: 18px; filter: none;
+}
+
+/* Мягкий внутренний отсвет: металл под лучом светлеет целиком, но слабо —
+   основной акцент остаётся на кромке. */
+.preloader-logo-sheen {
+  z-index: 2;
+  background-image: linear-gradient(105deg,
+    transparent 30%,
+    rgba(255, 236, 208, .16) 42%,
+    rgba(255, 244, 228, .34) 50%,
+    rgba(255, 236, 208, .16) 58%,
+    transparent 70%);
+  -webkit-mask: url('/img/logo-mark.png') center / contain no-repeat;
+  mask: url('/img/logo-mark.png') center / contain no-repeat;
+  mix-blend-mode: screen;
+}
+
+/* Кромка: маска-кольцо — две копии силуэта, внешняя чуть больше герба,
+   внутренняя чуть меньше, и mask-composite: exclude вычитает одну из другой.
+   Слой сам на 6% шире логотипа (inset: -3%), поэтому в долях слоя это
+   99% и 92.5% — то есть 105% и 98% от самого герба: кольцо ложится на контур,
+   слегка заходит внутрь и ощутимо выходит наружу, не срезаясь границей лого. */
+.preloader-logo-edge {
+  inset: -3%; z-index: 3;
+  background-image: linear-gradient(105deg,
+    transparent 30%,
+    rgba(201, 168, 126, .35) 40%,
+    rgba(255, 240, 214, .85) 47%,
+    rgba(255, 253, 248, 1) 50%,
+    rgba(255, 240, 214, .85) 53%,
+    rgba(201, 168, 126, .35) 60%,
+    transparent 70%);
+  -webkit-mask-image: url('/img/logo-mark.png'), url('/img/logo-mark.png');
+  -webkit-mask-size: 99% 99%, 92.5% 92.5%;
+  -webkit-mask-position: center, center;
+  -webkit-mask-repeat: no-repeat, no-repeat;
+  -webkit-mask-composite: xor;
+  mask-image: url('/img/logo-mark.png'), url('/img/logo-mark.png');
+  mask-size: 99% 99%, 92.5% 92.5%;
+  mask-position: center, center;
+  mask-repeat: no-repeat, no-repeat;
+  mask-composite: exclude;
+  mix-blend-mode: screen;
+}
 .preloader-brand { font-size: 17px; font-weight: 600; letter-spacing: .3em; color: var(--ink); }
 .preloader-tag { color: var(--mut); font-family: var(--font-sans); font-size: 11px; letter-spacing: .12em; }
 .preloader-est { display: none; }
 .preloader-bar { width: 96px; height: 3px; margin-top: 26px; background: rgba(var(--line-rgb), .1); }
 .preloader-progress { background: var(--tint-fill); }
+
+/* Без движения: луч замирает на середине герба статичной подсветкой. */
+@media (prefers-reduced-motion: reduce) {
+  .preloader-inner { animation: none; }
+  .preloader-logo-glow i,
+  .preloader-logo-sheen,
+  .preloader-logo-edge { animation: none; background-position: 50% 0; }
+  .preloader-progress { animation: none; width: 100%; }
+}
 
 /* ---------- Каркас ---------- */
 .app { max-width: 480px; padding: 0 16px calc(92px + env(safe-area-inset-bottom)); }
@@ -111,7 +193,35 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 /* Large title экрана обмена, как в iOS. */
 .exchange-heading { margin: 6px 0 14px; align-items: flex-end; }
 .exchange-heading-left { gap: 12px; }
-.exchange-logo-badge { width: 36px; height: 36px; border: 0; border-radius: 0; object-fit: contain; box-shadow: none; }
+
+/* Знак обмена в шапке: две стрелки разворачиваются на пол-оборота с паузой,
+   по ним в такт проходит блик. Цвета стопов — токенами, как у графика. */
+.exchange-badge { width: 36px; height: 36px; flex: none; display: grid; place-items: center; }
+.ex-swap { width: 100%; height: 100%; display: block; overflow: visible; }
+.ex-arw, .ex-arw-hi { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.ex-arw { stroke: url(#exSwapGrad); }
+.ex-arw-hi { stroke: rgba(var(--tint-hi-rgb), .95); }
+.ex-stop-1 { stop-color: var(--sand-1); }
+.ex-stop-2 { stop-color: var(--tint-fill); }
+.ex-stop-3 { stop-color: var(--sand-2); }
+/* Маска блика: чёрный — прозрачно, белый — видно. */
+.ex-sheen-0, .ex-sheen-2 { stop-color: #000; }
+.ex-sheen-1 { stop-color: #fff; }
+/* transform-box: view-box — центр вращения считается от viewBox; 50% 50%
+   совпадает с центром стрелок при любом понимании transform-box. */
+.ex-swap-ring { transform-box: view-box; transform-origin: 50% 50%; animation: ex-swap 3.4s cubic-bezier(.62, 0, .32, 1) infinite; }
+.ex-sheen-band { animation: ex-sheen 3.4s cubic-bezier(.45, 0, .3, 1) infinite; }
+@keyframes ex-swap {
+  0% { transform: rotate(0deg); }
+  38% { transform: rotate(180deg); }
+  62% { transform: rotate(180deg); }
+  100% { transform: rotate(360deg); }
+}
+/* Полоса блика идёт слева направо и уходит за кадр: в паузе знак светится. */
+@keyframes ex-sheen {
+  0%, 20% { transform: translateX(0); }
+  70%, 100% { transform: translateX(70px); }
+}
 .exchange-heading h1 { font-size: 34px; font-weight: 600; letter-spacing: -.02em; line-height: 1.08; }
 .exchange-heading p { margin-top: 5px; color: var(--mut); font-size: 13px; }
 .exchange-heading p span { color: var(--mut); }
@@ -189,9 +299,10 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 .f-meta .row { padding: 10px 0; border-top: 1px solid var(--sep); font-size: 13px; }
 .f-meta .row b, .f-link { font-weight: 500; color: var(--ink); }
 .f-err { font-size: 13px; }
-.captcha { border-top: 1px solid var(--sep); }
-.cap-label { font-size: 13px; }
-.captcha input { border: 0; border-radius: 10px; background: var(--surface-2); font-size: 17px; padding: 10px; width: 72px; }
+.captcha { border-top: 1px solid var(--sep); gap: 8px; }
+.cap-label { flex: 0 1 auto; font-size: 13px; letter-spacing: 0; text-transform: none; }
+.cap-expr { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.captcha input { border: 0; border-radius: 10px; background: var(--surface-2); font-size: 17px; padding: 10px; width: 72px; flex: 0 0 auto; }
 
 /* ---------- Кнопки: плоские, 50 px, радиус 14 ---------- */
 .btn { min-height: 50px; border-radius: 999px; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
@@ -370,6 +481,24 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
   font-size: 14px; box-shadow: 0 6px 20px rgba(var(--shade-rgb), .35); backdrop-filter: none;
 }
 .demo-admin { border: 0; border-radius: 12px; background: var(--surface-2); color: var(--tint); font-size: 12px; }
+
+/* ---------- Отступ текста от иконок ---------- */
+/* Единый шаг между значком и подписью: иконка не прилипает к тексту ни в
+   кнопке, ни в строке списка, ни в подписи таб-бара. Шкала устройства
+   поднимает шаг вместе с самими иконками (devices.css). */
+.btn { gap: var(--gap-icon); }
+.btn-sm { gap: calc(var(--gap-icon) - 2px); }
+.nav button { gap: 5px; }
+.profile-row, .profile-link { gap: calc(var(--gap-icon) + 4px); }
+.active-order { gap: calc(var(--gap-icon) + 3px); }
+.profile-value { gap: 7px; }
+.profile-value svg { flex: none; }
+.f-link { gap: 7px; }
+.f-link svg { flex: none; }
+.rules-toggle { gap: 7px; }
+.rv-dist-score { gap: 5px; }
+.hdr-brand { gap: 12px; }
+.step { gap: 12px; }
 
 /* === ВЫРАВНИВАНИЕ: заголовки по центру (и прелоадер), инфо-текст строго по строкам, без двух колонок === */
 .preloader-inner,

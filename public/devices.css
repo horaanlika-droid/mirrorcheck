@@ -82,6 +82,7 @@ html[data-device='android'] {
   --ui-nav-fs: 11px;
   --r-card: 18px;
   --r-ctl: 14px;
+  --gap-icon: 11px;
   /* Roboto — системный шрифт Android, внешние шрифты не грузим. */
   --font-sans: 'Roboto', 'Noto Sans', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
 }
@@ -111,6 +112,7 @@ html[data-device='ipad'] {
   --ui-nav-fs: 12px;
   --r-card: 18px;
   --r-ctl: 14px;
+  --gap-icon: 13px;
 }
 
 /* ---------- применяем шкалу к компонентам ---------- */
@@ -173,6 +175,8 @@ html[data-device] .btn-sm { min-height: calc(var(--ui-btn) - 10px); }
 html[data-device] .profile-row,
 html[data-device] .profile-link { min-height: var(--ui-field); }
 html[data-device] .chart { height: var(--ui-chart); }
+/* Знак обмена в шапке растёт вместе с заголовком. */
+html[data-device] .exchange-badge { width: calc(var(--ui-title) + 2px); height: calc(var(--ui-title) + 2px); }
 
 /* Tab bar */
 html[data-device] .nav {
@@ -211,6 +215,7 @@ html[data-device] .nav button .nav-art {
     --ui-nav-btn: 46px;
     --ui-nav-ic: 22px;
     --ui-nav-fs: 9px;
+    --gap-icon: 8px;
   }
 }
 
@@ -249,7 +254,11 @@ html[data-device] .nav button .nav-art {
   html[data-device] .msg-bubble { font-size: 16px; }
   html[data-device] .chat-input textarea { font-size: 16px; }
 
-  html[data-device] .preloader-logo { width: 160px; height: 160px; }
+  /* Прелоадер крупнее, но строго в пропорции герба: слои блика считают
+     маску в процентах от той же коробки, и растянутый квадрат разошёлся бы
+     с самой картинкой. */
+  html[data-device] .preloader-logo { width: 160px; height: auto; }
+  html[data-device] .preloader-logo-glow { filter: blur(12px); }
 }
 
 /* === ВЫРАВНИВАНИЕ: заголовки по центру (и прелоадер), инфо-текст строго по строкам, без двух колонок — последний слой === */

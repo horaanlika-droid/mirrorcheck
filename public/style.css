@@ -1131,10 +1131,13 @@ body {
 /* ---------- капча: живой пример внутри формы ---------- */
 .captcha { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
 .captcha:empty { display: none; }
+/* Подпись занимает ровно свой текст: поле ответа стоит вплотную к примеру,
+   а не уехало на край строки. */
 .cap-label {
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--mut); flex: 1 1 auto;
+  color: var(--mut); flex: 0 1 auto; min-width: 0;
 }
+.cap-expr { color: var(--ink); font-weight: 700; letter-spacing: 0.14em; }
 .cap-label::first-line { letter-spacing: 0.08em; }
 .captcha input {
   width: 84px; flex: 0 0 auto; text-align: center;

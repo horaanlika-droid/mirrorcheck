@@ -75,12 +75,14 @@ test('весь арт сведён к одному оттенку бронзы: 
   assert.ok(spread < 6, `набор не различается по оттенкам: разброс ${spread.toFixed(2)}°`);
 });
 
-test('прелоадер: блик скользит по силуэту герба через альфа-маску логотипа', () => {
+// Блик по кромке герба, его слои и вибрация прелоадинга — test/preloader.test.js.
+test('прелоадер: слои блика описаны в ios.css, герб остаётся без фильтров', () => {
   assert.match(html, /<div class="preloader-logo-wrap">/, 'логотип обёрнут для блика');
-  assert.match(iosCss, /\.preloader-logo-wrap::after \{/, 'блик — слой над логотипом');
+  assert.match(iosCss, /\.preloader-logo-edge \{/, 'кромка — слой над логотипом');
   assert.match(iosCss, /mask: url\('\/img\/logo-mark\.png'\) center \/ contain no-repeat;/, 'маска — альфа самого герба');
   assert.match(iosCss, /mix-blend-mode: screen;/, 'свет прибавляется к металлу');
   assert.match(iosCss, /@keyframes preloader-shine \{/, 'анимация проскальзывания');
+  assert.match(iosCss, /\.preloader-logo \{[\s\S]*?filter: none;/, 'сам герб не подкрашен');
 });
 
 test('кнопки и сегменты — шампанские пилюли по референсу IMG_1230', () => {
@@ -144,7 +146,7 @@ test('навигация собрана из объёмных иконок, ин
   assert.equal(srcs()[4], '/img/hero-shield.png', 'пункт «Инфо» со щитом');
 });
 
-test('шапка обмена с монетами, завершение заявки — объёмный щит', async (t) => {
+test('шапка обмена — живой знак обмена, завершение заявки — объёмный щит', async (t) => {
   const paid = {
     id: 7, status: 'paid', currency: 'BTC', rub: 100_000, payRub: 100_000, crypto: 0.01,
     wallet, rate: 10_000_000, requisites: 'СБП +79991112233', receipt: 'r.pdf', txUrl: null,
@@ -153,7 +155,13 @@ test('шапка обмена с монетами, завершение заяв
   const done = { ...paid, status: 'completed', updatedAt: now };
   const d = await app(t, [paid], { order: done });
   const doc = d.window.document;
-  assert.equal(doc.querySelector('.exchange-logo-badge').getAttribute('src'), '/img/hero-coins.png');
+  // Монеты из шапки убраны: вместо них — анимированный знак обмена.
+  assert.equal(doc.querySelector('.exchange-heading-left img'), null, 'россыпи монет в шапке больше нет');
+  const badge = doc.querySelector('.exchange-heading-left .exchange-badge svg.ex-swap');
+  assert.ok(badge, 'в шапке стоит знак обмена');
+  assert.ok(badge.querySelector('.ex-swap-ring'), 'стрелки разворачиваются');
+  assert.ok(badge.querySelector('.ex-sheen-band'), 'по стрелкам идёт блик');
+  assert.equal(badge.querySelectorAll('.ex-arw path').length, 4, 'две стрелки путями');
   assert.ok(!doc.querySelector('#exOrder .okmark-art'), 'пока оплата не подтверждена — щита нет');
   //_pollOrder подтягивает завершение при возвращении вкладки_
   doc.dispatchEvent(new d.window.Event('visibilitychange'));

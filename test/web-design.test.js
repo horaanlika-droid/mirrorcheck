@@ -445,3 +445,59 @@ test('active order in details stage renders broker info, call-admin button and c
   assert.ok(btnCall, 'кнопка вызова админа на этапе заявки присутствует');
   assert.match(btnCall.textContent, /Позвать админа|Проблема/);
 });
+
+test('капча: поле ответа стоит вплотную к примеру, а не у края строки', async (t) => {
+  const a = await app(t);
+  const box = a.document.querySelector('#capOrder');
+  assert.ok(box, 'блок капчи отрисован на форме обмена');
+  const label = box.querySelector('.cap-label');
+  const input = box.querySelector('input');
+  assert.ok(label && input, 'в блоке есть подпись и поле ответа');
+  assert.match(label.textContent, /3 \+ 4 = \?/, 'в подписи — сам пример');
+  assert.ok(label.querySelector('.cap-expr'), 'пример выделен в подписи отдельно');
+  // Порядок в разметке: пример, сразу за ним поле — между ними только gap.
+  assert.equal(label.nextElementSibling, input, 'поле идёт сразу за примером');
+  assert.ok(label.textContent.trimEnd().endsWith('?'), 'за примером в подписи больше ничего нет');
+});
+
+test('капча: подпись не растягивается на всю строку и не уносит поле вправо', () => {
+  const iosCss = fs.readFileSync(path.join(__dirname, '../public/ios.css'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(__dirname, '../public/style.css'), 'utf8');
+  for (const [name, css] of [['ios.css', iosCss], ['style.css', styleCss]]) {
+    const cap = css.match(/\.cap-label \{[^}]*\}/)[0];
+    assert.doesNotMatch(cap, /flex: 1 1 auto/, `${name}: подпись не занимает всю строку`);
+    assert.match(cap, /flex: 0 1 auto/, `${name}: подпись сжимается по тексту`);
+  }
+  assert.match(iosCss, /\.captcha \{[^}]*gap: 8px;/, 'между примером и полем — маленький отступ');
+  assert.match(iosCss, /\.captcha input \{[^}]*flex: 0 0 auto;/, 'поле ответа не растягивается');
+});
+
+test('знак обмена в шапке: вместо монет — анимация в палитре приложения', async (t) => {
+  const a = await app(t);
+  const head = a.document.querySelector('.exchange-heading-left');
+  assert.ok(head, 'шапка экрана обмена отрисована');
+  assert.equal(head.querySelector('img'), null, 'три монеты из шапки убраны');
+  const svg = head.querySelector('.exchange-badge svg.ex-swap');
+  assert.ok(svg, 'на их месте — знак обмена');
+  // Сама геометрия: две стрелки, разворот и блик.
+  assert.equal(svg.querySelectorAll('.ex-arw path').length, 4, 'две стрелки описаны путями');
+  assert.ok(svg.querySelector('.ex-swap-ring'), 'есть вращающаяся группа');
+  assert.ok(svg.querySelector('.ex-sheen-band'), 'есть полоса блика');
+  assert.ok(svg.querySelector('.ex-arw-hi[mask="url(#exSheenMask)"]'), 'блик идёт по самим стрелкам');
+});
+
+test('знак обмена красивется токенами и замирает при prefers-reduced-motion', () => {
+  const appJs = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
+  const iosCss = fs.readFileSync(path.join(__dirname, '../public/ios.css'), 'utf8');
+  const devicesCss = fs.readFileSync(path.join(__dirname, '../public/devices.css'), 'utf8');
+  // Цветов в разметке нет: стопы градиента и маски раскрашены классами.
+  assert.doesNotMatch(appJs, /stop-color="#/, 'в разметке знака нет зашитых цветов');
+  assert.match(iosCss, /\.ex-stop-1 \{ stop-color: var\(--sand-1\); \}/, 'градиент — шампанский');
+  assert.match(iosCss, /\.ex-stop-2 \{ stop-color: var\(--tint-fill\); \}/);
+  assert.match(iosCss, /\.ex-arw-hi \{ stroke: rgba\(var\(--tint-hi-rgb\), \.95\); \}/, 'блик — тёплый белый');
+  // Движение: пол-оборота с паузой и блик в такт.
+  assert.match(iosCss, /\.ex-swap-ring \{[^}]*animation: ex-swap [\d.]+s/);
+  assert.match(iosCss, /@keyframes ex-swap \{/);
+  assert.match(iosCss, /@keyframes ex-sheen \{/);
+  assert.match(devicesCss, /html\[data-device\] \.exchange-badge \{ width: calc\(var\(--ui-title\) \+ 2px\)/, 'знак растёт вместе с заголовком');
+});
