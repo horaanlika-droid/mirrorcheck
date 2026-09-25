@@ -1924,6 +1924,51 @@
     return `<div class="card rv-cta"><div class="card-title">Оцените работу брокера</div>${reviewFormHtml('stRv', [o])}</div>`;
   }
 
+  /* Демо-оператор: карточка ответа площадки прямо в списке отзывов.
+     Работает там, где prompt() недоступен (Telegram WebView, iframe). */
+  function demoReplyPanelHtml() {
+    const latest = (S.reviews.list || []).find((x) => x.id === S.demoReplyFor) || (S.reviews.list || [])[0];
+    if (!latest) return '';
+    const current = (latest.reply && latest.reply.text) || '';
+    return `
+      <div class="card demo-reply">
+        <div class="card-title">Оператор · ответ на отзыв #${latest.id}</div>
+        <div class="rv-who-row"><b>${esc(latest.name)}</b>${starsHtml(latest.rating)}</div>
+        <textarea id="demoReplyText" class="rv-text" rows="3" maxlength="1000" placeholder="Ответ от имени PRICELEX…">${esc(current)}</textarea>
+        <div class="demo-reply-row">
+          <button class="btn btn-primary btn-sm" id="demoReplySave">${ICONS.check}<span>Опубликовать</span></button>
+          <button class="btn btn-ghost btn-sm" id="demoReplyRemove"><span>Снять ответ</span></button>
+          <button class="btn btn-ghost btn-sm" id="demoReplyClose"><span>Закрыть</span></button>
+        </div>
+      </div>`;
+  }
+
+  function wireDemoReply() {
+    const save = $('#demoReplySave');
+    if (!save) return;
+    const close = () => { S.demoReplyFor = null; renderReviews(); };
+    save.addEventListener('click', async () => {
+      const ta = $('#demoReplyText');
+      const text = String(ta ? ta.value : '').trim();
+      if (!text) { ta && ta.focus(); return toast('Напишите текст ответа или снимите его'); }
+      save.disabled = true;
+      try {
+        await api(`/api/admin/review/${S.demoReplyFor}/reply`, { method: 'POST', body: { text } });
+        await loadReviews();
+        toast('Ответ PRICELEX опубликован (демо)');
+      } finally {
+        close();
+      }
+    });
+    $('#demoReplyRemove').addEventListener('click', async () => {
+      await api(`/api/admin/review/${S.demoReplyFor}/reply`, { method: 'POST', body: { text: '' } });
+      await loadReviews();
+      toast('Ответ снят (демо)');
+      close();
+    });
+    $('#demoReplyClose').addEventListener('click', close);
+  }
+
   function renderReviews() {
     const v = $('#view-reviews');
     if (!v) return;
@@ -1949,6 +1994,7 @@
       </section>
       ${eligible.length ? `<div class="card"><div class="card-title">Ваш отзыв</div>${reviewFormHtml('tabRv', eligible)}</div>` : ''}
       ${!eligible.length ? `<div class="card rv-cta done"><div class="rv-cta-t">${ICONS.star}<span>${hasCompleted ? 'Спасибо — вы уже оценили свои обмены' : 'Оставить отзыв можно после завершённого обмена'}</span></div></div>` : ''}
+      ${S.isDemo && S.demoReplyFor ? demoReplyPanelHtml() : ''}
       <div class="card-title" style="padding:18px 4px 11px">Отзывы клиентов</div>
       <div id="rvList">${
         list.length
@@ -1961,6 +2007,7 @@
           : `<div class="card"><div class="empty"><div class="e-ic">✦</div>${loaded ? 'Отзывов пока нет — станьте первым, кто оценит PRICELEX.' : 'Загружаем отзывы…'}</div></div>`
       }</div>`;
     wireReviewForm('tabRv', () => (eligible[0] ? eligible[0].id : null));
+    wireDemoReply();
   }
 
   /* ---------- поддержка чат ---------- */
@@ -2081,23 +2128,17 @@
         const m = await api('/api/me');
         S.orders = m.orders;
         await loadReviews();
-        if (r.approved) {
-          renderReviews();
-          return toast(`Оператор одобрил отзывов: ${r.approved} (демо)`);
-        }
+        if (r.approved) toast(`Оператор одобрил отзывов: ${r.approved} (демо)`);
         const latest = (S.reviews.list || [])[0];
         if (!latest) {
           renderReviews();
           return toast('Новых отзывов для оператора нет (демо)');
         }
-        const text = typeof prompt === 'function'
-          ? prompt('Ответ PRICELEX на отзыв (пусто — снять):', (latest.reply && latest.reply.text) || '')
-          : null;
-        if (text == null) { renderReviews(); return; }
-        await api(`/api/admin/review/${latest.id}/reply`, { method: 'POST', body: { text } });
-        await loadReviews();
+        // Ответ собирается в карточке внутри списка отзывов: prompt() в Telegram
+        // и во встроенных WebView блокируется, и ответ площадки просто не появлялся.
+        S.demoReplyFor = latest.id;
         renderReviews();
-        return toast(String(text).trim() ? 'Ответ опубликован (демо)' : 'Ответ снят (демо)');
+        return;
       }
       if (!S.order) return toast('Сначала создайте заявку на обмен');
       const o = S.order;
