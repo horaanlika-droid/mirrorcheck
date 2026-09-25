@@ -15,7 +15,7 @@ body { isolation: isolate; }
 .bg-img {
   position: absolute; inset: -10%;
   background-image: url('/img/dollar-scan.jpg');
-  background-size: auto max(120vh, 1000px);
+  background-size: auto clamp(1000px, 120vh, 1600px);
   background-position: 70% 18%;
   background-repeat: no-repeat;
   opacity: .13;
@@ -30,7 +30,7 @@ body { isolation: isolate; }
 .bg-grid {
   position: absolute; inset: -12%;
   background-image: url('/img/dollar-scan.jpg');
-  background-size: auto max(105vh, 850px);
+  background-size: auto clamp(850px, 105vh, 1400px);
   background-position: 24% 88%;
   background-repeat: no-repeat;
   opacity: .09;
@@ -68,21 +68,21 @@ body { isolation: isolate; }
 /* Responsive background adjustments across devices */
 @media (max-width: 480px) {
   .bg-img {
-    background-size: auto max(112vh, 820px);
+    background-size: auto clamp(820px, 112vh, 1400px);
     background-position: 62% 16%;
     opacity: .14;
     -webkit-mask-image: radial-gradient(ellipse at 64% 22%, #000 16%, transparent 76%);
     mask-image: radial-gradient(ellipse at 64% 22%, #000 16%, transparent 76%);
   }
   .bg-grid {
-    background-size: auto max(95vh, 720px);
+    background-size: auto clamp(720px, 95vh, 1200px);
     background-position: 18% 92%;
     opacity: .08;
   }
 }
 @media (min-width: 1024px) {
   .bg-img {
-    background-size: auto max(130vh, 1200px);
+    background-size: auto clamp(1200px, 130vh, 1800px);
     background-position: 68% 22%;
     opacity: .12;
   }

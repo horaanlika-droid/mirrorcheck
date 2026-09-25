@@ -6,12 +6,28 @@ const crypto = require('crypto');
 const TTL_MS = 5 * 60 * 1000;
 const pending = new Map(); // id -> { answer, exp }
 
-const rnd = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
+function rnd(min, max) {
+  try {
+    // crypto.randomInt is inclusive min, exclusive max+1
+    return crypto.randomInt(min, max + 1);
+  } catch {
+    return min + Math.floor(Math.random() * (max - min + 1));
+  }
+}
 
 function sweep() {
   const now = Date.now();
   for (const [id, row] of pending) {
     if (now > row.exp) pending.delete(id);
+  }
+  // Prevent unbounded growth
+  if (pending.size > 1000) {
+    const toDelete = pending.size - 500;
+    let i = 0;
+    for (const k of pending.keys()) {
+      if (i++ >= toDelete) break;
+      pending.delete(k);
+    }
   }
 }
 

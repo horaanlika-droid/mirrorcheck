@@ -42,12 +42,77 @@ const clientUser = (u) => ({
 const publicBrokerApp = (a) =>
   a ? { id: a.id, status: a.status, experience: a.experience, contact: a.contact, createdAt: a.createdAt } : null;
 
+function isValidPublicHost(host) {
+  if (!host || typeof host !== 'string') return false;
+  const h = host.trim();
+  if (!h) return false;
+  if (h.length > 253) return false;
+  if (/[\s<>]/.test(h)) return false;
+  if (/^(localhost|127\.|0\.0\.0\.0|\[|192\.168\.|10\.)/.test(h)) return false;
+  if (h.includes('127.0.0.1')) return false;
+  if (!/^[a-zA-Z0-9.-]+(?::\d+)?$/.test(h)) return false;
+  const hostname = h.split(':')[0];
+  if (!hostname.includes('.')) return false;
+  if (hostname.startsWith('-') || hostname.endsWith('-')) return false;
+  if (hostname.startsWith('.') || hostname.endsWith('.')) return false;
+  return true;
+}
+
+function isValidWallet(wallet, currency) {
+  const w = String(wallet || '').trim();
+  if (w.length < 26 || w.length > 128) return false;
+  if (/\s/.test(w)) return false;
+  if (currency === 'BTC') {
+    if (/^(bc1|[13])[a-zA-Z0-9]{25,90}$/.test(w)) return true;
+    return /^[a-zA-Z0-9]{26,90}$/.test(w);
+  }
+  if (currency === 'GRAM') {
+    if (/^[a-zA-Z0-9_-]{26,90}$/.test(w)) return true;
+    if (/^0:[a-fA-F0-9]{64}$/.test(w)) return true;
+    return /^[a-zA-Z0-9]{26,128}$/.test(w);
+  }
+  return /^[a-zA-Z0-9]{26,128}$/.test(w);
+}
+
+function createRateLimiter({ windowMs = 60000, max = 30 } = {}) {
+  const hits = new Map();
+  return (key) => {
+    const now = Date.now();
+    const entry = hits.get(key) || { count: 0, resetAt: now + windowMs };
+    if (now > entry.resetAt) {
+      entry.count = 0;
+      entry.resetAt = now + windowMs;
+    }
+    entry.count += 1;
+    hits.set(key, entry);
+    if (hits.size > 5000 && Math.random() < 0.01) {
+      for (const [k, v] of hits) if (now > v.resetAt) hits.delete(k);
+    }
+    return entry.count <= max;
+  };
+}
+const orderLimiter = createRateLimiter({ windowMs: 60000, max: 100 });
+const supportLimiter = createRateLimiter({ windowMs: 60000, max: 200 });
+const captchaLimiter = createRateLimiter({ windowMs: 60000, max: 300 });
+
 function startWeb() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', true);
   app.set('query parser', 'extended');
   app.use(express.json({ limit: '12mb' }));
+
+  // Security headers
+  app.use((req, res, next) => {
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('X-Frame-Options', 'DENY');
+    res.set('X-XSS-Protection', '0');
+    res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    if (req.path === '/' || req.path === '/index.html') {
+      res.set('X-Frame-Options', 'ALLOWALL');
+    }
+    next();
+  });
 
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store, private');
@@ -66,22 +131,30 @@ function startWeb() {
     if (req.method === 'GET') {
       const proto = String(req.get('x-forwarded-proto') || 'https').split(',')[0].trim();
       const host = String(req.get('x-forwarded-host') || req.get('host') || '').split(',')[0].trim();
-      if (
-        host &&
-        !/^(localhost|127\.|0\.0\.0\.0|\[|192\.168\.|10\.)/.test(host) &&
-        !host.includes('127.0.0.1')
-      ) {
-        const url = `${proto}://${host}`.replace(/\/+$/, '');
+      if (isValidPublicHost(host)) {
+        const safeProto = proto === 'http' ? 'http' : 'https';
+        const url = `${safeProto}://${host}`.replace(/\/+$/, '');
         if (url !== store.get().settings.publicUrl) {
-          store.mutate((db) => {
-            db.settings.publicUrl = url;
-          });
-          // Адрес нигде не показывается: он нужен только для кнопки меню Telegram.
-          bus.emit('public_url', url);
+          try {
+            // eslint-disable-next-line no-new
+            new URL(url);
+            store.mutate((db) => {
+              db.settings.publicUrl = url;
+            });
+            bus.emit('public_url', url);
+          } catch {}
         }
       }
     }
     next();
+  });
+
+  // JSON parse error handling
+  app.use((err, _req, res, next) => {
+    if (err && err.type === 'entity.parse.failed') {
+      return res.status(400).json({ error: 'Неверный формат запроса' });
+    }
+    next(err);
   });
 
   const auth = (req) => {
@@ -119,8 +192,6 @@ function startWeb() {
 
   app.get('/api/settings', (req, res) => res.json(store.publicSettings()));
 
-  // Реальная история курса для графика в приложении: точки берутся из онлайна
-  // за неделю с нашим процентом сверху и пополняются при каждом автообновлении.
   app.get('/api/rates/history', async (req, res) => {
     const hours = Math.min(168, Math.max(1, Number(req.query.hours) || 168));
     const since = Date.now() - hours * 3600 * 1000;
@@ -144,10 +215,13 @@ function startWeb() {
     res.json({ me: clientUser(user), orders: store.userOrders(user.id).map(clientOrder) });
   });
 
-  // Математическая капча: вопрос на создание заявки и форму «стать брокером».
   app.get('/api/captcha', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    if (!captchaLimiter(ip)) {
+      return res.status(429).json({ error: 'Слишком много запросов, подождите' });
+    }
     res.json(captcha.issue());
   });
 
@@ -160,6 +234,10 @@ function startWeb() {
   app.post('/api/orders', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    if (!orderLimiter(a.user.id || ip)) {
+      return res.status(429).json({ error: 'Слишком много заявок, подождите минуту' });
+    }
     if (!needCaptcha(req, res)) return;
     const s = store.get().settings;
     const currency = req.body.currency;
@@ -181,8 +259,7 @@ function startWeb() {
     }
     if (rub < s.minRub) return res.status(400).json({ error: `Минимальная сумма — ${s.minRub} ₽` });
     if (rub > s.maxRub) return res.status(400).json({ error: `Максимальная сумма — ${s.maxRub} ₽` });
-    if (wallet.length < 26 || wallet.length > 128 || /\s/.test(wallet))
-      return res.status(400).json({ error: 'Проверьте адрес кошелька' });
+    if (!isValidWallet(wallet, currency)) return res.status(400).json({ error: 'Проверьте адрес кошелька' });
     const user = store.touchUser(a.user, req.body.startParam || '');
     const officialRate = currency === 'BTC' ? s.baseRateBTC : s.baseRateGRAM;
     const order = store.createOrder({
@@ -326,14 +403,11 @@ function startWeb() {
     res.json({ ok: true, order: clientOrder(upd) });
   });
 
-  /* ---------- отзывы ---------- */
-  // Посетители видят только одобренные отзывы, автор — ещё и свои (как опубликованные).
   app.get('/api/reviews', (req, res) => {
     const a = auth(req);
     res.json(store.publicReviews(100, a ? a.user.id : null));
   });
 
-  // Отзыв можно оставить только по своей завершённой заявке — один на заявку.
   app.post('/api/reviews', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
@@ -356,8 +430,6 @@ function startWeb() {
     res.json({ review: { ...store.publicReview(review), orderId: review.orderId }, order: clientOrder(o) });
   });
 
-  /* ---------- заявка «стать брокером» ---------- */
-  // Кандидат рассказывает про опыт и оставляет контакт; заявка уходит администрации.
   app.post('/api/broker/apply', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
@@ -386,7 +458,6 @@ function startWeb() {
     res.json({ application: publicBrokerApp(store.brokerAppFor(a.user.id)) });
   });
 
-  /* ---------- support chat ---------- */
   app.get('/api/support/messages', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
@@ -397,6 +468,10 @@ function startWeb() {
   app.post('/api/support/message', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
+    const ip = a.user.id || req.ip || 'unknown';
+    if (!supportLimiter(ip)) {
+      return res.status(429).json({ error: 'Слишком много сообщений, подождите' });
+    }
     const text = String(req.body?.text || '').trim();
     if (!text) return res.status(400).json({ error: 'Сообщение не может быть пустым' });
     if (text.length > 2000) return res.status(400).json({ error: 'Сообщение слишком длинное (до 2000 символов)' });
@@ -412,7 +487,6 @@ function startWeb() {
     res.json({ ok: true });
   });
 
-  // ДЕМО-пульт оператора: существует ТОЛЬКО когда BOT_TOKEN не задан (превью без бота).
   if (!config.botToken) {
     app.post('/api/admin/order/:id/broker', (req, res) => {
       const o = store.getOrder(req.params.id);
@@ -456,7 +530,6 @@ function startWeb() {
       bus.emit('order_event', { order: upd, type: 'tx' });
       res.json({ order: clientOrder(upd) });
     });
-    // Демо-модерация: публикует все отзывы, ожидающие проверки.
     app.post('/api/admin/reviews/approve-pending', (_req, res) => {
       const list = store.reviewsByStatus('pending').map((r) => store.updateReview(r.id, { status: 'approved' }));
       res.json({ approved: list.length });
