@@ -186,6 +186,14 @@ test('review reply from PRICELEX is rendered under the review', async (t) => {
   assert.match(item.querySelector('.rv-reply').textContent, /PRICELEX/);
 });
 
+test('reply of PRICELEX wraps by lines: CSS keeps word-wrap and forbids long lines/columns', () => {
+  const { readFileSync } = require('node:fs');
+  const { join } = require('node:path');
+  const fixCss = readFileSync(join(__dirname, '../public/fix.css'), 'utf8');
+  assert.match(fixCss, /\.rv-reply p \{\s*word-break: normal !important;\s*overflow-wrap: anywhere !important;/s, 'ответ площадки переносится по строкам с защитой фикс-слоя');
+  assert.match(fixCss, /\.rv-reply p \{\s*word-break: normal !important;[^}]*white-space: normal !important;/s, 'без застывших в одну строку кусков и без колонок');
+});
+
 test('calculator converts both ways and never mentions any fee', async (t) => {
   const done = { ...initial, status: 'completed' };
   const a = await app(t, done);
