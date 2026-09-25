@@ -1,0 +1,252 @@
+/* PRICELEX · device scale layer (поверх ios.css)
+   Разные размеры интерфейса под разные устройства: iPhone, Android, iPad.
+   Класс устройства app.js/devices.js кладёт в <html data-device="…">, здесь
+   по нему переключается шкала: ширина колонки, поля и кнопки, крупный
+   заголовок, график и tab bar. Палитра и компоненты прежние (ios.css):
+   графит + шампанская бронза, только метрики другие.
+   Ширина окна тоже участвует: до 380 px — компактная шкала маленьких
+   телефонов (iPhone SE/mini, бюджетные Android), от 700 px — планшетная
+   сетка для любой платформы (Android-планшет, широкий браузер). */
+
+/* ---------- шкала по умолчанию — компактный iPhone ---------- */
+:root {
+  --app-w: 480px;        /* ширина колонки контента */
+  --ui-gutter: 16px;     /* боковые поля */
+  --ui-pad: 16px;        /* внутренний отступ карточек */
+  --ui-gap: 12px;        /* между карточками */
+  --ui-card-r: 16px;     /* радиус карточек */
+  --ui-btn: 50px;        /* высота главной кнопки */
+  --ui-btn-r: 14px;
+  --ui-btn-fs: 17px;
+  --ui-field: 50px;      /* высота поля */
+  --ui-ctl-fs: 17px;     /* текст в полях */
+  --ui-title: 34px;      /* large title «Обмен» */
+  --ui-h-page: 17px;     /* title в navigation bar */
+  --ui-h2: 22px;         /* заголовок заявки и секций */
+  --ui-metric: clamp(32px, 9vw, 40px);
+  --ui-metric-lg: clamp(44px, 13vw, 52px);
+  --ui-hero-num: 48px;
+  --ui-chart: 96px;
+  --ui-nav-btn: 48px;
+  --ui-nav-ic: 24px;
+  --ui-nav-fs: 10px;
+}
+
+/* ---------- iPhone: компактная телефонная шкала (текущий вид ios.css) ---------- */
+html[data-device='iphone'] {
+  --app-w: 480px;
+  --ui-gutter: 16px;
+  --ui-pad: 16px;
+  --ui-gap: 12px;
+  --ui-card-r: 16px;
+  --ui-btn: 50px;
+  --ui-btn-r: 14px;
+  --ui-btn-fs: 17px;
+  --ui-field: 50px;
+  --ui-ctl-fs: 17px;
+  --ui-title: 34px;
+  --ui-h-page: 17px;
+  --ui-h2: 22px;
+  --ui-metric: clamp(32px, 9vw, 40px);
+  --ui-metric-lg: clamp(44px, 13vw, 52px);
+  --ui-hero-num: 48px;
+  --ui-chart: 96px;
+  --ui-nav-btn: 48px;
+  --ui-nav-ic: 24px;
+  --ui-nav-fs: 10px;
+  --r-card: 16px;
+  --r-ctl: 12px;
+}
+
+/* ---------- Android: шкала Material — цели 52 px, Roboto, сетка 8dp ---------- */
+html[data-device='android'] {
+  --app-w: 520px;
+  --ui-gutter: 16px;
+  --ui-pad: 18px;
+  --ui-gap: 14px;
+  --ui-card-r: 18px;
+  --ui-btn: 52px;
+  --ui-btn-r: 16px;
+  --ui-btn-fs: 16px;
+  --ui-field: 52px;
+  --ui-ctl-fs: 16px;
+  --ui-title: 32px;
+  --ui-h-page: 18px;
+  --ui-h2: 22px;
+  --ui-metric: clamp(34px, 9vw, 44px);
+  --ui-metric-lg: clamp(46px, 13vw, 56px);
+  --ui-hero-num: 52px;
+  --ui-chart: 104px;
+  --ui-nav-btn: 52px;
+  --ui-nav-ic: 24px;
+  --ui-nav-fs: 11px;
+  --r-card: 18px;
+  --r-ctl: 14px;
+  /* Roboto — системный шрифт Android, внешние шрифты не грузим. */
+  --font-sans: 'Roboto', 'Noto Sans', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+}
+html[data-device='android'] body { font-family: var(--font-sans); }
+
+/* ---------- iPad: планшетная шкала — широкая колонка, крупные цели ---------- */
+html[data-device='ipad'] {
+  --app-w: 700px;
+  --ui-gutter: 28px;
+  --ui-pad: 22px;
+  --ui-gap: 16px;
+  --ui-card-r: 18px;
+  --ui-btn: 56px;
+  --ui-btn-r: 16px;
+  --ui-btn-fs: 18px;
+  --ui-field: 56px;
+  --ui-ctl-fs: 17px;
+  --ui-title: 40px;
+  --ui-h-page: 20px;
+  --ui-h2: 26px;
+  --ui-metric: clamp(44px, 6vw, 56px);
+  --ui-metric-lg: clamp(56px, 8vw, 68px);
+  --ui-hero-num: 60px;
+  --ui-chart: 132px;
+  --ui-nav-btn: 56px;
+  --ui-nav-ic: 28px;
+  --ui-nav-fs: 12px;
+  --r-card: 18px;
+  --r-ctl: 14px;
+}
+
+/* ---------- применяем шкалу к компонентам ---------- */
+html[data-device] .app {
+  max-width: var(--app-w);
+  padding-left: var(--ui-gutter);
+  padding-right: var(--ui-gutter);
+}
+
+html[data-device] .hdr {
+  margin-left: calc(-1 * var(--ui-gutter));
+  margin-right: calc(-1 * var(--ui-gutter));
+  padding-left: var(--ui-gutter);
+  padding-right: var(--ui-gutter);
+}
+html[data-device] .hdr-page-title { font-size: var(--ui-h-page); }
+
+html[data-device] .card,
+html[data-device] .card-hero,
+html[data-device] .editorial,
+html[data-device] .rv-hero,
+html[data-device] .rv-item,
+html[data-device] .stage,
+html[data-device] .active-order,
+html[data-device] .profile-identity,
+html[data-device] .req-box,
+html[data-device] .chat-box {
+  padding: var(--ui-pad);
+}
+html[data-device] .card,
+html[data-device] .card-hero { border-radius: var(--ui-card-r) !important; }
+html[data-device] .card + .card,
+html[data-device] .card.exchange-form-card,
+html[data-device] .card.wallet-card,
+html[data-device] .brokers-pool-card,
+html[data-device] .profile-settings,
+html[data-device] .profile-links { margin-top: var(--ui-gap); }
+html[data-device] .profile-settings,
+html[data-device] .profile-links { padding: 0 0 0 var(--ui-pad); }
+
+/* Типографика */
+html[data-device] .exchange-heading h1 { font-size: var(--ui-title); }
+html[data-device] .metric { font-size: var(--ui-metric); }
+html[data-device] .rv-score .metric { font-size: var(--ui-metric-lg); }
+html[data-device] .pay-amount .v { font-size: var(--ui-metric); }
+html[data-device] .stage-title,
+html[data-device] .display { font-size: var(--ui-h2); }
+html[data-device] .dm-num { font-size: var(--ui-hero-num); }
+
+/* Поля, кнопки, сегменты */
+html[data-device] .field { min-height: var(--ui-field); border-radius: var(--r-ctl); }
+html[data-device] .field input,
+html[data-device] .field textarea { font-size: var(--ui-ctl-fs); }
+html[data-device] .btn {
+  min-height: var(--ui-btn);
+  border-radius: var(--ui-btn-r);
+  font-size: var(--ui-btn-fs);
+}
+html[data-device] .btn-sm { min-height: calc(var(--ui-btn) - 10px); }
+html[data-device] .profile-row,
+html[data-device] .profile-link { min-height: var(--ui-field); }
+html[data-device] .chart { height: var(--ui-chart); }
+
+/* Tab bar */
+html[data-device] .nav {
+  bottom: 0;
+  padding-top: 6px;
+}
+html[data-device] .nav button {
+  min-height: var(--ui-nav-btn);
+  font-size: var(--ui-nav-fs);
+}
+html[data-device] .nav button svg {
+  width: var(--ui-nav-ic);
+  height: var(--ui-nav-ic);
+}
+
+/* ---------- компактные телефоны: iPhone SE/mini, маленькие Android ---------- */
+@media (max-width: 379px) {
+  :root,
+  html[data-device] {
+    --app-w: 100%;
+    --ui-gutter: 13px;
+    --ui-pad: 14px;
+    --ui-gap: 10px;
+    --ui-btn: 48px;
+    --ui-btn-fs: 16px;
+    --ui-field: 48px;
+    --ui-ctl-fs: 16px;
+    --ui-title: 28px;
+    --ui-h-page: 16px;
+    --ui-h2: 20px;
+    --ui-metric: clamp(28px, 11vw, 34px);
+    --ui-metric-lg: clamp(38px, 14vw, 46px);
+    --ui-hero-num: 42px;
+    --ui-chart: 88px;
+    --ui-nav-btn: 46px;
+    --ui-nav-ic: 22px;
+    --ui-nav-fs: 9px;
+  }
+}
+
+/* ---------- широкие экраны: планшетная сетка для любой платформы ---------- */
+@media (min-width: 700px) {
+  :root,
+  html[data-device] { --app-w: 700px; }
+
+  /* Tab bar вровень с экраном, но пункты — по ширине колонки контента. */
+  html[data-device] .nav {
+    padding-left: max(24px, calc((100% - var(--app-w)) / 2));
+    padding-right: max(24px, calc((100% - var(--app-w)) / 2));
+  }
+
+  /* Ленты историй и отзывов раскладываются в две колонки. */
+  html[data-device] #histList,
+  html[data-device] #rvList {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--ui-gap);
+    align-items: start;
+  }
+  html[data-device] #histList > .h-item + .h-item,
+  html[data-device] #rvList > .rv-item + .rv-item { margin-top: 0; }
+  html[data-device] #histList > *:only-child,
+  html[data-device] #rvList > *:only-child { grid-column: 1 / -1; }
+
+  /* Шаги рефералов — три колонки. */
+  html[data-device] .steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--ui-gap);
+  }
+
+  /* Планшетный текст в чате поддержки. */
+  html[data-device] .msg-bubble { font-size: 16px; }
+  html[data-device] .chat-input textarea { font-size: 16px; }
+
+  html[data-device] .preloader-logo { width: 160px; height: 160px; }
+}
