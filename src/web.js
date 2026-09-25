@@ -55,7 +55,7 @@ function startWeb() {
   });
 
   app.use((req, res, next) => {
-    if (req.method === 'GET' && (req.path === '/' || req.path === '/index.html' || req.path === '/app.js')) {
+    if (req.method === 'GET' && (req.path === '/' || req.path === '/index.html' || req.path === '/app.js' || req.path === '/devices.js')) {
       res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
       res.set('Pragma', 'no-cache');
     }
