@@ -10,8 +10,8 @@
     try {
       tg.ready();
       tg.expand();
-      tg.setHeaderColor && tg.setHeaderColor('#091522');
-      tg.setBackgroundColor && tg.setBackgroundColor('#091522');
+      tg.setHeaderColor && tg.setHeaderColor('#080d11');
+      tg.setBackgroundColor && tg.setBackgroundColor('#080d11');
     } catch (e) {}
     initData = tg.initData || '';
     startParam = tg.startParam || '';
@@ -238,16 +238,16 @@
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <linearGradient id="plLine${id}" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stop-color="#a07a32"/><stop offset="50%" stop-color="#dfbb65"/><stop offset="100%" stop-color="#f5d98e"/>
+            <stop offset="0%" stop-color="#7d6a4f"/><stop offset="50%" stop-color="#c9a87e"/><stop offset="100%" stop-color="#e3c9a2"/>
           </linearGradient>
           <linearGradient id="plArea${id}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(237,201,110,.22)"/><stop offset="100%" stop-color="rgba(237,201,110,0)"/>
+            <stop offset="0%" stop-color="rgba(201,168,126,.22)"/><stop offset="100%" stop-color="rgba(201,168,126,0)"/>
           </linearGradient>
           <radialGradient id="plDot${id}">
-            <stop offset="0%" stop-color="rgba(255,226,151,.45)"/><stop offset="100%" stop-color="rgba(255,226,151,0)"/>
+            <stop offset="0%" stop-color="rgba(243,218,182,.45)"/><stop offset="100%" stop-color="rgba(243,218,182,0)"/>
           </radialGradient>
           <linearGradient id="plDip${id}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(95,186,151,0)"/><stop offset="70%" stop-color="rgba(95,186,151,.10)"/><stop offset="100%" stop-color="rgba(95,186,151,.22)"/>
+            <stop offset="0%" stop-color="rgba(127,176,155,0)"/><stop offset="70%" stop-color="rgba(127,176,155,.10)"/><stop offset="100%" stop-color="rgba(127,176,155,.22)"/>
           </linearGradient>
         </defs>
         ${grid.join('')}
@@ -1066,6 +1066,10 @@
         </button>
       </section>
       <button class="profile-logout" id="profileLogout" type="button">Выйти из приложения</button>
+      <div class="profile-foot">
+        <div class="profile-foot-mark">PRICELEX</div>
+        <div class="profile-foot-tag">Тихие деньги говорят громче всех.</div>
+      </div>
     `;
 
     view.querySelectorAll('[data-go]').forEach((button) => button.addEventListener('click', () => {
