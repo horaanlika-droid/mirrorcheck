@@ -10,8 +10,7 @@
     try {
       tg.ready();
       tg.expand();
-      tg.setHeaderColor && tg.setHeaderColor('#080d11');
-      tg.setBackgroundColor && tg.setBackgroundColor('#080d11');
+      // Цвета шапки и фона Telegram ставит theme.js под текущую тему оформления.
     } catch (e) {}
     initData = tg.initData || '';
     startParam = tg.startParam || '';
@@ -369,6 +368,7 @@
     user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.8-3.4 3.3-5.2 7.5-5.2s6.7 1.8 7.5 5.2"/></svg>',
     menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
     bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>',
+    theme: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6.5 6.5 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M17 4h.01M20 8h.01"/></svg>',
     chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
   };
 
@@ -444,17 +444,18 @@
     el.innerHTML = `
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         <defs>
+          <!-- Цвета стопов заданы классами в reference.css: график следует теме оформления. -->
           <linearGradient id="plLine${id}" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stop-color="#7d6a4f"/><stop offset="50%" stop-color="#c9a87e"/><stop offset="100%" stop-color="#e3c9a2"/>
+            <stop class="gs-line-1" offset="0%"/><stop class="gs-line-2" offset="50%"/><stop class="gs-line-3" offset="100%"/>
           </linearGradient>
           <linearGradient id="plArea${id}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(201,168,126,.22)"/><stop offset="100%" stop-color="rgba(201,168,126,0)"/>
+            <stop class="gs-area-1" offset="0%"/><stop class="gs-area-2" offset="100%"/>
           </linearGradient>
           <radialGradient id="plDot${id}">
-            <stop offset="0%" stop-color="rgba(243,218,182,.45)"/><stop offset="100%" stop-color="rgba(243,218,182,0)"/>
+            <stop class="gs-dot-1" offset="0%"/><stop class="gs-dot-2" offset="100%"/>
           </radialGradient>
           <linearGradient id="plDip${id}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(127,176,155,0)"/><stop offset="70%" stop-color="rgba(127,176,155,.10)"/><stop offset="100%" stop-color="rgba(127,176,155,.22)"/>
+            <stop class="gs-dip-1" offset="0%"/><stop class="gs-dip-2" offset="70%"/><stop class="gs-dip-3" offset="100%"/>
           </linearGradient>
         </defs>
         ${grid.join('')}
@@ -727,18 +728,19 @@
     $('.app').classList.toggle('subpage', isSubpage());
     if (!visible) { nav.innerHTML = ''; return; }
 
+    // Объёмные бронзовые иконки (ref IMG_1229): генерация + tools/png-key.js.
     const last = S.tab === 'info'
-      ? ['info', 'Инфо', ICONS.info]
-      : ['profile', 'Профиль', ICONS.user];
+      ? ['info', 'Инфо', '/img/hero-shield.png']
+      : ['profile', 'Профиль', '/img/tab-profile.png'];
     const items = [
-      ['exchange', 'Обмен', ICONS.swap],
-      ['history', 'История', ICONS.clock],
-      ['reviews', 'Отзывы', ICONS.star],
-      ['refs', 'Рефералы', ICONS.users],
+      ['exchange', 'Обмен', '/img/tab-exchange.png'],
+      ['history', 'История', '/img/tab-history.png'],
+      ['reviews', 'Отзывы', '/img/tab-reviews.png'],
+      ['refs', 'Рефералы', '/img/tab-refs.png'],
       last,
     ];
     nav.innerHTML = items
-      .map(([id, label, icon]) => `<button type="button" data-tab="${id}" class="${S.tab === id ? 'on' : ''}">${icon}<span>${label}</span></button>`)
+      .map(([id, label, art]) => `<button type="button" data-tab="${id}" class="${S.tab === id ? 'on' : ''}"><img class="nav-art" src="${art}" alt="" width="26" height="26" /><span>${label}</span></button>`)
       .join('');
     nav.querySelectorAll('button').forEach((button) =>
       button.addEventListener('click', () => {
@@ -754,7 +756,7 @@
     $('#view-exchange').innerHTML = `
       <div class="exchange-heading ${S.order && S.orderOpen ? 'hidden' : ''}">
         <div class="exchange-heading-left">
-          <img class="exchange-logo-badge" src="/img/logo-mark.png" alt="PRICELEX" width="38" height="38" />
+          <img class="exchange-logo-badge" src="/img/hero-coins.png" alt="" width="38" height="38" />
           <div><h1>Обмен</h1><p>RUB <span>→</span> BTC / GRAM</p></div>
         </div>
         <div class="brokers-online-chip" title="Брокеров PRICELEX в сети">
@@ -1212,7 +1214,7 @@
     } else if (o.status === 'completed') {
       box.innerHTML = `
         <div class="card stage">
-          <svg class="okmark" viewBox="0 0 100 100"><circle cx="50" cy="50" r="41"/><path d="M32 51l13 13 24-27"/></svg>
+          <img class="okmark-art" src="/img/hero-shield.png" alt="" width="88" height="88" />
           <div class="stage-title">Обмен завершён!</div>
           <div class="stage-sub">Брокер <b>${esc(o.broker || 'stony montana')}</b> завершил сделку: ${fmtRub(o.payRub || o.rub)} → <b>${fmtCrypto(o.crypto, o.currency)}</b> отправлены на ваш кошелёк <code>${esc(o.wallet)}</code>.</div>
           ${o.txUrl ? `
@@ -1460,6 +1462,23 @@
     if (cp) cp.addEventListener('click', () => copyText(link, 'Ссылка скопирована'));
   }
 
+  /* ---------- тема оформления: тёмная, светлая, авто ---------- */
+  // Палитру переключает слой theme.css по <html data-theme>; theme.js разрешает
+  // режим (сохранённый выбор → тема Telegram → системная). Здесь — переключатель
+  // в профиле и живая подпись текущего состояния.
+  const THEME_MODES = ['light', 'dark', 'system'];
+  const THEME_MODE_LABEL = { light: 'Светлая', dark: 'Тёмная', system: 'Авто' };
+  const themeApi = () => window.PRICELEX_THEME || null;
+  const themeState = () => {
+    const api = themeApi();
+    return api ? api.get() : { mode: 'dark', theme: 'dark' };
+  };
+  const themeValueLabel = () => {
+    const st = themeState();
+    const base = st.theme === 'light' ? 'Светлая' : 'Тёмная';
+    return st.mode === 'system' ? `${base} · авто` : base;
+  };
+
   function renderProfile() {
     const view = $('#view-profile');
     const me = S.me || {};
@@ -1487,10 +1506,15 @@
           <span class="profile-row-copy"><b>Уведомления</b><small>Статус и сообщения по заявкам</small></span>
           <span class="profile-toggle" aria-hidden="true"><i></i></span>
         </button>
-        <div class="profile-row static-row">
-          <span class="profile-row-icon">${ICONS.info}</span>
-          <span class="profile-row-copy"><b>Тема</b></span>
-          <span class="profile-value">Тёмная ${ICONS.chevron}</span>
+        <div class="profile-row static-row theme-row">
+          <span class="profile-row-icon">${ICONS.theme}</span>
+          <span class="profile-row-copy"><b>Тема</b><small>Авто — как в Telegram и системе</small></span>
+          <span class="profile-value" id="themeValue">${esc(themeValueLabel())}</span>
+        </div>
+        <div class="theme-picker">
+          <div class="seg" id="themeSeg" role="group" aria-label="Тема оформления">
+            ${THEME_MODES.map((m) => `<button type="button" data-theme-mode="${m}" class="${themeState().mode === m ? 'on' : ''}">${THEME_MODE_LABEL[m]}</button>`).join('')}
+          </div>
         </div>
         <div class="profile-row static-row">
           <span class="profile-row-icon language-icon">А</span>
@@ -1527,6 +1551,18 @@
       renderHeader();
       renderNav();
     });
+    const themeSeg = $('#themeSeg');
+    if (themeSeg) themeSeg.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
+      const api = themeApi();
+      if (!api) return;
+      haptic('light');
+      api.set(button.dataset.themeMode);
+      syncThemeControls();
+      const st = api.get();
+      toast(st.mode === 'system'
+        ? 'Тема — авто, как в Telegram'
+        : st.theme === 'light' ? 'Светлая тема включена' : 'Тёмная тема включена');
+    }));
     $('#profileNotifications').addEventListener('click', () => {
       if (tg && typeof tg.requestWriteAccess === 'function') {
         try {
@@ -1541,6 +1577,21 @@
       if (tg && typeof tg.close === 'function') tg.close();
       else toast('Демо-сеанс сохранён в этом браузере');
     });
+  }
+
+  // Подпись и сегменты переключателя — по фактическому состоянию темы.
+  function syncThemeControls() {
+    const st = themeState();
+    const value = $('#themeValue');
+    if (value) value.textContent = themeValueLabel();
+    const seg = $('#themeSeg');
+    if (seg) seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.themeMode === st.mode));
+  }
+
+  // Живые смены темы (кнопка в профиле, themeChanged Telegram, системная тема).
+  function subscribeTheme() {
+    const api = themeApi();
+    if (api && typeof api.subscribe === 'function') api.subscribe(syncThemeControls);
   }
 
   /* ---------- капча ---------- */
@@ -2276,6 +2327,7 @@
     $('#view-' + S.tab).classList.remove('hidden');
     renderDemoAdmin();
     initParallax();
+    subscribeTheme();
     startPolling();
     function tickBrokerLoop() {
       tickLiveNumbers();

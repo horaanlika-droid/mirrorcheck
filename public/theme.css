@@ -1,0 +1,103 @@
+/* PRICELEX · светлая тема (поверх ios.css и devices.css)
+   Палитра переключается атрибутом <html data-theme="dark|light">, который
+   ставит public/theme.js: сохранённый выбор клиента → тема Telegram
+   (colorScheme) → системная prefers-color-scheme → тёмная.
+   Тёмная палитра объявлена без условия в слоях style/reference/ios, поэтому
+   без атрибута интерфейс остаётся графитовым. Здесь — только светлые значения
+   токенов и точечные доводки: каналы (--*-rgb) переворачивают все производные
+   прозрачные цвета разом, ничего не дублируя по селекторам. */
+
+html[data-theme='light'] {
+  color-scheme: light;
+
+  /* тёплая бумага вместо графита */
+  --bg-0: #e6e4df;
+  --bg-1: #f6f5f2;
+  --bg-2: #edebe6;
+  --bg-3: #ffffff;
+  --bg-4: #ffffff;
+  --bg-5: #e9e7e1;
+  --inner: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f0eeea;
+  --surface-3: #e4e1da;
+  --glass: rgba(255, 255, 255, 0.94);
+  --glass-2: rgba(250, 249, 246, 0.94);
+  --glass-3: rgba(246, 245, 242, 0.96);
+
+  /* текст: тёплый графит на бумаге */
+  --ink: #1a1d1f;
+  --txt-2: #4b5257;
+  --mut: #667076;
+  --dim: #79828a;
+
+  /* бронза темнеет, чтобы читаться на белом; заливки кнопок остаются шампанскими */
+  --sand-1: #e9d5b0;
+  --sand-2: #8f6d44;
+  --sand-3: #8a6a41;
+  --sand-4: #75593a;
+  --sand-5: #614c33;
+  --tint: #8a6a41;
+  --tint-ink: #fdf8ee;
+  --tint-fill: #c9a87e;
+  --tint-fill-ink: #2b1f12;
+
+  /* статусные цвета с контрастом на белом */
+  --ok: #3e7c62;
+  --warn: #8a6a2f;
+  --steel: #5c6870;
+  --danger: #b05555;
+  --gram: #48748c;
+
+  /* каналы: разделители и подсветки становятся тёмными на светлом,
+     тени — мягкий тёплый графит, скрим навигации — бумага */
+  --bg-rgb: 246, 245, 242;
+  --glass-rgb: 255, 255, 255;
+  --line-rgb: 22, 28, 33;
+  --overlay-rgb: 22, 28, 33;
+  --shade-rgb: 26, 32, 38;
+  --tint-rgb: 138, 106, 65;
+  --sand-1-rgb: 233, 213, 176;
+  --tint-hi-rgb: 255, 255, 255;
+  --ok-rgb: 62, 124, 98;
+  --warn-rgb: 138, 106, 47;
+  --danger-rgb: 176, 85, 85;
+  --steel-rgb: 92, 104, 112;
+  --gram-rgb: 72, 116, 140;
+
+  --sep: rgba(var(--line-rgb), 0.1);
+  --shadow: 0 8px 24px rgba(var(--shade-rgb), 0.1);
+}
+
+/* ---------- точечные доводки светлой темы ---------- */
+
+/* Тени на белом мягче и теплее, чем чёрные на графите. */
+html[data-theme='light'] .seg button.on { box-shadow: 0 1px 2px rgba(var(--shade-rgb), .14); }
+html[data-theme='light'] .toast { box-shadow: 0 10px 28px rgba(var(--shade-rgb), .18); }
+html[data-theme='light'] .profile-toggle i { box-shadow: 0 2px 5px rgba(var(--shade-rgb), .25); }
+
+/* Главная кнопка — плоская шампанская заливка: тёмный градиентный хвост
+   светлой бронзы съедал бы контраст тёмного текста. */
+html[data-theme='light'] .btn-primary,
+html[data-theme='light'] .matched-avatar { background: var(--tint-fill); }
+html[data-theme='light'] .btn-primary { box-shadow: 0 6px 16px rgba(var(--tint-rgb), .22); }
+
+/* Заливка под линией графика на белом читается плотнее. */
+html[data-theme='light'] .chart .area { opacity: .18; }
+html[data-theme='light'] .chart .gs-area-1 { stop-color: rgba(var(--tint-rgb), .3); }
+
+/* Прелоадер и шапка Telegram живут на цвете темы — лого бронзовое, читается всюду. */
+html[data-theme='light'] .preloader { background: var(--bg-1); }
+
+/* ---------- переключатель темы в профиле ---------- */
+.theme-picker { padding: 2px 16px 12px 0; }
+.theme-picker .seg {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  background: var(--surface-2);
+}
+.theme-picker .seg button { min-width: 0; }
+.theme-row .profile-value { white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme='light'] * { animation: none !important; transition: none !important; }
+}

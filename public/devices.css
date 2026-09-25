@@ -183,7 +183,8 @@ html[data-device] .nav button {
   min-height: var(--ui-nav-btn);
   font-size: var(--ui-nav-fs);
 }
-html[data-device] .nav button svg {
+html[data-device] .nav button svg,
+html[data-device] .nav button .nav-art {
   width: var(--ui-nav-ic);
   height: var(--ui-nav-ic);
 }
