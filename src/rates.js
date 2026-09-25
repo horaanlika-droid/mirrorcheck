@@ -1,111 +1,538 @@
 // Официальные курсы BTC/GRAM к рублю: автообновление с публичных бирж.
 // Итоговый курс для клиентов = официальный × (1 + feePercent/100).
 // Комиссию задаёт оператор в админ-панели, официальный курс трогать не нужно.
+//
+// Как считается официальный курс:
+//  1. Цены BTC и GRAM в долларах берутся из 12 независимых источников: биржи
+//     Binance, Bybit, OKX, Coinbase, Kraken, KuCoin, Gate, MEXC, HTX, Bitget,
+//     а также TON API и CoinGecko. Каждые 10 секунд опрашиваются 4 источника
+//     по кругу — один API получает около двух запросов в минуту.
+//  2. По каждой монете берётся медиана свежих котировок (не старше минуты).
+//     Котировки дальше 5% от медианы отбрасываются: замёрзшая пара или чужой
+//     токен с похожим названием в курс не попадут.
+//  3. Доллары переводятся в рубли по курсу ЦБ РФ; запасные источники —
+//     cbr.ru, open.er-api.com и currency-api. Курс доллара обновляется раз
+//     в 30 минут и сохраняется в базе на случай перезапуска.
+//  4. Источник, ответивший ошибкой (429 — лимит, 403/451 — блокировка по
+//     региону, таймаут), уходит на паузу с растущей задержкой и не тормозит
+//     остальных.
+//
+// GRAM — бывший Toncoin: 15.06.2026 TON переименовали в GRAM. Тикеры ниже
+// сверены с API бирж 25.09.2026. Ловушки: у CoinGecko id «gram» — другой токен
+// (≈ $0.0005), нужен «the-open-network»; на Binance старая пара TONUSDT
+// остановлена (BREAK) и отдаёт замёрзшую цену; Kraken пока торгует TONUSD.
 const store = require('./store');
 
-// Курс обновляется каждые 10 секунд: клиент видит живую цену, график плотнеет.
-// Источники ротируются, чтобы ни один API не получал больше ~2 запросов/мин.
 const INTERVAL_MS = Number(process.env.RATES_INTERVAL_MS) || 10 * 1000;
 const DISABLED = process.env.RATES_DISABLED === '1';
 
-async function fetchJson(url, timeoutMs = 12000) {
+const ASSETS = ['btc', 'gram'];
+const PER_CYCLE = 4; // источников за один цикл автообновления
+const TIMEOUT_MS = 8000; // таймаут одного HTTP-запроса
+const QUOTE_TTL_MS = Math.max(60 * 1000, 3 * INTERVAL_MS); // котировка старше — не свежая
+const MAX_DEVIATION = 0.05; // дальше 5% от медианы — выброс
+const FX_TTL_MS = 30 * 60 * 1000; // курс доллара обновляем раз в 30 минут
+const FX_STALE_MS = 3 * 24 * 3600 * 1000; // совсем старый курс доллара уступает кросс-курсу
+// Если официальный курс не обновлялся дольше, точки графика за этот период
+// (стартовые или устаревшие курсы) не отражают рынок и убираются.
+const HISTORY_GAP_MS = 30 * 60 * 1000;
+
+// Рамки правдоподобия в долларах: отсекают мусор и чужие токены.
+const BOUNDS_USD = { btc: [1000, 10_000_000], gram: [0.05, 1000] };
+const USD_RUB_BOUNDS = [20, 1000];
+
+const UA = 'Mozilla/5.0 (compatible; PRICELEX-rates/2.0)';
+
+/* ---------- HTTP ---------- */
+
+const fail = (message, props = {}) => Object.assign(new Error(message), props);
+
+function parseRetryAfter(value) {
+  if (!value) return null;
+  const sec = Number(value);
+  if (Number.isFinite(sec)) return Math.max(0, sec * 1000);
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
+
+async function httpGet(fetchImpl, url, { as = 'json', timeoutMs = TIMEOUT_MS } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, {
+    const res = await fetchImpl(url, {
       signal: controller.signal,
-      headers: { 'user-agent': 'PRICELEX-exchange/1.0', accept: 'application/json' },
+      headers: { 'user-agent': UA, accept: as === 'json' ? 'application/json' : '*/*' },
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    if (!res.ok) {
+      throw fail(`HTTP ${res.status}`, {
+        status: res.status,
+        retryAfterMs: parseRetryAfter(res.headers?.get?.('retry-after')),
+      });
+    }
+    return as === 'text' ? await res.text() : await res.json();
+  } catch (e) {
+    if (e?.name === 'AbortError') throw fail('таймаут');
+    throw e;
   } finally {
     clearTimeout(timer);
   }
 }
 
+// Короткое описание ошибки для логов и сообщения оператору.
+function describe(e) {
+  if (!e) return 'ошибка';
+  if (e.status) return `HTTP ${e.status}`;
+  if (e.name === 'SyntaxError') return 'ответ не JSON';
+  const code = e.cause?.code || e.code;
+  if (code) return `сеть: ${code}`;
+  if (e.message === 'fetch failed') return 'сеть недоступна';
+  return String(e.message || e).slice(0, 120);
+}
+
+// Лимит (429), блокировка (403/451) или неверная пара (400/404) сами не проходят —
+// такой источник отдыхает дольше. Таймауты и 5xx обычно проходят за минуты.
+function backoffMs(e, failures) {
+  const persistent = e?.api || (e?.status >= 400 && e?.status < 500);
+  const base = persistent ? 2 * 60 * 1000 : 15 * 1000;
+  const cap = persistent ? 30 * 60 * 1000 : 5 * 60 * 1000;
+  let ms = Math.min(cap, base * 2 ** Math.min(failures - 1, 10));
+  if (e?.retryAfterMs) ms = Math.max(ms, Math.min(e.retryAfterMs, 60 * 60 * 1000));
+  return ms;
+}
+
+const fmtPause = (ms) =>
+  ms < 60 * 1000 ? `${Math.round(ms / 1000)} с` : ms < 3600 * 1000 ? `${Math.round(ms / 60000)} мин` : `${Math.round(ms / 3600000)} ч`;
+
+/* ---------- источники ---------- */
+
 const num = (v) => {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : NaN;
 };
+const inRange = (v, [lo, hi]) => Number.isFinite(v) && v >= lo && v <= hi;
+const median = (values) => {
+  const s = [...values].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
 
-// CoinGecko: прямые пары к рублю.
-async function fromCoinGecko() {
-  const d = await fetchJson(
-    'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,gram&vs_currencies=rub'
-  );
-  return { btc: num(d?.bitcoin?.rub), gram: num(d?.gram?.rub) };
+// Пара не найдена (переименование, делистинг) — можно попробовать запасной тикер.
+const notFound = (e) => Boolean(e?.notFound) || e?.status === 400 || e?.status === 404;
+const orElse = (primary, fallback) =>
+  primary().catch((e) => {
+    if (notFound(e)) return fallback();
+    throw e;
+  });
+
+// Монеты запрашиваются параллельно: источник полезен, даже если ответила одна пара.
+async function each(getters) {
+  const keys = Object.keys(getters);
+  const settled = await Promise.allSettled(keys.map((k) => getters[k]()));
+  const out = {};
+  settled.forEach((r, i) => {
+    if (r.status === 'fulfilled') out[keys[i]] = r.value;
+  });
+  if (!Object.keys(out).length) throw settled[0].reason;
+  return out;
 }
 
-// Coinbase: кросс-курсы BTC→RUB и GRAM→RUB.
-async function fromCoinbase() {
-  const [btc, gram] = await Promise.all([
-    fetchJson('https://api.coinbase.com/v2/exchange-rates?currency=BTC'),
-    fetchJson('https://api.coinbase.com/v2/exchange-rates?currency=GRAM'),
-  ]);
-  return { btc: num(btc?.data?.rates?.RUB), gram: num(gram?.data?.rates?.RUB) };
-}
-
-// Kraken (USD-пары) × курс ЦБ (USD→RUB).
-async function fromKrakenCbr() {
-  const [ticker, cbr] = await Promise.all([
-    fetchJson('https://api.kraken.com/0/public/Ticker?pair=XBTUSD,GRAMUSD'),
-    fetchJson('https://www.cbr-xml-daily.ru/daily_json.js'),
-  ]);
-  const usd = num(cbr?.Valute?.USD?.Value);
-  const btcUsd = num(ticker?.result?.XXBTZUSD?.c?.[0]);
-  const gramUsd = num(
-    ticker?.result?.GRAMUSD?.c?.[0] || ticker?.result?.XGRAMZUSD?.c?.[0]
-  );
-  return { btc: btcUsd * usd, gram: gramUsd * usd };
-}
-
+// Каждый источник возвращает цены в долларах { btc?, gram? } и, если умеет,
+// рублёвый кросс-курс usdRub — запасной вариант, если ЦБ и остальные недоступны.
+// Котировки в USDT считаем долларовыми: расхождение — сотые доли процента.
 const SOURCES = [
-  ['coingecko', fromCoinGecko],
-  ['coinbase', fromCoinbase],
-  ['kraken+cbr', fromKrakenCbr],
+  {
+    name: 'binance',
+    // data-api.binance.vision — официальный публичный хост рыночных данных Binance.
+    async fetch(get) {
+      const symbols = encodeURIComponent(JSON.stringify(['BTCUSDT', 'GRAMUSDT']));
+      const list = await get(`https://data-api.binance.vision/api/v3/ticker/price?symbols=${symbols}`);
+      const price = Object.fromEntries((Array.isArray(list) ? list : []).map((t) => [t.symbol, t.price]));
+      return { btc: num(price.BTCUSDT), gram: num(price.GRAMUSDT) };
+    },
+  },
+  {
+    name: 'bybit',
+    async fetch(get) {
+      const last = async (symbol) => {
+        const d = await get(`https://api.bybit.com/v5/market/tickers?category=spot&symbol=${symbol}`);
+        if (d?.retCode !== 0) throw fail(d?.retMsg || `bybit retCode ${d?.retCode}`, { api: true });
+        return num(d.result?.list?.[0]?.lastPrice);
+      };
+      return each({ btc: () => last('BTCUSDT'), gram: () => last('GRAMUSDT') });
+    },
+  },
+  {
+    name: 'okx',
+    async fetch(get) {
+      const last = async (instId) => {
+        const d = await get(`https://www.okx.com/api/v5/market/ticker?instId=${instId}`);
+        if (d?.code !== '0') throw fail(d?.msg || `okx code ${d?.code}`, { api: true });
+        return num(d.data?.[0]?.last);
+      };
+      return each({ btc: () => last('BTC-USDT'), gram: () => last('GRAM-USDT') });
+    },
+  },
+  {
+    name: 'coinbase',
+    async fetch(get) {
+      const spot = async (pair) => num((await get(`https://api.coinbase.com/v2/prices/${pair}/spot`))?.data?.amount);
+      return each({ btc: () => spot('BTC-USD'), gram: () => orElse(() => spot('GRAM-USD'), () => spot('TON-USD')) });
+    },
+  },
+  {
+    name: 'kraken',
+    async fetch(get) {
+      const last = async (pair) => {
+        const d = await get(`https://api.kraken.com/0/public/Ticker?pair=${pair}`);
+        if (d?.error?.length) {
+          throw fail(d.error.join(', '), { api: true, notFound: d.error.some((x) => /unknown asset pair/i.test(x)) });
+        }
+        const t = d?.result && Object.values(d.result)[0];
+        // Пара без сделок за сутки — замороженная, её цене верить нельзя.
+        if (!t || !(Number(t.t?.[1]) > 0)) throw fail(`${pair}: нет сделок`, { api: true, notFound: true });
+        return num(t.c?.[0]);
+      };
+      // Kraken пока торгует GRAM под старым тикером TON; после переименования возьмём GRAMUSD.
+      return each({ btc: () => last('XBTUSD'), gram: () => orElse(() => last('TONUSD'), () => last('GRAMUSD')) });
+    },
+  },
+  {
+    name: 'kucoin',
+    async fetch(get) {
+      const d = await get('https://api.kucoin.com/api/v1/prices?base=USD&currencies=BTC,GRAM');
+      return { btc: num(d?.data?.BTC), gram: num(d?.data?.GRAM) };
+    },
+  },
+  {
+    name: 'gate',
+    async fetch(get) {
+      const last = async (pair) => num((await get(`https://api.gateio.ws/api/v4/spot/tickers?currency_pair=${pair}`))?.[0]?.last);
+      return each({ btc: () => last('BTC_USDT'), gram: () => last('GRAM_USDT') });
+    },
+  },
+  {
+    name: 'mexc',
+    // Параметр symbols MEXC игнорирует и отдаёт весь рынок — поэтому по паре на запрос.
+    async fetch(get) {
+      const last = async (symbol) => num((await get(`https://api.mexc.com/api/v3/ticker/price?symbol=${symbol}`))?.price);
+      return each({ btc: () => last('BTCUSDT'), gram: () => last('GRAMUSDT') });
+    },
+  },
+  {
+    name: 'htx',
+    async fetch(get) {
+      const last = async (symbol) => {
+        const d = await get(`https://api.huobi.pro/market/detail/merged?symbol=${symbol}`);
+        if (d?.status !== 'ok') throw fail(d?.['err-msg'] || 'htx: ошибка', { api: true });
+        return num(d.tick?.close);
+      };
+      return each({ btc: () => last('btcusdt'), gram: () => last('gramusdt') });
+    },
+  },
+  {
+    name: 'bitget',
+    async fetch(get) {
+      const last = async (symbol) => {
+        const d = await get(`https://api.bitget.com/api/v2/spot/market/tickers?symbol=${symbol}`);
+        if (d?.code !== '00000') throw fail(d?.msg || `bitget code ${d?.code}`, { api: true });
+        return num(d.data?.[0]?.lastPr);
+      };
+      return each({ btc: () => last('BTCUSDT'), gram: () => last('GRAMUSDT') });
+    },
+  },
+  {
+    name: 'tonapi',
+    every: 30 * 1000, // без ключа — не чаще раза в 30 секунд
+    // Нативная монета сети TON (теперь GRAM) в API по-прежнему называется «ton».
+    async fetch(get) {
+      const p = (await get('https://tonapi.io/v2/rates?tokens=ton&currencies=usd,rub'))?.rates?.TON?.prices;
+      const gram = num(p?.USD);
+      return { gram, usdRub: num(p?.RUB) / gram };
+    },
+  },
+  {
+    name: 'coingecko',
+    every: 5 * 60 * 1000, // публичный API режет частые запросы (429) — редко и в последнюю очередь
+    async fetch(get) {
+      const d = await get('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,the-open-network&vs_currencies=usd,rub');
+      const btc = num(d?.bitcoin?.usd);
+      return { btc, gram: num(d?.['the-open-network']?.usd), usdRub: num(d?.bitcoin?.rub) / btc };
+    },
+  },
 ];
 
-// Грубая проверка правдоподобности, чтобы мусор из API не попал в курсы.
-// У GRAM другой порядок цены, чем у LTC, поэтому диапазон пары шире.
-function sane({ btc, gram }) {
-  const ratio = btc / gram;
-  return (
-    Number.isFinite(btc) && Number.isFinite(gram) &&
-    btc > 10000 && gram > 0.01 && ratio > 1000 && ratio < 10000000
-  );
-}
+// Курс доллара к рублю: первый ответивший по порядку.
+const FX_SOURCES = [
+  {
+    name: 'ЦБ РФ',
+    async fetch(get) {
+      const usd = (await get('https://www.cbr-xml-daily.ru/daily_json.js'))?.Valute?.USD;
+      return num(usd?.Value) / (num(usd?.Nominal) || 1);
+    },
+  },
+  {
+    name: 'ЦБ РФ (cbr.ru)',
+    // XML в windows-1251, но нужные теги и числа — ASCII, поэтому кодировка не мешает.
+    async fetch(get) {
+      const xml = String(await get('https://www.cbr.ru/scripts/XML_daily.asp', { as: 'text' }));
+      const m = xml.match(/<CharCode>USD<\/CharCode>\s*<Nominal>(\d+)<\/Nominal>[\s\S]*?<Value>([\d.,]+)<\/Value>/);
+      return m ? num(m[2].replace(',', '.')) / (num(m[1]) || 1) : NaN;
+    },
+  },
+  {
+    name: 'open.er-api',
+    async fetch(get) {
+      return num((await get('https://open.er-api.com/v6/latest/USD'))?.rates?.RUB);
+    },
+  },
+  {
+    name: 'currency-api',
+    async fetch(get) {
+      const path = 'v1/currencies/usd.min.json';
+      const d = await get(`https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/${path}`).catch(() =>
+        get(`https://latest.currency-api.pages.dev/${path}`)
+      );
+      return num(d?.usd?.rub);
+    },
+  },
+];
 
-let sourceCursor = 0;
+/* ---------- движок: опрос, паузы, медиана ---------- */
 
-async function fetchOfficial() {
-  const errors = [];
-  // Начинаем каждый цикл со следующего источника: нагрузка распределяется равномерно.
-  const order = SOURCES.map((_, i) => SOURCES[(sourceCursor + i) % SOURCES.length]);
-  for (const [name, fn] of order) {
-    try {
-      const r = await fn();
-      if (sane(r)) {
-        sourceCursor = (sourceCursor + 1) % SOURCES.length;
-        return { btc: Math.round(r.btc), gram: Math.round(r.gram), source: name };
+function createRateEngine({
+  sources = SOURCES,
+  fxSources = FX_SOURCES,
+  fetchImpl = (...args) => fetch(...args),
+  now = Date.now,
+  intervalMs = INTERVAL_MS,
+  perCycle = PER_CYCLE,
+  quoteTtlMs = QUOTE_TTL_MS,
+  fx: initialFx = null,
+  onFx = () => {},
+  log = console,
+} = {}) {
+  const get = (url, opts) => httpGet(fetchImpl, url, opts);
+  const state = new Map(sources.map((s) => [s.name, { nextAt: 0, failures: 0, error: null, okAt: null, quote: null }]));
+  let cursor = 0;
+  let fx = initialFx && inRange(Number(initialFx.rate), USD_RUB_BOUNDS)
+    ? { rate: Number(initialFx.rate), source: initialFx.source || '?', at: Number(initialFx.at) || 0 }
+    : null;
+  const fxState = { nextAt: 0, failures: 0, error: null, inflight: null };
+
+  // Следующие по кругу источники, у которых прошла пауза и минимальный интервал.
+  function pickDue(t) {
+    const picked = [];
+    let last = -1;
+    for (let i = 0; i < sources.length && picked.length < perCycle; i += 1) {
+      const idx = (cursor + i) % sources.length;
+      if (state.get(sources[idx].name).nextAt <= t) {
+        picked.push(sources[idx]);
+        last = idx;
       }
-      errors.push(`${name}: неправдоподобные значения`);
+    }
+    if (last >= 0) cursor = (last + 1) % sources.length;
+    return picked;
+  }
+
+  async function poll(src) {
+    const st = state.get(src.name);
+    const startedAt = now();
+    try {
+      const raw = (await src.fetch(get)) || {};
+      const quote = { at: now() };
+      for (const a of ASSETS) if (inRange(raw[a], BOUNDS_USD[a])) quote[a] = raw[a];
+      if (inRange(raw.usdRub, USD_RUB_BOUNDS)) quote.usdRub = raw.usdRub;
+      if (!ASSETS.some((a) => quote[a] != null)) throw fail('неправдоподобные значения', { api: true });
+      if (st.failures > 0) log.log?.(`[rates] ${src.name} снова отвечает`);
+      Object.assign(st, { quote, failures: 0, error: null, okAt: quote.at, nextAt: startedAt + (src.every || intervalMs) });
+      return true;
     } catch (e) {
-      errors.push(`${name}: ${e.message}`);
+      // Источник, который сейчас не отвечает, не участвует в медиане и старой котировкой.
+      st.quote = null;
+      st.failures += 1;
+      st.error = describe(e);
+      const pause = backoffMs(e, st.failures);
+      st.nextAt = now() + pause;
+      if (st.failures === 1) log.warn?.(`[rates] ${src.name}: ${st.error} — пауза ${fmtPause(pause)}`);
+      return false;
     }
   }
-  throw new Error(errors.join('; ') || 'нет источников курса');
+
+  async function loadFx() {
+    const errors = [];
+    for (const src of fxSources) {
+      try {
+        const rate = await src.fetch(get);
+        if (!inRange(rate, USD_RUB_BOUNDS)) throw fail('неправдоподобное значение', { api: true });
+        fx = { rate, source: src.name, at: now() };
+        Object.assign(fxState, { nextAt: fx.at + FX_TTL_MS, failures: 0, error: null });
+        try {
+          onFx(fx);
+        } catch (e) {
+          log.error?.('[rates] не удалось сохранить курс доллара:', e.message);
+        }
+        return fx;
+      } catch (e) {
+        errors.push(`${src.name}: ${describe(e)}`);
+      }
+    }
+    fxState.failures += 1;
+    fxState.error = errors.join('; ');
+    fxState.nextAt = now() + Math.min(FX_TTL_MS, 30 * 1000 * 2 ** Math.min(fxState.failures - 1, 6));
+    if (fxState.failures === 1) {
+      log.warn?.(`[rates] курс USD/RUB не обновился (${fxState.error})${fx ? ' — работаем по последнему известному' : ''}`);
+    }
+    return fx;
+  }
+
+  // Никогда не бросает: при ошибке остаётся прежний курс доллара.
+  function refreshFx(force = false) {
+    if (fxState.inflight) return fxState.inflight;
+    if (!force && fx && now() < fxState.nextAt) return Promise.resolve(fx);
+    if (!force && !fx && now() < fxState.nextAt) return Promise.resolve(null);
+    fxState.inflight = loadFx().finally(() => {
+      fxState.inflight = null;
+    });
+    return fxState.inflight;
+  }
+
+  const freshQuotes = (t, key) => {
+    const out = [];
+    for (const [name, st] of state) {
+      if (st.quote?.[key] != null && t - st.quote.at <= quoteTtlMs) out.push({ name, v: st.quote[key] });
+    }
+    return out;
+  };
+
+  function consensus(quotes) {
+    if (!quotes.length) return { usd: NaN, names: [], outliers: [], quotes };
+    const mid = median(quotes.map((q) => q.v));
+    const kept = quotes.filter((q) => Math.abs(q.v / mid - 1) <= MAX_DEVIATION);
+    return {
+      usd: kept.length ? median(kept.map((q) => q.v)) : NaN,
+      names: kept.map((q) => q.name),
+      outliers: quotes.filter((q) => !kept.includes(q)).map((q) => q.name),
+      quotes,
+    };
+  }
+
+  function usdRubAt(t) {
+    const implied = freshQuotes(t, 'usdRub');
+    if (fx && (t - fx.at <= FX_STALE_MS || !implied.length)) return { rate: fx.rate, source: fx.source };
+    if (implied.length) return { rate: median(implied.map((q) => q.v)), source: `кросс-курс ${implied.map((q) => q.name).join('+')}` };
+    return null;
+  }
+
+  const fmtUsd = (v) => (v >= 100 ? v.toFixed(0) : v.toFixed(4));
+
+  // Один цикл: опросить источники, собрать медиану, пересчитать в рубли.
+  // all=true — ручное обновление и старт: опрашиваем все источники сразу.
+  // Возвращает null, если в авто-цикле опрашивать некого (все на паузе).
+  async function cycle({ all = false } = {}) {
+    const picked = all ? [...sources] : pickDue(now());
+    if (!picked.length && !all) return null;
+    const fxTask = refreshFx(all);
+    const results = await Promise.all(picked.map(poll));
+    // Курс доллара ждём, только если его ещё нет совсем, иначе он обновится в фоне.
+    if (!fx) await fxTask;
+
+    const failed = picked
+      .filter((_, i) => !results[i])
+      .map((s) => ({ name: s.name, error: state.get(s.name).error }));
+    const failedText = failed.map((f) => `${f.name}: ${f.error}`).join('; ');
+    if (!results.some(Boolean)) {
+      throw fail(failedText || 'все источники курса на паузе после ошибок, повтор автоматически');
+    }
+
+    const t = now();
+    const agg = Object.fromEntries(ASSETS.map((a) => [a, consensus(freshQuotes(t, a))]));
+    const problems = [];
+    for (const a of ASSETS) {
+      const c = agg[a];
+      if (Number.isFinite(c.usd)) continue;
+      const title = a.toUpperCase();
+      problems.push(
+        c.quotes.length
+          ? `${title}: источники расходятся (${c.quotes.map((q) => `${q.name} ${fmtUsd(q.v)}$`).join(', ')})`
+          : `${title}: нет котировок`
+      );
+    }
+    const usdRub = usdRubAt(t);
+    if (!usdRub) problems.push(`нет курса USD/RUB (${fxState.error || 'источники не ответили'})`);
+    if (problems.length) throw fail([...problems, failedText].filter(Boolean).join('; '));
+
+    const used = sources.map((s) => s.name).filter((n) => ASSETS.some((a) => agg[a].names.includes(n)));
+    const rateText = usdRub.rate.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const shown = used.length > 4 ? `${used.slice(0, 4).join(', ')} +${used.length - 4}` : used.join(', ');
+    return {
+      btc: agg.btc.usd * usdRub.rate,
+      gram: agg.gram.usd * usdRub.rate,
+      usd: { btc: agg.btc.usd, gram: agg.gram.usd },
+      usdRub: usdRub.rate,
+      usdRubSource: usdRub.source,
+      sources: used,
+      support: { btc: agg.btc.names.length, gram: agg.gram.names.length },
+      outliers: [...new Set(ASSETS.flatMap((a) => agg[a].outliers))],
+      failed,
+      source: `${shown}; $ = ${rateText} ₽ — ${usdRub.source}`,
+      at: t,
+    };
+  }
+
+  function status() {
+    const t = now();
+    return {
+      sources: sources.map((s) => {
+        const st = state.get(s.name);
+        return {
+          name: s.name,
+          ok: st.okAt != null && st.failures === 0,
+          tried: st.okAt != null || st.failures > 0,
+          error: st.error,
+          pausedMs: st.failures ? Math.max(0, st.nextAt - t) : 0,
+          okAt: st.okAt,
+        };
+      }),
+      fx: fx ? { ...fx } : null,
+      fxError: fxState.error,
+    };
+  }
+
+  return { cycle, status, refreshFx };
 }
+
+/* ---------- применение к настройкам ---------- */
 
 const applyFee = (base, fee) => Math.max(1, Math.round(base * (1 + fee / 100)));
 
+const engine = createRateEngine({
+  fx: (() => {
+    const s = store.get().settings;
+    return s.usdRub ? { rate: s.usdRub, source: s.usdRubSource, at: s.usdRubAt } : null;
+  })(),
+  onFx: (fx) =>
+    store.mutate((db) => {
+      db.settings.usdRub = Math.round(fx.rate * 10000) / 10000;
+      db.settings.usdRubSource = fx.source;
+      db.settings.usdRubAt = fx.at;
+    }),
+});
+
 function applyRates(official) {
+  const at = Date.now();
+  const prev = store.get().settings.rateUpdatedAt;
+  // Пока курс не обновлялся, на график попадали стартовые/устаревшие курсы
+  // (например, при смене комиссии). С приходом реальных данных убираем их.
+  if (!prev || at - prev > HISTORY_GAP_MS) store.dropRatePointsAfter(prev || 0);
+  const btc = Math.round(official.btc);
+  const gram = Math.round(official.gram);
   const settings = store.mutate((db) => {
     const fee = Number(db.settings.feePercent) || 0;
-    db.settings.baseRateBTC = Math.round(official.btc);
-    db.settings.baseRateGRAM = Math.round(official.gram);
-    db.settings.rateBTC = applyFee(official.btc, fee);
-    db.settings.rateGRAM = applyFee(official.gram, fee);
-    db.settings.rateUpdatedAt = Date.now();
+    db.settings.baseRateBTC = btc;
+    db.settings.baseRateGRAM = gram;
+    db.settings.rateBTC = applyFee(btc, fee);
+    db.settings.rateGRAM = applyFee(gram, fee);
+    db.settings.rateUpdatedAt = at;
     db.settings.rateSource = official.source;
     return db.settings;
   });
@@ -128,9 +555,51 @@ function recomputeWithFee() {
   return s;
 }
 
+// Авто-цикл и ручное обновление не пересекаются: второй ждёт первый.
+let chain = Promise.resolve();
+function exclusive(fn) {
+  const run = chain.then(fn, fn);
+  chain = run.catch(() => {});
+  return run;
+}
+
+// Официальный курс в рублях со всех доступных источников (без записи в базу).
+async function fetchOfficial() {
+  const official = await exclusive(() => engine.cycle({ all: true }));
+  return { ...official, btc: Math.round(official.btc), gram: Math.round(official.gram) };
+}
+
+// Ручное обновление из бота: опрашиваем все источники сразу и сохраняем курс.
 async function refreshRates() {
-  const official = await fetchOfficial();
-  return { settings: applyRates(official), source: official.source };
+  return exclusive(async () => {
+    const official = await engine.cycle({ all: true });
+    return { settings: applyRates(official), source: official.source, official };
+  });
+}
+
+const status = () => engine.status();
+
+// Логи без спама: успех — раз в 10 минут и после сбоя, ошибка — при смене текста или раз в 5 минут.
+const logState = { okAt: 0, failAt: 0, failText: '', failing: false };
+function reportOk(official) {
+  const t = Date.now();
+  if (logState.failing || t - logState.okAt > 10 * 60 * 1000) {
+    console.log(
+      `[rates] курс обновлён: BTC ${Math.round(official.btc).toLocaleString('ru-RU')} ₽, ` +
+        `GRAM ${Math.round(official.gram).toLocaleString('ru-RU')} ₽ — ${official.source}`
+    );
+    logState.okAt = t;
+  }
+  logState.failing = false;
+}
+function reportFail(e) {
+  const t = Date.now();
+  if (!logState.failing || (e.message !== logState.failText && t - logState.failAt > 60 * 1000) || t - logState.failAt > 5 * 60 * 1000) {
+    console.error('[rates] обновление не удалось, действуют прежние курсы:', e.message);
+    logState.failAt = t;
+    logState.failText = e.message;
+  }
+  logState.failing = true;
 }
 
 function startRates() {
@@ -138,17 +607,44 @@ function startRates() {
     console.log('[rates] автообновление курса отключено (RATES_DISABLED=1)');
     return null;
   }
-  console.log(`[rates] автообновление официального курса каждые ${Math.round(INTERVAL_MS / 1000)} c`);
-  refreshRates()
-    .then(({ source }) => console.log('[rates] курс обновлён, источник:', source))
-    .catch((e) => console.error('[rates] первичное обновление не удалось, оставлены текущие курсы:', e.message));
-  const timer = setInterval(() => {
-    refreshRates()
-      .then(({ source }) => console.log('[rates] курс обновлён, источник:', source))
-      .catch((e) => console.error('[rates] обновление не удалось:', e.message));
-  }, INTERVAL_MS);
+  console.log(
+    `[rates] автообновление официального курса каждые ${Math.round(INTERVAL_MS / 1000)} c: ` +
+      `${SOURCES.length} источников цен (${SOURCES.map((s) => s.name).join(', ')}), курс доллара — ${FX_SOURCES.map((s) => s.name).join(' → ')}`
+  );
+  let first = true;
+  let pending = false;
+  const tick = () => {
+    if (pending) return; // прошлый цикл ещё идёт — не копим очередь
+    pending = true;
+    const all = first; // на старте сразу опрашиваем все источники
+    first = false;
+    exclusive(async () => {
+      try {
+        const official = await engine.cycle({ all });
+        if (!official) return;
+        applyRates(official);
+        reportOk(official);
+      } catch (e) {
+        reportFail(e);
+      }
+    }).finally(() => {
+      pending = false;
+    });
+  };
+  tick();
+  const timer = setInterval(tick, INTERVAL_MS);
   timer.unref?.();
   return timer;
 }
 
-module.exports = { startRates, refreshRates, recomputeWithFee, applyFee, fetchOfficial };
+module.exports = {
+  startRates,
+  refreshRates,
+  recomputeWithFee,
+  applyFee,
+  fetchOfficial,
+  status,
+  createRateEngine,
+  SOURCES,
+  FX_SOURCES,
+};

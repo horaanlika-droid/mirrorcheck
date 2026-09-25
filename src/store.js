@@ -18,6 +18,9 @@ const defaults = () => ({
     feePercent: 2, // комиссия обменника, % поверх официального курса
     rateUpdatedAt: null,
     rateSource: 'manual',
+    usdRub: null, // последний курс доллара для пересчёта в рубли (ЦБ РФ или резервный)
+    usdRubSource: null,
+    usdRubAt: null,
     minRub: 3000,
     maxRub: 300000,
     online: true,
@@ -348,6 +351,17 @@ function pushRatePoint({ btc, gram, at = Date.now() } = {}) {
     d.rateHistory.push(point);
     if (d.rateHistory.length > RATE_HISTORY_MAX) d.rateHistory.splice(0, d.rateHistory.length - RATE_HISTORY_MAX);
     return point;
+  });
+}
+
+// Убираем точки, записанные после ts: пока официальный курс не обновлялся, в историю
+// попадали стартовые или устаревшие курсы (например, при смене комиссии) — это не рынок.
+function dropRatePointsAfter(ts = 0) {
+  if (!(db.rateHistory || []).some((p) => p.at > ts)) return 0;
+  return mutate((d) => {
+    const before = d.rateHistory.length;
+    d.rateHistory = d.rateHistory.filter((p) => p.at <= ts);
+    return before - d.rateHistory.length;
   });
 }
 
@@ -734,6 +748,7 @@ module.exports = {
   activeOrders,
   stats,
   pushRatePoint,
+  dropRatePointsAfter,
   rateHistorySince,
   createSupportMessage,
   getSupportMessages,
