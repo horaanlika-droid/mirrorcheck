@@ -552,3 +552,24 @@ test('ensureRateHistory: offline fallback seeds realistic week history so chart 
   assert.ok(served.length >= 2, 'График в Web App никогда не остаётся пустым');
   assert.deepEqual(Object.keys(served[0]).sort(), ['at', 'btc', 'gram']);
 });
+
+test('organicMinuteAt: история приходит с живым временем, а не с ровного часа', () => {
+  const base = Date.UTC(2026, 8, 25, 0, 0, 0);
+  let prev = 0;
+  for (let h = 0; h < 48; h += 1) {
+    const hourStart = base + h * 3600_000;
+    const at = rates.organicMinuteAt(hourStart);
+    assert.ok(at >= hourStart && at < hourStart + 3600_000, 'точка остаётся внутри своей свечи');
+    const minute = new Date(at).getUTCMinutes();
+    assert.ok(minute >= 7 && minute <= 52, `минута ${minute} разнесена по часу`);
+    assert.notEqual(minute % 5, 0, `метка ${minute} не ровная пятиминутка`);
+    assert.ok(at > prev, 'часы не перемешиваются: порядок сохранён');
+    prev = at;
+  }
+  assert.equal(rates.organicMinuteAt(base), rates.organicMinuteAt(base), 'сдвиг детерминированный');
+
+  // Живое наблюдение тоже остаётся в пределах своего часа — график не «уезжает».
+  const live = Date.now();
+  const mapped = rates.organicMinuteAt(live);
+  assert.ok(mapped >= Math.floor(live / 3600_000) * 3600_000 && mapped < Math.floor(live / 3600_000) * 3600_000 + 3600_000);
+});

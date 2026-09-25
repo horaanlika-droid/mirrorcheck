@@ -796,6 +796,7 @@ const SET_FIELDS = {
   bops: { label: 'операционные расходы со сделки, ₽ (вычитаются из спреда до деления)', num: true, key: 'opsExpensesRub' },
   bminp: { label: 'минимальную выплату брокеру в BTC (например 0.0002)', num: true, key: 'brokerMinPayoutBtc' },
   bdepbtc: { label: 'депозит стажёра в BTC (например 0.0002)', num: true, key: 'brokerDepositBtc' },
+  gfund: { label: 'общий гарантийный депозит всех брокеров в BTC — его видит клиент (например 0.02)', num: true, key: 'guaranteeFundBtc' },
   bdepusd: { label: 'депозит стажёра в $ для текстов (например 20)', num: true, key: 'brokerDepositUsd' },
   bdepa: { label: 'BTC-адрес для приёма депозитов брокеров', key: 'brokerDepositAddress' },
   bdepfee: { label: 'сбор за подключение брокера, % от депозита (0–100, например 10)', num: true, key: 'brokerDepositFeePercent' },
@@ -1592,6 +1593,8 @@ function brokersMenuKb(s) {
     .text(`🏦 Депозит $${s.brokerDepositUsd} · ${fmtBtc(s.brokerDepositBtc)}`, 'sb:bdepbtc')
     .text(`💵 Депозит в $`, 'sb:bdepusd')
     .row()
+    .text(`🛡 Общий депозит клиентам ${fmtBtcNum(s.guaranteeFundBtc)}`, 'sb:gfund')
+    .row()
     .text(`⚙️ Сбор ${s.brokerDepositFeePercent}% · макс ${fmtBtcNum(s.brokerDepositFeeMaxBtc)}`, 'sb:bdepfee')
     .text('⚙️ Предел сбора', 'sb:bdepfeemax')
     .row()
@@ -1616,6 +1619,7 @@ async function brokersMenu(ctx, edit = true) {
     `💸 Выплаты от ${fmtBtc(s.brokerMinPayoutBtc)} · 🏦 депозит $${s.brokerDepositUsd} (${fmtBtc(s.brokerDepositBtc)})\n` +
     `⚙️ Сбор за подключение ${s.brokerDepositFeePercent}% (не больше ${fmtBtc(s.brokerDepositFeeMaxBtc)}) → к переводу <b>${fmtBtc(store.brokerDepositTotalBtc(s.brokerDepositBtc))}</b> ` +
     `${s.brokerDepositAddress ? `→ <code>${esc(s.brokerDepositAddress)}</code>` : '(адрес не задан!)'}\n` +
+    `🛡 Общий депозит брокеров (виден клиентам): <b>${fmtBtc(s.guaranteeFundBtc)}</b>\n` +
     `🎓 Стажировка: ${s.internDays} дн., заявки до ${fmtRub(s.internMaxRub)}\n\n` +
     (adminBrokers ? `👥 <b>Брокеры под управлением админа (5):</b>\n${adminBrokers}\n\n` : '') +
     (apps.length ? `📥 Заявок «стать брокером» ожидает: <b>${apps.length}</b>\n` : 'Новых заявок «стать брокером» нет.\n') +

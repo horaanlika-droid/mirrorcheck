@@ -186,6 +186,47 @@ button:focus:not(:focus-visible) { outline: none; }
   display: inline-block; flex-shrink: 0;
 }
 .pulse-number { display: inline-block; transform: scale(1.22); color: var(--sand-2) !important; transition: transform .25s ease-out; }
+.broker-online-count,
+.dep-btc,
+.dep-at { font-variant-numeric: tabular-nums; }
+
+/* Общий гарантийный депозит брокеров: клиент видит, чем страхуется сделка.
+   Последние четыре знака (сатоши) окрашены акцентом — они живые. */
+.deposit-card { padding: 15px 16px 13px; }
+.dep-top { display: flex; align-items: flex-start; gap: 11px; }
+.dep-shield {
+  flex: none; width: 30px; height: 30px; display: grid; place-items: center;
+  border: 1px solid rgba(127, 176, 155, 0.25); border-radius: 50%;
+  background: rgba(127, 176, 155, 0.1); font-size: 13px;
+}
+.dep-copy { flex: 1; min-width: 0; }
+.dep-copy b { display: block; color: var(--ink); font-size: 13px; font-weight: 560; letter-spacing: -.01em; }
+.dep-copy span { display: block; margin-top: 3px; color: var(--mut); font-size: 10.5px; line-height: 1.5; }
+.dep-live {
+  flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px;
+  border: 1px solid rgba(127, 176, 155, 0.22); border-radius: 999px;
+  background: rgba(127, 176, 155, 0.07); color: var(--ok); font: 9px/1 var(--font-sans);
+}
+.dep-amount { display: flex; align-items: baseline; gap: 7px; margin: 13px 0 9px; }
+.deposit-card .dep-btc { color: var(--ink); font-size: 23px; font-weight: 600; letter-spacing: -.02em; }
+.dep-cur { color: var(--mut); font-size: 11px; letter-spacing: .06em; }
+.dep-usd { color: var(--txt-2); font-size: 11px; }
+.dep-tail { color: var(--sand-3); }
+.dep-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding-top: 10px; border-top: 1px solid var(--hair);
+  color: var(--mut); font-size: 10.5px; line-height: 1.5;
+}
+.dep-foot b { color: var(--txt-2); font-weight: 550; }
+.dep-foot .f-link { flex: none; }
+.stage-deposit {
+  display: flex; align-items: flex-start; gap: 9px; margin: 12px 0;
+  padding: 10px 12px; border: 1px solid rgba(127, 176, 155, 0.2);
+  border-radius: var(--r-ctl); background: rgba(127, 176, 155, 0.05);
+}
+.stage-deposit .sd-ic { flex: none; font-size: 12px; line-height: 1.35; }
+.stage-deposit .sd-txt { color: var(--txt-2); font-size: 11px; line-height: 1.55; }
+.stage-deposit .sd-txt b { color: var(--ink); font-weight: 560; }
 .active-order {
   width: 100%; min-height: 58px; margin: 0 0 14px; padding: 11px 14px;
   display: flex; align-items: center; gap: 11px; text-align: left;
