@@ -798,6 +798,8 @@ const SET_FIELDS = {
   bdepbtc: { label: 'депозит стажёра в BTC (например 0.0002)', num: true, key: 'brokerDepositBtc' },
   bdepusd: { label: 'депозит стажёра в $ для текстов (например 20)', num: true, key: 'brokerDepositUsd' },
   bdepa: { label: 'BTC-адрес для приёма депозитов брокеров', key: 'brokerDepositAddress' },
+  bdepfee: { label: 'сбор за подключение брокера, % от депозита (0–100, например 10)', num: true, key: 'brokerDepositFeePercent' },
+  bdepfeemax: { label: 'предел сбора за подключение в BTC (0 — без предела, например 0.0005)', num: true, key: 'brokerDepositFeeMaxBtc' },
   binmax: { label: 'лимит заявки стажёра, ₽ (например 5000)', num: true, key: 'internMaxRub' },
   bindays: { label: 'длительность стажировки в днях (например 7)', num: true, key: 'internDays' },
 };
@@ -912,6 +914,10 @@ async function handleAdminText(ctx) {
           if (!isFinite(n) || n < 0) return ctx.reply('Расходы — неотрицательное число в ₽. Пример: 50');
         } else if (key === 'bindays') {
           if (!isFinite(n) || n < 1 || n > 90) return ctx.reply('Стажировка — от 1 до 90 дней. Пример: 7');
+        } else if (key === 'bdepfee') {
+          if (!isFinite(n) || n < 0 || n > 100) return ctx.reply('Сбор — от 0 до 100% от депозита. Пример: 10');
+        } else if (key === 'bdepfeemax') {
+          if (!isFinite(n) || n < 0) return ctx.reply('Предел сбора — неотрицательное число в BTC. Пример: 0.0005 (0 — без предела)');
         } else if (key === 'avgm') {
           if (!isFinite(n) || n < 0 || n > 480) return ctx.reply('Среднее время обмена — целое от 0 (авто) до 480 минут. Пример: 12');
         } else if (!isFinite(n) || n <= 0) {
@@ -965,6 +971,8 @@ const brokerLoginOf = (tgId) => {
 };
 
 const fmtBtc = (v) => (Math.round(Number(v) * 1e8) / 1e8).toFixed(8).replace(/\.?0+$/, '') + ' BTC';
+// Короткий вид без суффикса — для подписей кнопок.
+const fmtBtcNum = (v) => (Math.round(Number(v) * 1e8) / 1e8).toFixed(8).replace(/\.?0+$/, '');
 
 // Кто может работать: вошедший брокер (не админ — у того свой контур).
 function brokerCtx(ctx) {
@@ -988,7 +996,10 @@ function brokerHomeText(login) {
     head +=
       `🎓 Вы на стажировке. Каждый может стать брокером, но торгует ровно на сумму внесённого депозита (например, внесли $100 — ведёте сделки до $100). ` +
       `Первый шаг — возвратный депозит <b>$${s.brokerDepositUsd}</b> (${fmtBtc(s.brokerDepositBtc)}): ` +
-      `он страхует клиентов (если выплата не пришла, мы компенсируем клиенту из депозита). Через ${s.internDays} дней стажировки депозит можно забрать.\n\n`;
+      `он страхует клиентов (если выплата не пришла, мы компенсируем клиенту из депозита). Через ${s.internDays} дней стажировки депозит можно забрать.\n` +
+      (store.brokerDepositFeeFor(s.brokerDepositBtc) > 0
+        ? `Разово к депозиту добавляется сбор за подключение ${fmtBtc(store.brokerDepositFeeFor(s.brokerDepositBtc))} — итого к переводу ${fmtBtc(store.brokerDepositTotalBtc(s.brokerDepositBtc))}. Подробности — в разделе «🏦 Депозит».\n\n`
+        : '\n');
   } else if (intern) {
     head +=
       `🎓 Стажировка: осталось ~${store.brokerInternLeft(login)} дн. ` +
@@ -1153,15 +1164,26 @@ async function brokerDepositMenu(ctx, edit = true) {
   const p = store.brokerProfile(login);
   const intern = store.brokerIsIntern(login);
   const refund = store.brokerDepositRefundable(login);
-  let text = `🏦 <b>Возвратный депозит $${s.brokerDepositUsd}</b> (${fmtBtc(s.brokerDepositBtc)})\n\n`;
+  const pend = (!p || !p.depositBtc) && store.brokerDepositsByStatus('pending').find((x) => x.login === login);
+  // Для заявки в работе показываем зафиксированные в ней суммы, для новой — текущие настройки.
+  const sumBtc = pend ? pend.btc : s.brokerDepositBtc;
+  const feeBtc = pend ? pend.feeBtc : store.brokerDepositFeeFor(s.brokerDepositBtc);
+  const totalBtc = pend ? pend.totalBtc : store.brokerDepositTotalBtc(s.brokerDepositBtc);
+  let text =
+    `🏦 <b>Возвратный депозит $${s.brokerDepositUsd}</b> · ${fmtBtc(sumBtc)}\n` +
+    (feeBtc > 0
+      ? `⚙️ Сбор за подключение: <b>${fmtBtc(feeBtc)}</b> ` +
+        `(${pend ? pend.feePercent : s.brokerDepositFeePercent}% от депозита, не больше ${fmtBtc(pend ? pend.feeMaxBtc : s.brokerDepositFeeMaxBtc)})\n` +
+        `📤 К переводу всего: <b>${fmtBtc(totalBtc)}</b> — одним платежом, сбор уже включён\n\n` +
+        `Возвращается <b>${fmtBtc(sumBtc)}</b> — сумма депозита. Сбор разовый и не возвращается: он идёт на подключение и проверку.\n\n`
+      : `📤 К переводу: <b>${fmtBtc(totalBtc)}</b>\n\n`);
   const kb = new InlineKeyboard();
   if (!p || !p.depositBtc) {
     text +=
       'Депозит — вклад в репутацию: на стажировке он страхует клиентов, пока вы торгуете малыми суммами. ' +
       `Через ${s.internDays} дней стажировки его можно забрать полностью.\n\n`;
-    const pend = store.brokerDepositsByStatus('pending').find((x) => x.login === login);
     if (pend) {
-      text += '⏳ Ваша заявка на депозит на проверке у администрации.';
+      text += '⏳ Ваша заявка на депозит в работе у администрации.';
     } else {
       text += 'После перевода нажмите «Я внёс депозит» — администрация подтвердит зачисление.';
       kb.text('✅ Я внёс депозит', 'b:dep:made');
@@ -1174,7 +1196,7 @@ async function brokerDepositMenu(ctx, edit = true) {
   } else if (refund.reason === 'dup') {
     text += `Возврат депозита ${refund.status === 'pending' ? '⏳ уже в работе' : 'уже выполнен'}.`;
   }
-  if (s.brokerDepositAddress && (!p || !p.depositBtc) && !store.brokerDepositsByStatus('pending').find((x) => x.login === login)) {
+  if (s.brokerDepositAddress && (!p || !p.depositBtc) && !pend) {
     text += `\n\nАдрес для депозита:\n<code>${esc(s.brokerDepositAddress)}</code>`;
   }
   kb.row().text(' Кабинет', 'b:home');
@@ -1192,7 +1214,11 @@ async function notifyAdminsBrokerDeposit(dep) {
   await broadcast(
     `🏦 <b>Депозит стажёра #${dep.id}</b>\n` +
     `🤝 Брокер: <code>${esc(dep.login)}</code>${p?.name ? ' · ' + esc(p.name) : ''} · <code>${esc(dep.tgId)}</code>\n` +
-    `💰 Сумма: <b>${fmtBtc(dep.btc)}</b> (возвратный депозит $${s.brokerDepositUsd})\n` +
+    `💰 Депозит: <b>${fmtBtc(dep.btc)}</b> (возвратный, $${s.brokerDepositUsd})\n` +
+    (dep.feeBtc > 0
+      ? `⚙️ Сбор за подключение: <b>${fmtBtc(dep.feeBtc)}</b> (${dep.feePercent}% от депозита, лимит ${fmtBtc(dep.feeMaxBtc)}) — не возвращается\n` +
+        `📤 К зачислению всего: <b>${fmtBtc(dep.totalBtc)}</b>. Брокеру зачисляется депозит ${fmtBtc(dep.btc)}, сбор остаётся у площадки.\n`
+      : '') +
     `🕒 ${fmtDate(dep.createdAt)}\n\n` +
     `Проверьте поступление на адрес${s.brokerDepositAddress ? ` <code>${esc(s.brokerDepositAddress)}</code>` : ''} и подтвердите.`,
     { parse_mode: 'HTML', reply_markup: kb }
@@ -1384,7 +1410,14 @@ async function handleBrokerCallback(ctx, d) {
     }
     const dep = store.createBrokerDeposit({ login, tgId: ctx.from.id, btc: s.brokerDepositBtc });
     await notifyAdminsBrokerDeposit(dep);
-    return ctx.reply('✅ Заявка принята. Администрация подтвердит зачисление депозита — и лимит малых сумм заработает сразу.');
+    return ctx.reply(
+      `✅ Заявка принята.\n` +
+      (dep.feeBtc > 0
+        ? `📤 Переводите <b>${fmtBtc(dep.totalBtc)}</b>: депозит ${fmtBtc(dep.btc)} + сбор ${fmtBtc(dep.feeBtc)}.\n`
+        : `📤 Переводите <b>${fmtBtc(dep.totalBtc)}</b>.\n`) +
+      `Администрация подтвердит зачисление депозита — и лимит малых сумм заработает сразу.`,
+      { parse_mode: 'HTML' }
+    );
   }
   if (d === 'b:dep:refund') {
     const r = store.brokerDepositRefundable(login);
@@ -1559,6 +1592,9 @@ function brokersMenuKb(s) {
     .text(`🏦 Депозит $${s.brokerDepositUsd} · ${fmtBtc(s.brokerDepositBtc)}`, 'sb:bdepbtc')
     .text(`💵 Депозит в $`, 'sb:bdepusd')
     .row()
+    .text(`⚙️ Сбор ${s.brokerDepositFeePercent}% · макс ${fmtBtcNum(s.brokerDepositFeeMaxBtc)}`, 'sb:bdepfee')
+    .text('⚙️ Предел сбора', 'sb:bdepfeemax')
+    .row()
     .text('🏦 Адрес приёма депозитов', 'sb:bdepa')
     .row()
     .text(`🎓 Лимит стажёра ${fmtRub(s.internMaxRub)}`, 'sb:binmax')
@@ -1577,7 +1613,8 @@ async function brokersMenu(ctx, edit = true) {
     `🤝 <b>Брокеры</b>\n\n` +
     `🔑 Логин: <code>${esc(s.brokerLogin || '— не задан —')}</code> · Пароль: ${s.brokerPassword ? '••••••' : '— не задан —'} · ${s.brokerActive ? '🟢 вход открыт' : '🔴 вход закрыт'}\n` +
     `📊 Деление спреда: брокеру <b>${s.brokerSharePercent}%</b> · площадке ${100 - s.brokerSharePercent}%, расходы ${fmtRub(s.opsExpensesRub)}/сделка\n` +
-    `💸 Выплаты от ${fmtBtc(s.brokerMinPayoutBtc)} · 🏦 депозит $${s.brokerDepositUsd} (${fmtBtc(s.brokerDepositBtc)}) ` +
+    `💸 Выплаты от ${fmtBtc(s.brokerMinPayoutBtc)} · 🏦 депозит $${s.brokerDepositUsd} (${fmtBtc(s.brokerDepositBtc)})\n` +
+    `⚙️ Сбор за подключение ${s.brokerDepositFeePercent}% (не больше ${fmtBtc(s.brokerDepositFeeMaxBtc)}) → к переводу <b>${fmtBtc(store.brokerDepositTotalBtc(s.brokerDepositBtc))}</b> ` +
     `${s.brokerDepositAddress ? `→ <code>${esc(s.brokerDepositAddress)}</code>` : '(адрес не задан!)'}\n` +
     `🎓 Стажировка: ${s.internDays} дн., заявки до ${fmtRub(s.internMaxRub)}\n\n` +
     (adminBrokers ? `👥 <b>Брокеры под управлением админа (5):</b>\n${adminBrokers}\n\n` : '') +
