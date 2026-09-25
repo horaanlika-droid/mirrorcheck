@@ -400,7 +400,7 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
   letter-spacing: 0; text-transform: none; color: var(--tint); margin-bottom: 6px;
 }
 .rv-reply-h span { color: var(--dim); font-size: 11px; letter-spacing: 0; text-transform: none; }
-.rv-reply p { font-size: 14px; line-height: 1.45; color: var(--txt-2); }
+.rv-reply p { font-size: 14px; line-height: 1.45; color: var(--txt-2); overflow-wrap: anywhere; white-space: normal; word-break: break-word; }
 
 /* Демо-оператор: карточка ответа площадки в списке отзывов. */
 .demo-reply .rv-who-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 14px; }

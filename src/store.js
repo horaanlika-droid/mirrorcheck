@@ -497,7 +497,7 @@ function rateHistorySince(since = 0, maxPoints = 180) {
 }
 
 /* ---------- support chat ---------- */
-function createSupportMessage(userId, from, text) {
+function createSupportMessage(userId, from, text, broker = null) {
   return mutate((d) => {
     const msg = {
       id: d.supportSeq++,
@@ -506,6 +506,7 @@ function createSupportMessage(userId, from, text) {
       text: String(text).slice(0, 2000),
       at: Date.now(),
     };
+    if (broker) msg.broker = String(broker); // персональное сообщение для брокера
     d.support.push(msg);
     // ограничим хранение последними 5000 сообщениями
     if (d.support.length > 5000) d.support.splice(0, d.support.length - 5000);

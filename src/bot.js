@@ -222,30 +222,88 @@ async function sendReceiptToFirstBrokerSession(o) {
 /* ---------- support chat ---------- */
 
 async function onSupportMessage({ message, user }) {
+  // Если сообщение адресовано конкретному брокеру (собеседование/депозит),
+  // админы видят карточку именно его чата с кнопкой-переходом.
+  const brokerChat = message.broker;
   const u = store.getUser(message.userId) || { name: user.first_name || user.name || 'Клиент', id: message.userId };
-  const fromLabel = message.from === 'user' ? '👤 Клиент' : '🛡️ Поддержка';
+  const jump = brokerChat
+    ? new InlineKeyboard()
+        .text('💬 Чат брокера', `bchat:${String(message.userId)}:${String(brokerChat)}`)
+        .text('📂 Все чаты', 'm:support')
+    : new InlineKeyboard()
+        .text('💬 Ответить', `suprep:${message.userId}`)
+        .text('📂 Открыть чат', `sup:${message.userId}`);
+  const fromLabel = brokerChat ? '🧑‍💼 Брокер' : message.from === 'user' ? '👤 Клиент' : '🛡️ Поддержка';
+  const whoLine = brokerChat
+    ? `🤝 Брокер: <code>${esc(brokerChat)}</code> · <code>${esc(message.userId)}</code>`
+    : (message.from === 'user' ? `👤 ${esc(u.name)} · <code>${esc(message.userId)}</code>` : `👤 ${esc(u.name)} · чат с клиентом <code>${esc(message.userId)}</code>`);
   const preview = message.text.slice(0, 200);
-  const kb = new InlineKeyboard()
-    .text('💬 Ответить', `suprep:${message.userId}`)
-    .text('📂 Открыть чат', `sup:${message.userId}`);
   const text =
-    `💬 <b>Новое сообщение поддержки</b>\n` +
-    `👤 ${esc(u.name)} · <code>${esc(message.userId)}</code>\n` +
+    `💬 <b>${brokerChat ? 'Чат брокера' : 'Поддержка'}</b>\n` +
+    `${whoLine}\n` +
     `${fromLabel}: ${esc(preview)}\n` +
     `🕒 ${fmtDate(message.at)}`;
 
   if (message.from === 'user') {
-    await broadcast(text, { parse_mode: 'HTML', reply_markup: kb });
+    await broadcast(text, { parse_mode: 'HTML', reply_markup: jump });
   } else {
-    // admin reply -> try to notify client via bot
-    try {
-      await bot.api.sendMessage(message.userId,
-        `💬 <b>Поддержка PRICELEX:</b>\n${esc(message.text)}`,
-        { parse_mode: 'HTML' });
-    } catch (e) {
-      console.error(`[bot] support reply → client ${message.userId}:`, e.message);
+    // Ответ площадки: клиенту — в личку бота, а если это ответ брокеру — ему же.
+    const target = brokerChat ? store.brokerSessionsByLogin(brokerChat)[0] : message.userId;
+    if (target) {
+      try {
+        await bot.api.sendMessage(target,
+          brokerChat
+            ? `💬 <b>PRICELEX:</b>\n${esc(message.text)}`
+            : `💬 <b>Поддержка PRICELEX:</b>\n${esc(message.text)}`,
+          { parse_mode: 'HTML' });
+      } catch (e) {
+        console.error(`[bot] support reply → ${target}:`, e.message);
+      }
     }
   }
+}
+
+// Ответ площадки конкретному брокеру: кладём сообщение в его персональную ветку
+// и сразу уведомляем его же личным сообщением. Рендер диа­лога — у вызывающего.
+async function replyToBrokerChat(userId, broker, text) {
+  const msg = store.createSupportMessage(userId, 'admin', text, broker);
+  const tgs = store.brokerSessionsByLogin(broker);
+  if (tgs.length) {
+    await Promise.all(tgs.map(async (tgId) => {
+      try {
+        await bot.api.sendMessage(tgId, `💬 <b>PRICELEX:</b>\n${esc(text)}`, { parse_mode: 'HTML' });
+      } catch (e) {
+        console.error(`[bot] broker chat reply → ${tgId}:`, e.message);
+      }
+    }));
+  }
+  return msg;
+}
+
+// Чат конкретного брокера глазами администратора: переписка собеседования,
+// статус депозита и всё, что брокер писал площадке в этом же диалоге.
+async function brokerChatAdminView(ctx, userId, login) {
+  const msgs = store.getSupportMessages(String(userId)).filter((m) => !m.broker || m.broker === String(login));
+  const p = store.brokerProfile(login);
+  let body =
+    `💬 <b>Чат с брокером</b> <code>${esc(login)}</code> · <code>${esc(userId)}</code>\n` +
+    (p && p.depositBtc
+      ? `🛡 Депозит: ${fmtBtc(p.depositBtc)} · стажировка до ${p.internUntil ? fmtDate(p.internUntil) : '—'}\n` : '') +
+    '\n';
+  if (!msgs.length) {
+    body += 'Сообщений от брокера пока нет.';
+  } else {
+    for (const m of msgs.slice(-15)) {
+      const who = m.from === 'user' ? `🧑‍💼 <b>${esc(login)}</b>` : '🛡️ Вы';
+      body += `${who} · ${fmtDate(m.at)}:\n${esc(m.text)}\n\n`;
+    }
+  }
+  const kb = new InlineKeyboard()
+    .text('✍️ Ответить', `bchre:${userId}:${login}`)
+    .text('🔄 Обновить', `bchat:${userId}:${login}`)
+    .row()
+    .text('↩️ Меню', 'm:home');
+  return ctx.reply(body, { parse_mode: 'HTML', reply_markup: kb });
 }
 
 function supportThreadsKb(threads) {
@@ -852,6 +910,14 @@ async function handleAdminText(ctx) {
     await supportThreadView(dummyCtx, f.userId, false).catch(() => {});
     return;
   }
+  if (f.type === 'achreply') {
+    const { userId, broker } = f;
+    if (!text || text.length > 2000) return ctx.reply('Сообщение должно содержать от 1 до 2000 символов.');
+    await replyToBrokerChat(userId, broker, text);
+    flows.delete(ctx.from.id);
+    await ctx.reply(`✅ Ответ отправлен брокеру <code>${esc(broker)}</code>.`, { parse_mode: 'HTML', reply_markup: homeKb() });
+    return brokerChatAdminView(ctx, userId, broker);
+  }
   if (f.orderId) {
     const o = store.getOrder(f.orderId);
     if (f.type === 'tx') {
@@ -995,17 +1061,16 @@ function brokerHomeText(login) {
   let head = `🤝 <b>Кабинет брокера</b> · <code>${esc(login)}</code>\n\n`;
   if (intern && !(p && p.depositBtc)) {
     head +=
-      `🎓 Вы на стажировке. Каждый может стать брокером, но торгует ровно на сумму внесённого депозита (например, внесли $100 — ведёте сделки до $100). ` +
-      `Первый шаг — возвратный депозит <b>$${s.brokerDepositUsd}</b> (${fmtBtc(s.brokerDepositBtc)}): ` +
-      `он страхует клиентов (если выплата не пришла, мы компенсируем клиенту из депозита). Через ${s.internDays} дней стажировки депозит можно забрать.\n` +
-      (store.brokerDepositFeeFor(s.brokerDepositBtc) > 0
-        ? `Разово к депозиту добавляется сбор за подключение ${fmtBtc(store.brokerDepositFeeFor(s.brokerDepositBtc))} — итого к переводу ${fmtBtc(store.brokerDepositTotalBtc(s.brokerDepositBtc))}. Подробности — в разделе «🏦 Депозит».\n\n`
-        : '\n');
+      `🎓 Вы на стажировке. Первый шаг — чат: напишите о себе (опыт, направления, объёмы), администрация выдаст реквизиты на возвратный депозит.\n\n` +
+      `💬 <b>Чат</b> — открыть переписку с площадкой (кнопка ниже).\n\n`;
   } else if (intern) {
     head +=
       `🎓 Стажировка: осталось ~${store.brokerInternLeft(login)} дн. ` +
       `Торгуете ровно на сумму депозита ${fmtBtc(p.depositBtc)} (до ${fmtRub(s.internMaxRub)}). ` +
       `Если у клиента возникнут проблемы с выплатой, площадка компенсирует из депозита.\n\n`;
+  } else if (p && p.depositBtc) {
+    head +=
+      `🛡️ Депозит ${fmtBtc(p.depositBtc)} под контролем площадки. Со временем, по мере роста доверия, площадка закрывает часть депозита — ваш лимит растёт на освободившуюся сумму.\n\n`;
   }
   return (
     head +
@@ -1022,12 +1087,13 @@ function brokerHomeKb(login) {
   const avail = store.brokerAvailableBtc(login);
   const min = Number(store.get().settings.brokerMinPayoutBtc) || 0.0002;
   const kb = new InlineKeyboard()
+    .text('💬 Чат', 'b:chat')
     .text('📥 Заявки', 'b:orders')
+    .row()
     .text('💰 Баланс', 'b:bal')
-    .row()
     .text('💸 Вывести', 'b:withdraw')
-    .text('🏦 Депозит', 'b:deposit')
     .row()
+    .text('🏦 Депозит', 'b:deposit')
     .text('🚪 Выйти', 'b:logout');
   if (avail < min) kb.text('🔄', 'b:home');
   return kb;
@@ -1040,6 +1106,24 @@ async function brokerHome(ctx, edit = false) {
   const opts = { parse_mode: 'HTML', reply_markup: brokerHomeKb(login) };
   if (edit) return ctx.editMessageText(text, opts).catch(() => {});
   return ctx.reply(text, opts);
+}
+
+// Отклик на «💬 Чат» в кабинете брокера: если персональная лента пустая и нет
+// подтверждённого депозита, показываем карточку первого шага (собеседование →
+// реквизиты → депозит), иначе открываем переписку с площадкой.
+async function brokerChatOpen(ctx, edit = true) {
+  const login = brokerCtx(ctx);
+  if (!login) return brokerAuthStart(ctx);
+  const p = store.brokerProfile(login);
+  const started = store.getSupportMessages(String(ctx.from.id)).some((m) => m.broker === String(login));
+  const pending = p && p.depositBtc;
+  if (!started && !pending) {
+    const intro = brokerInvestMessage(login);
+    const opts = { parse_mode: 'HTML', reply_markup: intro.kb };
+    if (edit) return ctx.editMessageText(intro.text, opts).catch(() => {});
+    return ctx.reply(intro.text, opts);
+  }
+  return brokerSupportThreadView(ctx, login, edit);
 }
 
 async function brokerAuthStart(ctx) {
@@ -1275,6 +1359,55 @@ async function notifyBrokerPaid(o) {
   }));
 }
 
+/* ---------- чат брокера (собеседование, депозит, клиенты) ---------- */
+
+// Сообщения поддержки несут поле broker: когда у логина есть свои персональные
+// сообщения (собеседование, статус депозита), брокер видит их — иначе общую ветку
+// «клиент ↔ площадка» по тому же пользовательскому диалогу.
+function brokerSupportThreadView(ctx, login, edit = true) {
+  const userId = String(ctx.from.id);
+  const personal = store.getSupportMessages(userId).filter((m) => m.broker === String(login));
+  const src = personal.length ? personal : store.getSupportMessages(userId).filter((m) => m.broker);
+  const lens = src.length ? src : store.getSupportMessages(userId);
+  let body = `💬 <b>Чат с PRICELEX</b> · <code>${esc(login)}\n\n`;
+  if (!lens.length) {
+    body += 'Сообщений нет.';
+  } else {
+    for (const m of lens.slice(-15)) {
+      const who = m.from === 'user' ? `🧑💼 <b>${esc(login)}</b>` : '🛡️ PRICELEX';
+      body += `${who} · ${fmtDate(m.at)}:\n${esc(m.text)}\n\n`;
+    }
+  }
+  const kb = new InlineKeyboard()
+    .text('✍️ Ответить', 'b:chat:reply')
+    .text('🔄 Обновить', 'b:chat')
+    .row()
+    .text(' Кабинет', 'b:home');
+  const opts = { parse_mode: 'HTML', reply_markup: kb };
+  if (edit) return ctx.editMessageText(body, opts).catch(() => {});
+  return ctx.reply(body, opts);
+}
+
+// Первый шаг кабинета: собеседование в чате → реквизиты на депозит → заявки в
+// рамках суммы депозита → площадка закрывает часть депозита по мере доверия.
+function brokerInvestMessage(login) {
+  const s = store.get().settings;
+  const feeBtc = store.brokerDepositFeeFor(s.brokerDepositBtc);
+  const total = store.brokerDepositTotalBtc(s.brokerDepositBtc);
+  const addr = s.brokerDepositAddress ? `\n\nАдрес для депозита:\n<code>${esc(s.brokerDepositAddress)}</code>` : '';
+  const kb = new InlineKeyboard().text('💬 Чат', 'b:chat').text(' Кабинет', 'b:home');
+  return {
+    kb,
+    text:
+      `🎓 <b>Начните с собеседования</b>\n\n` +
+      `Чтобы начать торговать, сначала напишите о себе в чате — опыт, направления, объёмы. ` +
+      `Администрация выдаст реквизиты на возвратный депозит <b>$${s.brokerDepositUsd}</b> (${fmtBtc(s.brokerDepositBtc)})` +
+      `${feeBtc > 0 ? ` плюс разовый сбор ${fmtBtc(feeBtc)} — итого к переводу ${fmtBtc(total)}` : ''}.\n\n` +
+      `Как только депозит подтвердится — получите заявки клиентов в рамках суммы этого депозита, а когда накопится доверие, площадка будет закрывать часть депозита за вас.` +
+      addr,
+  };
+}
+
 /* ---------- текстовые сценарии брокера ---------- */
 
 async function requisitesPromptBroker(ctx, o) {
@@ -1314,6 +1447,17 @@ async function handleBrokerText(ctx) {
     });
     await ctx.reply(`✅ Вход выполнен: <code>${esc(login)}</code>`, { parse_mode: 'HTML' });
     return brokerHome(ctx, false);
+  }
+  // Собеседование / депозит / работа с клиентом идут одним чатом с площадкой.
+  if (f.type === 'bchat') {
+    const login = brokerCtx(ctx);
+    if (!login) { flows.delete(ctx.from.id); return brokerAuthStart(ctx); }
+    if (!text || text.length > 2000) {
+      return ctx.reply('Сообщение должно содержать от 1 до 2000 символов.');
+    }
+    const msg = store.createSupportMessage(ctx.from.id, 'user', text, login);
+    await bus.emit('support_message', { message: msg, user: ctx.from });
+    return brokerSupportThreadView(ctx, login, false);
   }
   // ниже нужна сессия
   const login = brokerCtx(ctx);
@@ -1385,6 +1529,11 @@ async function handleBrokerCallback(ctx, d) {
 
   if (d === 'b:noop') return;
   if (d === 'b:home') return brokerHome(ctx, true);
+  if (d === 'b:chat') return brokerChatOpen(ctx, true);
+  if (d === 'b:chat:reply') {
+    flows.set(ctx.from.id, { type: 'bchat' });
+    return ctx.reply('✍️ <b>Сообщение для площадки</b>\\nНапишите текст — он сразу появится в вашем чате с PRICELEX. /cancel — отмена', { parse_mode: 'HTML' });
+  }
   if (d === 'b:orders') return brokerOrdersMenu(ctx, true);
   if (d === 'b:bal') return brokerBalanceMenu(ctx, true);
   if (d === 'b:deposit') return brokerDepositMenu(ctx, true);
@@ -1758,6 +1907,16 @@ function register() {
 
     // Админские карточки брокеров: депозиты, выплаты, заявки «стать брокером».
     if (d.startsWith('bd:') || d.startsWith('bp:')) return handleBrokerAdminCallback(ctx, d);
+    // Чат брокера: bchat:<userId>:<login> — открыть, bchre:<userId>:<login> — ответить.
+    if (d.startsWith('bchat:')) {
+      const [, userId, login] = d.split(':');
+      return brokerChatAdminView(ctx, userId, login);
+    }
+    if (d.startsWith('bchre:')) {
+      const [, userId, login] = d.split(':');
+      flows.set(ctx.from.id, { type: 'achreply', userId, broker: login });
+      return ctx.reply('✍️ Ответ брокеру — напишите сообщение, оно сразу появится в его чате. /cancel — отмена');
+    }
     if (d.startsWith('bb:')) {
       const [, id, act] = d.split(':');
       const app0 = store.getBrokerApp(Number(id));

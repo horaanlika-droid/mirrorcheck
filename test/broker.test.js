@@ -327,6 +327,47 @@ test('client calls admin on problem: admin notified and support messages created
   assert.ok(msgs.some((m) => /Администратор PRICELEX подключается/.test(m.text)));
 });
 
+test('broker chat: interview first step, admin replies into broker chat', async () => {
+  // Входим брокером и открываем «💬 Чат»: первый шаг — собеседование, а не реквизиты.
+  calls = [];
+  await text(777, '/broker');
+  await text(777, 'wolf');
+  await text(777, 's3cret');
+  await click(777, 'b:chat');
+  const intro = calls[calls.length - 1].text;
+  assert.match(intro, /собеседован/i, 'первый шаг кабинета — собеседование');
+  assert.match(intro, /депозит/);
+  assert.match(intro, /заявк/i, 'объяснено, что заявки приходят в рамках суммы депозита');
+  assert.match(intro, /доверие/i, 'доверие растёт — площадка закрывает часть депозита');
+
+  // Брокер пишет площадке: сообщение ложится в его персональную ветку и видно админу.
+  calls = [];
+  await click(777, 'b:chat:reply');
+  await text(777, 'Два года P2P-сделок, обороты до 5 млн');
+  const adminCard = calls.find((c) => String(c.chat_id) === '111' && /Чат брокера/.test(c.text || ''));
+  assert.ok(adminCard, 'админ видит карточку чата брокера');
+  assert.match(adminCard.text, /wolf/);
+  const rk = adminCard.reply_markup && adminCard.reply_markup.inline_keyboard.flat().find((b) => b.callback_data.startsWith('bchat:'));
+  assert.ok(rk, 'у админа есть кнопка открыть чат брокера');
+
+  // Админ открывает чат и отвечает.
+  calls = [];
+  await click(111, rk.callback_data);
+  const adminView = calls.find((c) => c.method === 'sendMessage');
+  assert.ok(adminView, 'админ открыл чат брокера');
+  assert.match(adminView.text, /Чат с брокером/);
+  await click(111, 'bchre:777:wolf');
+  await text(111, 'Реквизиты на депозит высланы личным сообщением');
+  const brokerSees = store.getSupportMessages('777').filter((m) => m.from === 'admin' && m.broker === 'wolf');
+  assert.ok(brokerSees.length && /Реквизиты на депозит/.test(brokerSees[brokerSees.length - 1].text));
+  assert.ok(calls.some((c) => String(c.chat_id) === '777' && /PRICELEX:/.test(c.text)));
+
+  // Брокер снова открывает чат — видит ответ площадки.
+  calls = [];
+  await click(777, 'b:chat');
+  assert.match(calls[calls.length - 1].text, /Реквизиты на депозит/);
+});
+
 test('connection fee: 10% of deposit, capped at 0.0005 BTC', () => {
   const saved = {
     percent: store.get().settings.brokerDepositFeePercent,

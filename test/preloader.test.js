@@ -94,6 +94,12 @@ test('прелоадер: большое лого и полный текст —
   assert.doesNotMatch(iosCss, /\.preloader-est \{[^}]*display: none/, 'строка года не прячется');
 });
 
+test('инфографика не соприкасается с буквами: зазор задан явно и хранится фикс-слоем', () => {
+  const fixCss = pub('fix.css');
+  assert.match(fixCss, /\.preloader-logo \{[^}]*margin-bottom: 46px !important;/s, 'фикс-слой гарантирует воздух до букв');
+  assert.match(fixCss, /@media \(min-width: 700px\) \{\s*\.preloader-logo \{\s*margin-bottom: 60px !important;/s, 'на планшете зазор растёт вместе с гербом');
+});
+
 test('шкалы: лого крупное и не прижато к буквам', () => {
   // Базовая шкала —Fluid-размер и большой зазор до набора.
   const base = styleCss.match(/\.preloader-logo \{[\s\S]*?\}/)[0];

@@ -14,10 +14,17 @@
   text-align: center !important;
   width: 100% !important;
 }
+/* 1b. Инфографика (герб) не соприкасается с буквами — зазор между лого и набором
+   гарантирован на любой шкале, даже если предыдущий слой его занулит. */
 .preloader-logo {
   margin-left: auto !important;
   margin-right: auto !important;
+  margin-bottom: 46px !important;
   display: block !important;
+}
+/* На планшете герб больше — воздух до букв растёт вместе с ним. */
+@media (min-width: 700px) {
+  .preloader-logo { margin-bottom: 60px !important; }
 }
 
 /* 2. Все заголовки — по центру */
@@ -219,6 +226,20 @@
 .profile-row-copy small, .broker-meta, .rv-who span, .h-sub, .metric-sub,
 .sp-sign, .stage-sub, .req-box, .tx-link, .msg-bubble, .rv-dist-percent,
 .profile-member {
+  text-align: left !important;
+  text-align-last: left !important;
+}
+
+/* 6. Ответ площадки на отзыв переносится корректно по строкам: где бы из предыдущих
+   слоёв ни прилетало word-break/white-space, текст внутри плитки реплики всегда
+   ломается по словам и по границе плитки, без выпадающих вбок длинных строк.
+   Блочная модель ответа сохраняется - один столбец, без переносов-дефисов. */
+.rv-reply p {
+  word-break: normal !important;
+  overflow-wrap: anywhere !important;
+  white-space: normal !important;
+  hyphens: none !important;
+  -webkit-hyphens: none !important;
   text-align: left !important;
   text-align-last: left !important;
 }

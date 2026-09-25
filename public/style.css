@@ -1071,7 +1071,7 @@ body {
   color: var(--amber-2); margin-bottom: 7px;
 }
 .rv-reply-h span { letter-spacing: 0.04em; text-transform: none; color: var(--dim); }
-.rv-reply p { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--txt-2); word-break: break-word; }
+.rv-reply p { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--txt-2); word-break: break-word; overflow-wrap: anywhere; white-space: normal; }
 .why-pair .kicker { margin-bottom: 10px; }
 .why-pair-lead {
   margin: 8px 0 12px;
