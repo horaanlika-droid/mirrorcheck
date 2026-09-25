@@ -52,7 +52,8 @@ const defaults = () => ({
   flags: {},
   support: [], // чат поддержки: { id, userId, from: 'user'|'admin', text, at }
   rateHistory: [], // наблюдения курса: { at, btc, gram } — основа графика в приложении
-  // Отзывы: { id, userId, orderId, name, rating 1–5, text, status, source, createdAt, updatedAt, adminMsgIds }
+  // Отзывы: { id, userId, orderId, name, rating 1–5, text, status, source, createdAt, updatedAt, adminMsgIds,
+  //           reply: null | { text, at, by } }
   // status: 'pending' (модерация) | 'approved' (опубликован) | 'rejected' (скрыт)
   reviews: [],
   // Заявки «стать брокером»: { id, userId, name, username, experience, contact, status, createdAt, updatedAt, adminMsgIds }
@@ -108,6 +109,9 @@ function load() {
       if (!Array.isArray(db.rateHistory)) db.rateHistory = [];
       if (!Array.isArray(db.reviews)) db.reviews = [];
       if (!Number.isFinite(db.reviewSeq)) db.reviewSeq = db.reviews.reduce((m, r) => Math.max(m, r.id || 0), 0) + 1;
+      for (const r of db.reviews) {
+        if (r.reply === undefined) r.reply = null;
+      }
       if (!Array.isArray(db.brokerApps)) db.brokerApps = [];
       if (!Number.isFinite(db.brokerSeq)) db.brokerSeq = db.brokerApps.reduce((m, a) => Math.max(m, a.id || 0), 0) + 1;
       if (!db.brokerSessions || typeof db.brokerSessions !== 'object') db.brokerSessions = {};
@@ -120,6 +124,14 @@ function load() {
         db.settings.operator = defaults().settings.operator;
       }
       const bs = db.settings;
+      // Кнопки «Объявление / Поддержка / Канал» раньше писали в settings.ann/op/ch
+      // вместо announcement/operator/channel — переносим живые значения и убираем мёртвые ключи.
+      if (typeof bs.ann === 'string' && bs.ann.trim()) bs.announcement = bs.ann;
+      if (typeof bs.op === 'string' && bs.op.trim()) bs.operator = bs.op;
+      if (typeof bs.ch === 'string' && bs.ch.trim()) bs.channel = bs.ch;
+      delete bs.ann;
+      delete bs.op;
+      delete bs.ch;
       // Доля брокера больше не плоская: платформа делит с ним спред сделки.
       if (bs.brokerPercent !== undefined) delete bs.brokerPercent;
       if (bs.brokerLogin === undefined) bs.brokerLogin = String(process.env.BROKER_LOGIN || '').trim();
@@ -494,6 +506,7 @@ function createReview(r) {
       createdAt: Number.isFinite(r.createdAt) ? r.createdAt : now,
       updatedAt: now,
       adminMsgIds: {},
+      reply: null,
     };
     d.reviews.push(review);
     return review;
@@ -510,6 +523,16 @@ function updateReview(id, patch) {
     if (p.rating != null) p.rating = clampRating(p.rating);
     if (p.name != null) p.name = String(p.name).trim().slice(0, 60) || r.name;
     if (p.text != null) p.text = String(p.text).trim().slice(0, REVIEW_TEXT_MAX);
+    if (p.reply !== undefined) {
+      if (p.reply == null) {
+        p.reply = null;
+      } else {
+        const text = String(p.reply.text != null ? p.reply.text : (r.reply && r.reply.text) || '').trim().slice(0, REVIEW_TEXT_MAX);
+        const at = Number.isFinite(Number(p.reply.at)) ? Number(p.reply.at) : ((r.reply && r.reply.at) || Date.now());
+        const by = p.reply.by != null ? String(p.reply.by) : (r.reply && r.reply.by) || null;
+        p.reply = text ? { text, at, by } : null;
+      }
+    }
     Object.assign(r, p, { updatedAt: Date.now() });
     return r;
   });
@@ -526,7 +549,14 @@ function deleteReview(id) {
 const reviewsByStatus = (status) =>
   db.reviews.filter((r) => !status || r.status === status).sort((a, b) => b.createdAt - a.createdAt);
 
-const publicReview = (r) => ({ id: r.id, name: r.name, rating: r.rating, text: r.text, createdAt: r.createdAt });
+const publicReview = (r) => ({
+  id: r.id,
+  name: r.name,
+  rating: r.rating,
+  text: r.text,
+  createdAt: r.createdAt,
+  reply: r.reply && r.reply.text ? { text: r.reply.text, at: r.reply.at } : null,
+});
 
 // Автор всегда видит свои отзывы как опубликованные — о модерации клиент не знает.
 // Остальные видят только одобренные.

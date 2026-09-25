@@ -156,6 +156,36 @@ test('failed payment action gives feedback and keeps requisites available', asyn
   assert.equal(a.document.querySelector('#reqBox').textContent, details.requisites);
 });
 
+test('info explains why only BTC and GRAM; preloader dismisses after init', async (t) => {
+  const a = await app(t);
+  const info = a.document.querySelector('#view-info').textContent;
+  assert.match(info, /Почему только BTC и GRAM/);
+  assert.match(info, /est\. 2024/i);
+  assert.match(info, /Bitcoin/);
+  const pre = a.document.querySelector('#preloader');
+  assert.ok(!pre || pre.classList.contains('done'));
+});
+
+test('review reply from PRICELEX is rendered under the review', async (t) => {
+  const a = await app(t, { ...initial, status: 'completed' });
+  a.handle((url) => {
+    if (url === '/api/reviews') return a.json({
+      reviews: [{
+        id: 7, name: 'Игорь', rating: 5, text: 'Всё чётко', createdAt: Date.UTC(2026, 8, 20),
+        reply: { text: 'Благодарим за доверие.', at: Date.UTC(2026, 8, 21) },
+      }],
+      stats: { count: 1, avg: 5 },
+    });
+  });
+  a.document.querySelector('button[data-tab="reviews"]').click();
+  await tick();
+  const item = a.document.querySelector('.rv-item');
+  assert.ok(item);
+  assert.match(item.textContent, /Всё чётко/);
+  assert.match(item.querySelector('.rv-reply').textContent, /Благодарим за доверие/);
+  assert.match(item.querySelector('.rv-reply').textContent, /PRICELEX/);
+});
+
 test('calculator converts both ways and never mentions any fee', async (t) => {
   const done = { ...initial, status: 'completed' };
   const a = await app(t, done);

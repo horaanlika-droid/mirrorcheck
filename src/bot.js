@@ -293,7 +293,10 @@ function reviewText(r) {
     `👤 ${esc(r.name)}${author}\n` +
     (order ? `📥 Заявка #${order.id} · ${fmtRub(order.payRub || order.rub)} → ${esc(order.currency)}\n` : '') +
     `📅 ${fmtMsk(r.createdAt)} (МСК)\n\n` +
-    `«${esc(r.text)}»`
+    `«${esc(r.text)}»` +
+    (r.reply && r.reply.text
+      ? `\n\n💬 <b>Ответ PRICELEX</b> · ${fmtMsk(r.reply.at)} (МСК)\n«${esc(r.reply.text)}»`
+      : '')
   );
 }
 
@@ -302,10 +305,15 @@ function reviewKb(r) {
   if (r.status === 'pending') kb.text('✅ Опубликовать', `rv:${r.id}:approve`).text('🚫 Отклонить', `rv:${r.id}:reject`).row();
   else if (r.status === 'approved') kb.text('🙈 Снять с публикации', `rv:${r.id}:reject`).row();
   else kb.text('✅ Опубликовать', `rv:${r.id}:approve`).row();
-  return kb
-    .text('👤 Имя', `rv:${r.id}:name`).text('⭐ Оценка', `rv:${r.id}:rate`).row()
-    .text('✏️ Текст', `rv:${r.id}:text`).text('📅 Дата и время', `rv:${r.id}:date`).row()
-    .text('🗑 Удалить', `rv:${r.id}:del`).text('📋 К списку', `rvl:${r.status}:0`);
+  kb.text('👤 Имя', `rv:${r.id}:name`).text('⭐ Оценка', `rv:${r.id}:rate`).row()
+    .text('✏️ Текст', `rv:${r.id}:text`).text('📅 Дата и время', `rv:${r.id}:date`).row();
+  if (r.reply && r.reply.text) {
+    kb.text('✏️ Ответ', `rv:${r.id}:replyedit`).text('📅 Дата ответа', `rv:${r.id}:replydate`).row()
+      .text('🗑 Снять ответ', `rv:${r.id}:replydel`).row();
+  } else {
+    kb.text('💬 Ответить', `rv:${r.id}:reply`).row();
+  }
+  return kb.text('🗑 Удалить', `rv:${r.id}:del`).text('📋 К списку', `rvl:${r.status}:0`);
 }
 
 // Карточка отзыва у всех админов обновляется после действий любого из них.
@@ -351,7 +359,7 @@ async function reviewsMenu(ctx, edit = true) {
     `На модерации: <b>${pending}</b> · Скрыто: ${hidden}\n\n` +
     `Клиент может оставить отзыв только после завершённого обмена — он попадает сюда на модерацию. ` +
     `Автор всегда видит свой отзыв опубликованным и о модерации не знает; остальным он виден только после одобрения.\n` +
-    `Вы можете добавить отзыв сами и отредактировать любой: имя, оценку, текст, дату и время (по Москве).`;
+    `Вы можете добавить отзыв сами, ответить на любой и отредактировать: имя, оценку, текст, дату отзыва и дату ответа (по Москве).`;
   const kb = new InlineKeyboard()
     .text(`🕓 На модерации${pending ? ` (${pending})` : ''}`, 'rvl:pending:0').row()
     .text('✅ Опубликованные', 'rvl:approved:0').text('🙈 Скрытые', 'rvl:rejected:0').row()
@@ -440,6 +448,31 @@ const REVIEW_EDIT = {
   date: 'новую <b>дату и время</b> по Москве: <code>24.09.2026 14:30</code>, <code>24.09 14:30</code> или «сейчас»',
 };
 
+async function reviewReplyStep(ctx, f, value) {
+  const r = store.getReview(f.reviewId);
+  if (!r) {
+    flows.delete(ctx.from.id);
+    return ctx.reply('Отзыв не найден — возможно, его удалили.', { reply_markup: homeKb() });
+  }
+  if (f.step === 'text') {
+    if (!value || value.length > store.REVIEW_TEXT_MAX) return ctx.reply(`Ответ — от 1 до ${store.REVIEW_TEXT_MAX} символов.`);
+    flows.set(ctx.from.id, { type: 'rvreply', step: 'date', reviewId: r.id, text: value });
+    return ctx.reply(
+      `📅 Отзыв #${r.id}. Шаг 2/2 — <b>дата ответа</b> по Москве: <code>24.09.2026 14:30</code>, <code>24.09 14:30</code> или «сейчас».\n/cancel — отмена`,
+      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🕒 Сейчас', 'rvr:now') }
+    );
+  }
+  if (f.step === 'date') {
+    const ts = parseMsk(value);
+    if (!Number.isFinite(ts)) return ctx.reply('Не понял дату. Формат: 24.09.2026 14:30 (по Москве) или «сейчас».');
+    flows.delete(ctx.from.id);
+    const upd = store.updateReview(r.id, { reply: { text: f.text, at: ts, by: String(ctx.from.id) } });
+    await syncReviewCards(upd);
+    await ctx.reply('✅ Ответ опубликован — клиенты увидят его под отзывом.');
+    return reviewView(ctx, upd, false);
+  }
+}
+
 async function reviewEditText(ctx, f, value) {
   const r = store.getReview(f.reviewId);
   if (!r) {
@@ -457,6 +490,20 @@ async function reviewEditText(ctx, f, value) {
     const ts = parseMsk(value);
     if (!Number.isFinite(ts)) return ctx.reply('Не понял дату. Формат: 24.09.2026 14:30 (по Москве) или «сейчас».');
     patch = { createdAt: ts };
+  } else if (f.field === 'reply') {
+    if (!value || value.length > store.REVIEW_TEXT_MAX) return ctx.reply(`Ответ — от 1 до ${store.REVIEW_TEXT_MAX} символов.`);
+    patch = { reply: { text: value, at: (r.reply && Number.isFinite(r.reply.at) ? r.reply.at : Date.now()), by: String(ctx.from.id) } };
+  } else if (f.field === 'replydate') {
+    const ts = parseMsk(value);
+    if (!Number.isFinite(ts)) return ctx.reply('Не понял дату. Формат: 24.09.2026 14:30 (по Москве) или «сейчас».');
+    if (!r.reply || !r.reply.text) {
+      flows.delete(ctx.from.id);
+      return ctx.reply('Сначала напишите ответ.', { reply_markup: homeKb() });
+    }
+    patch = { reply: { text: r.reply.text, at: ts, by: r.reply.by || String(ctx.from.id) } };
+  } else {
+    flows.delete(ctx.from.id);
+    return ctx.reply('Неизвестное поле.', { reply_markup: homeKb() });
   }
   flows.delete(ctx.from.id);
   const upd = store.updateReview(r.id, patch);
@@ -476,6 +523,12 @@ async function onReviewCallback(ctx, d, prevFlow) {
       return ctx.reply('Этот шаг уже неактуален. Начните заново: ⭐ Отзывы → ➕ Добавить отзыв.', { reply_markup: homeKb() });
     }
     return reviewAddStep(ctx, prevFlow, m[1] === 'date' ? 'сейчас' : m[2]);
+  }
+  if (d === 'rvr:now') {
+    if (!prevFlow || prevFlow.type !== 'rvreply' || prevFlow.step !== 'date') {
+      return ctx.reply('Этот шаг уже неактуален. Откройте отзыв и нажмите «Ответить» ещё раз.', { reply_markup: homeKb() });
+    }
+    return reviewReplyStep(ctx, prevFlow, 'сейчас');
   }
   m = d.match(/^rv:(\d+)(?::(\w+))?(?::(\w+))?$/);
   if (!m) return false;
@@ -501,6 +554,39 @@ async function onReviewCallback(ctx, d, prevFlow) {
   }
   if (act === 'date' && arg === 'now') {
     const upd = store.updateReview(r.id, { createdAt: Date.now() });
+    await reviewView(ctx, upd, true);
+    return syncReviewCards(upd, here);
+  }
+  if (act === 'reply') {
+    flows.set(ctx.from.id, { type: 'rvreply', step: 'text', reviewId: r.id });
+    return ctx.reply(
+      `💬 Отзыв #${r.id}. Напишите <b>ответ</b> от имени PRICELEX (1–${store.REVIEW_TEXT_MAX} символов).\n/cancel — отмена`,
+      { parse_mode: 'HTML' }
+    );
+  }
+  if (act === 'replyedit') {
+    flows.set(ctx.from.id, { type: 'rvedit', field: 'reply', reviewId: r.id });
+    const current = r.reply && r.reply.text ? `«${esc(r.reply.text)}»` : '— нет —';
+    return ctx.reply(
+      `✏️ Отзыв #${r.id}. Отправьте новый <b>текст ответа</b> (1–${store.REVIEW_TEXT_MAX} символов).\n\nСейчас: ${current}\n/cancel — отмена`,
+      { parse_mode: 'HTML' }
+    );
+  }
+  if (act === 'replydate') {
+    if (!r.reply || !r.reply.text) return ctx.reply('Сначала напишите ответ.');
+    if (arg === 'now') {
+      const upd = store.updateReview(r.id, { reply: { text: r.reply.text, at: Date.now(), by: r.reply.by || String(ctx.from.id) } });
+      await reviewView(ctx, upd, true);
+      return syncReviewCards(upd, here);
+    }
+    flows.set(ctx.from.id, { type: 'rvedit', field: 'replydate', reviewId: r.id });
+    return ctx.reply(
+      `📅 Отзыв #${r.id}. Отправьте <b>дату ответа</b> по Москве: <code>24.09.2026 14:30</code>, <code>24.09 14:30</code> или «сейчас».\n\nСейчас: ${fmtMsk(r.reply.at)} (МСК)\n/cancel — отмена`,
+      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🕒 Сейчас', `rv:${r.id}:replydate:now`) }
+    );
+  }
+  if (act === 'replydel') {
+    const upd = store.updateReview(r.id, { reply: null });
     await reviewView(ctx, upd, true);
     return syncReviewCards(upd, here);
   }
@@ -676,10 +762,10 @@ const SET_FIELDS = {
   max: { label: 'максимальную сумму обмена (₽)', num: true, key: 'maxRub' },
   ref: { label: 'реферальный процент (например 1)', num: true, key: 'refPercent' },
   avgm: { label: 'среднее время обмена в минутах (0 — считать автоматически по сделкам, например 12)', num: true, key: 'avgExchangeMin' },
-  ann: { label: 'текст объявления для сайта' },
-  op: { label: 'юзернейм поддержки в Telegram (пусто — только чат в приложении)' },
-  ch: { label: 'ссылку на канал' },
-  chat: { label: 'ссылку на чат' },
+  ann: { label: 'текст объявления для сайта', key: 'announcement' },
+  op: { label: 'юзернейм поддержки в Telegram (пусто — только чат в приложении)', key: 'operator' },
+  ch: { label: 'ссылку на канал', key: 'channel' },
+  chat: { label: 'ссылку на чат', key: 'chat' },
   blog: { label: 'логин брокера (один для всех сессий)', key: 'brokerLogin' },
   bpass: { label: 'пароль брокера', key: 'brokerPassword' },
   bshare: { label: 'долю брокера в спреде, % (например 70)', num: true, key: 'brokerSharePercent' },
@@ -727,6 +813,7 @@ async function handleAdminText(ctx) {
   }
   if (f.type === 'rvadd') return reviewAddStep(ctx, f, text);
   if (f.type === 'rvedit') return reviewEditText(ctx, f, text);
+  if (f.type === 'rvreply') return reviewReplyStep(ctx, f, text);
   if (f.type === 'support') {
     if (!text || text.length > 2000) return ctx.reply('Сообщение должно содержать от 1 до 2000 символов.');
     flows.delete(ctx.from.id);
