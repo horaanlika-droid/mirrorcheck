@@ -193,7 +193,6 @@ button:focus:not(:focus-visible) { outline: none; }
 .card-title::before { display: none; }
 .exchange-heading { display: flex; justify-content: space-between; align-items: center; margin: 4px 1px 16px; gap: 10px; }
 .exchange-heading-left { display: flex; align-items: center; gap: 12px; }
-.exchange-logo-badge { width: 38px; height: 38px; border-radius: 11px; object-fit: contain; border: 1px solid rgba(var(--tint-rgb), 0.28); box-shadow: 0 4px 14px rgba(var(--shade-rgb),0.4); flex-shrink: 0; }
 .exchange-heading h1 { color: var(--ink); font-size: 25px; line-height: 1.05; font-weight: 600; letter-spacing: -.04em; margin: 0; }
 .exchange-heading p { margin-top: 3px; color: var(--mut); font-size: 11px; letter-spacing: .015em; margin-bottom: 0; }
 .exchange-heading p span { color: var(--sand-3); }

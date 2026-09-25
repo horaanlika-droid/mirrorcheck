@@ -757,12 +757,54 @@
     );
   }
 
+  /* ---------- знак обмена в шапке ---------- */
+  // Вместо россыпи монет — живой знак обмена: две шампанские стрелки
+  // разворачиваются на пол-оборота с паузой, по их металлу в такт идёт блик.
+  // Всё в токенах палитры: стопы градиента и маски раскрашены классами в
+  // ios.css (.ex-*), цветов в разметке нет.
+  function exchangeBadgeHtml() {
+    return `
+      <span class="exchange-badge" aria-hidden="true">
+        <svg class="ex-swap" viewBox="0 0 44 44" focusable="false">
+          <defs>
+            <linearGradient id="exSwapGrad" x1="8" y1="6" x2="36" y2="38" gradientUnits="userSpaceOnUse">
+              <stop class="ex-stop-1" offset="0" />
+              <stop class="ex-stop-2" offset=".55" />
+              <stop class="ex-stop-3" offset="1" />
+            </linearGradient>
+            <linearGradient id="exSheenGrad" x1="0" y1="0" x2="1" y2="0">
+              <stop class="ex-sheen-0" offset="0" />
+              <stop class="ex-sheen-1" offset=".5" />
+              <stop class="ex-sheen-2" offset="1" />
+            </linearGradient>
+            <mask id="exSheenMask" maskUnits="userSpaceOnUse" x="0" y="0" width="44" height="44">
+              <rect class="ex-sheen-band" x="-26" y="0" width="26" height="44" fill="url(#exSheenGrad)" />
+            </mask>
+          </defs>
+          <g class="ex-swap-ring">
+            <g class="ex-arw">
+              <path d="M12 17 H30" />
+              <path d="M25.4 12.2 L30.6 17.4 L25.4 22.6" />
+              <path d="M32 27 H14" />
+              <path d="M18.6 22.2 L13.4 27.4 L18.6 32.6" />
+            </g>
+            <g class="ex-arw-hi" mask="url(#exSheenMask)">
+              <path d="M12 17 H30" />
+              <path d="M25.4 12.2 L30.6 17.4 L25.4 22.6" />
+              <path d="M32 27 H14" />
+              <path d="M18.6 22.2 L13.4 27.4 L18.6 32.6" />
+            </g>
+          </g>
+        </svg>
+      </span>`;
+  }
+
   function renderExchange() {
     const hasOpenOrder = S.order && !TERMINAL.includes(S.order.status);
     $('#view-exchange').innerHTML = `
       <div class="exchange-heading ${S.order && S.orderOpen ? 'hidden' : ''}">
         <div class="exchange-heading-left">
-          <img class="exchange-logo-badge" src="/img/hero-coins.png" alt="" width="38" height="38" />
+          ${exchangeBadgeHtml()}
           <div><h1>Обмен</h1><p>RUB <span>→</span> BTC / GRAM</p></div>
         </div>
         <div class="brokers-online-chip" title="Брокеров PRICELEX в сети">

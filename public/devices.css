@@ -175,6 +175,8 @@ html[data-device] .btn-sm { min-height: calc(var(--ui-btn) - 10px); }
 html[data-device] .profile-row,
 html[data-device] .profile-link { min-height: var(--ui-field); }
 html[data-device] .chart { height: var(--ui-chart); }
+/* Знак обмена в шапке растёт вместе с заголовком. */
+html[data-device] .exchange-badge { width: calc(var(--ui-title) + 2px); height: calc(var(--ui-title) + 2px); }
 
 /* Tab bar */
 html[data-device] .nav {
