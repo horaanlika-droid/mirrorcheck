@@ -26,6 +26,10 @@
 @media (min-width: 700px) {
   .preloader-logo { margin-bottom: 60px !important; }
 }
+.preloader-bar {
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
 
 /* 2. Все заголовки — по центру */
 .hdr-logo,
