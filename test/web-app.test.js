@@ -190,8 +190,30 @@ test('reply of PRICELEX wraps by lines: CSS keeps word-wrap and forbids long lin
   const { readFileSync } = require('node:fs');
   const { join } = require('node:path');
   const fixCss = readFileSync(join(__dirname, '../public/fix.css'), 'utf8');
+  const glassCss = readFileSync(join(__dirname, '../public/glass.css'), 'utf8');
   assert.match(fixCss, /\.rv-reply p \{\s*word-break: normal !important;\s*overflow-wrap: anywhere !important;/s, 'ответ площадки переносится по строкам с защитой фикс-слоя');
   assert.match(fixCss, /\.rv-reply p \{\s*word-break: normal !important;[^}]*white-space: normal !important;/s, 'без застывших в одну строку кусков и без колонок');
+  assert.match(glassCss, /\.rv-item \.rv-reply \{[^}]*columns: auto !important;[^}]*margin: 16px 0 0 !important;/s,
+    'ответ остаётся обычным блочным потоком и отделён от отзыва');
+  assert.match(glassCss, /\.rv-item \.rv-reply-h \{[^}]*margin: 0 0 10px !important;/s,
+    'между шапкой ответа и текстом есть вертикальный зазор');
+});
+
+test('background covers the Telegram viewport and icon rows retain their gaps', () => {
+  const { readFileSync } = require('node:fs');
+  const { join } = require('node:path');
+  const fixCss = readFileSync(join(__dirname, '../public/fix.css'), 'utf8');
+  const glassCss = readFileSync(join(__dirname, '../public/glass.css'), 'utf8');
+
+  assert.match(glassCss, /\.bg \{[^}]*width: 100vw;[^}]*height: 100vh; height: 100dvh;/s,
+    'фон следует за динамической высотой Telegram WebView');
+  assert.match(glassCss, /\.bg-img \{[^}]*background-size: cover;[^}]*mask-image: none;/s,
+    'основное фоновое изображение закрывает весь экран без обрезающей маски');
+  assert.doesNotMatch(fixCss, /column-gap:\s*normal\s*!important/,
+    'фикс одной колонки не должен обнулять flex-gap между иконкой и текстом');
+  assert.match(glassCss, /\.h-item \{[^}]*column-gap: 16px !important;/s);
+  assert.match(glassCss, /\.rv-top \{ column-gap: 14px !important; \}/);
+  assert.match(glassCss, /html\[data-device\] \.profile-row,[^}]*column-gap: 18px !important;/s);
 });
 
 test('calculator converts both ways and never mentions any fee', async (t) => {

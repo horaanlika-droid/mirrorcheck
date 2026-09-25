@@ -7,22 +7,34 @@
   --sep: rgba(225, 231, 235, .045);
 }
 
-/* Establish a local stacking context so the detailed background stays visible. */
+/* Establish a local stacking context so the detailed background stays visible.
+   The fixed layer explicitly follows the dynamic viewport used by Telegram:
+   this avoids an uncovered strip when the Mini App expands or the iOS browser
+   chrome changes height. */
+html, body { min-height: 100%; min-height: 100dvh; }
 body { isolation: isolate; }
-.bg { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+.bg {
+  position: fixed; inset: 0; width: 100vw;
+  height: 100vh; height: 100dvh;
+  z-index: -1; pointer-events: none; overflow: hidden;
+  background: #080d11;
+}
 
-/* Layer 1: In-focus subject plane. Crisp non-inverted 4K micro-engraving of Franklin. */
+/* Layer 1: a full-viewport subject plane. The previous fixed pixel height and
+   radial mask left empty bands on tall iOS/iPad viewports. `cover` keeps the
+   banknote behind every edge of the screen; the veil below supplies the soft
+   vignette without cutting the actual image short. */
 .bg-img {
-  position: absolute; inset: -10%;
+  position: absolute; inset: -4%;
   background-image: url('/img/dollar-scan.jpg');
-  background-size: auto clamp(1000px, 120vh, 1600px);
-  background-position: 70% 18%;
+  background-size: cover;
+  background-position: 64% center;
   background-repeat: no-repeat;
   opacity: .13;
-  transform: rotate(-10deg);
+  transform: none;
   filter: contrast(1.18) brightness(.88);
-  -webkit-mask-image: radial-gradient(ellipse at 70% 24%, #000 18%, transparent 74%);
-  mask-image: radial-gradient(ellipse at 70% 24%, #000 18%, transparent 74%);
+  -webkit-mask-image: none;
+  mask-image: none;
   pointer-events: none;
 }
 
@@ -65,14 +77,12 @@ body { isolation: isolate; }
   pointer-events: none;
 }
 
-/* Responsive background adjustments across devices */
+/* Responsive framing without giving up full-viewport coverage. */
 @media (max-width: 480px) {
   .bg-img {
-    background-size: auto clamp(820px, 112vh, 1400px);
-    background-position: 62% 16%;
+    background-size: cover;
+    background-position: 60% center;
     opacity: .14;
-    -webkit-mask-image: radial-gradient(ellipse at 64% 22%, #000 16%, transparent 76%);
-    mask-image: radial-gradient(ellipse at 64% 22%, #000 16%, transparent 76%);
   }
   .bg-grid {
     background-size: auto clamp(720px, 95vh, 1200px);
@@ -82,8 +92,8 @@ body { isolation: isolate; }
 }
 @media (min-width: 1024px) {
   .bg-img {
-    background-size: auto clamp(1200px, 130vh, 1800px);
-    background-position: 68% 22%;
+    background-size: cover;
+    background-position: 66% center;
     opacity: .12;
   }
   .bg-glow {
@@ -174,13 +184,22 @@ body { isolation: isolate; }
   white-space: normal !important;
 }
 
-/* Screenshot corrections: a real gap, including wrapped descriptions. */
-html[data-device] .profile-row, html[data-device] .profile-link {
-  column-gap: 18px;
+/* Screenshot corrections: real, explicit gaps between every leading icon/avatar
+   and its copy. `!important` is intentional here: the one-column safety layer
+   used to set column-gap globally and collapsed these spaces to zero. */
+html[data-device] .profile-row,
+html[data-device] .profile-link {
+  column-gap: 18px !important;
   padding-top: 13px;
   padding-bottom: 13px;
 }
-.profile-row-icon { flex-shrink: 0; }
+.h-item {
+  column-gap: 16px !important;
+  align-items: flex-start;
+}
+.h-item .h-ic { margin-top: 2px; }
+.rv-top { column-gap: 14px !important; }
+.profile-row-icon, .h-ic, .rv-av { flex-shrink: 0; }
 .profile-row-copy { gap: 5px; }
 #view-refs .ref-stat { padding: 18px 16px; }
 #view-refs .ref-stat .l { margin-top: 12px; line-height: 1.5; letter-spacing: .04em; }
@@ -188,12 +207,36 @@ html[data-device] .profile-row, html[data-device] .profile-link {
 #view-refs .step { gap: 14px; align-items: flex-start; line-height: 1.6; }
 #view-refs .step .n { margin-top: 0; flex: 0 0 28px; width: 28px; height: 28px; min-width: 28px; min-height: 28px; display: grid; place-items: center; font-weight: 700; font-size: 13px; }
 .step-copy { display: block; min-width: 0; flex: 1; line-height: 1.5; padding-top: 2px; }
-/* Reviews reply: prevent left-edge clipping, keep header on one line */
-.rv-item .rv-reply { margin-left: 0; margin-right: 0; padding: 14px 16px; border-radius: 12px; overflow: hidden; }
-.rv-item .rv-reply-h { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: nowrap; }
-.rv-item .rv-reply-h span { white-space: nowrap; flex-shrink: 0; margin-left: auto; }
+/* Review reply: ordinary block flow (not a one-column multicol container),
+   enough vertical air between the heading and answer, and no clipped left edge. */
+.rv-item .rv-reply {
+  display: block !important;
+  columns: auto !important;
+  column-count: auto !important;
+  column-width: auto !important;
+  margin: 16px 0 0 !important;
+  padding: 14px 16px !important;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.rv-item .rv-reply-h {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center;
+  column-gap: 12px !important;
+  flex-wrap: nowrap;
+  margin: 0 0 10px !important;
+  line-height: 1.35;
+}
+.rv-item .rv-reply-h span { white-space: nowrap !important; flex-shrink: 0; margin-left: auto; }
+.rv-item .rv-reply p {
+  display: block;
+  margin: 0 !important;
+  line-height: 1.55 !important;
+  clear: both;
+}
 @media (min-width: 700px) {
-  html[data-device] .profile-row, html[data-device] .profile-link { column-gap: 22px; }
+  html[data-device] .profile-row, html[data-device] .profile-link { column-gap: 22px !important; }
   #view-refs .step { gap: 20px; }
   .preloader-inner { padding: 48px; }
   .preloader .preloader-tag { margin-top: 40px; font-size: 12px; }

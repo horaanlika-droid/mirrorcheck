@@ -178,10 +178,12 @@
   word-break: normal !important;
   overflow-wrap: break-word !important;
   white-space: normal !important;
-  column-count: 1 !important;
-  columns: 1 !important;
-  column-gap: normal !important;
 }
+
+/* Колонки запрещаем только у контейнеров, которые действительно могли
+   раскладываться сеткой. Не задаём column-gap всем текстовым и flex-блокам:
+   это свойство является поперечной частью gap и с !important обнуляло
+   расстояние между аватаром/иконкой и текстом в профиле, истории и отзывах. */
 
 /* 4. Запрет двух колонок — строго одна колонка, перенос по строкам */
 #histList,
