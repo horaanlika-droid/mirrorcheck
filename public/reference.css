@@ -750,51 +750,48 @@ button:focus:not(:focus-visible) { outline: none; }
   animation: none !important;
 }
 
-/* === ГЛОБАЛЬНОЕ ВЫРАВНИВАНИЕ ТЕКСТА: гибрид left + justify для длинных блоков === */
-html, body, .app, .card, .card-title, .card-hero, .editorial, .rv-hero, .speech,
-.h-item, .rv-item, .stage, .field, .f-label, .f-meta, .metric, .display, .kicker,
-.hdr, .hdr-home, .hdr-page, .hdr-page-title, .nav, .nav button, .btn, .profile-identity,
-.profile-settings, .profile-links, .ref-stat, .contact, .broker-row, .stage-matched-card,
-.active-order, .req-box, .chat-box, .tx-box, .announce, .syncbar, .toast, .desk-metric,
-.dm-label, .dm-num, .profile-row, .profile-link, .rv-top, .rv-who, .h-main, .h-top,
-.h-sub, .ref-link, .steps, .feat, .empty, .chat-empty, .profile-foot, .signature,
-.sp-body, .ed-body, .exchange-heading, .hero-top, .hero-amount, .hero-foot,
-.pay-amount, .file-box, .file-name, .chip, .pill, .seg, .f-hint, .f-err, .cap-label,
-.rv-score, .rv-breakdown, .rv-form, .rv-cta, .rv-cta-t, .rv-reply, .rv-reply-h,
-.about, .contacts, .rules, .rule, .sp-sign, .sp-mic, .stage-broker-info-bar,
-.stage-steps-bar, .stage-brokers-pool, .brokers-pool-card, .brokers-list,
-.support-order-banner, .admin-call-banner, .profile-member, .profile-user,
-.profile-avatar, .preloader-inner, .preloader-brand, .preloader-tag,
-.preloader-est, .chart-note, .chart-axis, .signal, .disclaimer, .dep-line {
-  text-align: left;
+/* === ВЫРАВНИВАНИЕ: заголовки по центру (и прелоадер), инфо-текст строго по строкам, без двух колонок === */
+.preloader-inner,
+.preloader-brand,
+.preloader-tag,
+.preloader-est {
+  text-align: center !important;
 }
-
-.preloader-inner, .stage, .empty, .chat-empty, .profile-foot, .signature,
-.desk-metric, .hdr-page-title, .msg.me .msg-time, .rv-dist-percent,
-.profile-logout, .profile-foot-mark, .profile-foot-tag {
-  text-align: left !important;
+.card-title, .metric, .display, .stage-title, .dm-num, .hdr-logo, .hdr-page-title,
+.exchange-heading h1, .profile-user h1, .rv-score .metric, .pay-amount .v,
+.profile-foot-mark, .kicker, .desk-metric, .hdr, .hdr-home, .hdr-page,
+.exchange-heading, .hero-top, .hero-amount, .hero-foot, .profile-identity,
+.profile-foot, .signature, .sp-sign, .chart-note, .chart-axis {
+  text-align: center !important;
+  text-align-last: center !important;
+  hyphens: none !important;
 }
-
-/* Длинные читаемые тексты — по ширине, последняя строка слева */
 .about, .rule p, .sp-line, .rv-body, .rv-reply p, .step, .feat .f, .note,
 .stage-sub, .why-pair-body, .why-pair-lead, .disclaimer, .signal .s-s,
 .f-hint, .f-err, .cap-label, .ref-link, .chart-note, .about p, .empty,
 .chat-empty, .profile-foot-tag, .dep-line, .announce, .syncbar,
 .profile-row-copy small, .broker-meta, .rv-who span, .h-sub, .metric-sub,
 .sp-sign, .stage-sub, .req-box, .tx-link, .msg-bubble, .rv-dist-percent,
-.profile-member {
-  text-align: justify !important;
-  text-align-last: left;
-  hyphens: auto;
-  -webkit-hyphens: auto;
-  word-break: normal;
-  overflow-wrap: break-word;
-}
-
-.card-title, .metric, .display, .stage-title, .dm-num, .hdr-logo, .hdr-page-title,
-.exchange-heading h1, .profile-user h1, .rv-score .metric, .pay-amount .v,
-.profile-foot-mark {
+.profile-member, .profile-logout, .h-main, .h-top, .ref-stat, .contact,
+.broker-row, .active-order, .chat-box, .tx-box, .contacts, .rules, .rule,
+.about, .steps, .feat, .profile-settings, .profile-links, .rv-top, .rv-who,
+.rv-form, .rv-cta, .rv-cta-t, .rv-reply, .rv-reply-h, .support-order-banner,
+.admin-call-banner, .stage-broker-info-bar, .stage-steps-bar, .stage-brokers-pool,
+.brokers-pool-card, .brokers-list {
   text-align: left !important;
-  text-align-last: left;
-  hyphens: none;
+  text-align-last: left !important;
+  hyphens: none !important;
+  -webkit-hyphens: none !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+  white-space: normal !important;
+  column-count: 1 !important;
+  columns: 1 !important;
+}
+#histList, #rvList, .steps {
+  display: flex !important;
+  flex-direction: column !important;
+  grid-template-columns: 1fr !important;
+  column-count: 1 !important;
+  columns: 1 !important;
 }
