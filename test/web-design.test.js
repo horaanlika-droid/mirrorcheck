@@ -214,6 +214,19 @@ test('reference stylesheet is applied after the legacy component sheet', () => {
   assert.match(css, /--bg-1:\s*#080d11/i);
   assert.match(css, /--sand-3:\s*#c9a87e/i);
   assert.match(css, /grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/);
+  // iOS-слой подключается последним: системный шрифт, плоские поверхности, бронзовый tint.
+  const ios = html.indexOf('href="/ios.css"');
+  assert.ok(ios > reference);
+  const iosCss = fs.readFileSync(path.join(__dirname, '../public/ios.css'), 'utf8');
+  assert.match(iosCss, /--tint:\s*#c9a87e/i);
+  assert.match(iosCss, /-apple-system/);
+  assert.ok(!html.includes('fonts.googleapis.com'), 'внешние шрифты не грузятся — только системный SF');
+});
+
+test('логотип — прозрачный PNG без кленового листа над короной', () => {
+  assert.ok(fs.existsSync(path.join(__dirname, '../public/img/logo-mark.png')));
+  assert.ok(!fs.existsSync(path.join(__dirname, '../public/img/logo.jpg')));
+  assert.ok(!html.includes('logo.jpg') && !script.includes('logo.jpg'));
 });
 
 test('active order is a back-navigable subpage with a resume card on exchange', async (t) => {

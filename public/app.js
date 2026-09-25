@@ -600,7 +600,7 @@
       header.innerHTML = `
         <div class="hdr-home">
           <div class="hdr-brand">
-            <img class="hdr-logo-img" src="/img/logo.jpg" alt="PRICELEX" width="34" height="34" />
+            <img class="hdr-logo-img" src="/img/logo-mark.png" alt="PRICELEX" width="34" height="34" />
             <div class="hdr-brand-text">
               <span class="hdr-logo">PRICELEX</span>
               <span class="hdr-sub">PRIVATE CRYPTO BROKERAGE</span>
@@ -754,7 +754,7 @@
     $('#view-exchange').innerHTML = `
       <div class="exchange-heading ${S.order && S.orderOpen ? 'hidden' : ''}">
         <div class="exchange-heading-left">
-          <img class="exchange-logo-badge" src="/img/logo.jpg" alt="PRICELEX" width="38" height="38" />
+          <img class="exchange-logo-badge" src="/img/logo-mark.png" alt="PRICELEX" width="38" height="38" />
           <div><h1>Обмен</h1><p>RUB <span>→</span> BTC / GRAM</p></div>
         </div>
         <div class="brokers-online-chip" title="Брокеров PRICELEX в сети">
