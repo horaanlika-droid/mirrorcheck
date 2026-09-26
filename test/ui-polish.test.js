@@ -1,8 +1,9 @@
 // Полировка интерфейса по скриншотам IMG_1253–IMG_1255 и следующим просьбам:
 // плашка чата в правом нижнем углу; строки не рвутся на колонки (текст
-// растягивает карточку, а не ломается); медные монеты BTC/GRAM — сгенерированный
-// арт, монета выбранной валюты вращается; бронзовая CTA; виброотклик на
-// нажатия и ошибки; переключатели отклика в профиле.
+// растягивает карточку, а не ломается); медные монеты BTC/GRAM и рубль из
+// монограммы логотипа — сгенерированный арт, монета выбранной валюты
+// вращается; бронзовая CTA; виброотклик на нажатия и ошибки; переключатели
+// отклика в профиле.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -187,8 +188,8 @@ function meanHue(file) {
   return { hue: m, n, img };
 }
 
-test('монеты BTC и GRAM: сгенерированный медный арт с прозрачностью, одним металлом', () => {
-  const coins = ['coin-btc.png', 'coin-gram.png'].map((f) => ({ f, ...meanHue(path.join(__dirname, '../public/img', f)) }));
+test('монеты BTC, GRAM и RUB: сгенерированный медный арт с прозрачностью, одним металлом', () => {
+  const coins = ['coin-btc.png', 'coin-gram.png', 'coin-rub.png'].map((f) => ({ f, ...meanHue(path.join(__dirname, '../public/img', f)) }));
   for (const c of coins) {
     const { width, height, px } = c.img;
     assert.ok(width <= 256 && height <= 256 && width >= 96, `${c.f}: интерфейсный размер ${width}×${height}`);
@@ -198,7 +199,19 @@ test('монеты BTC и GRAM: сгенерированный медный ар
     assert.ok(c.n > 2000, `${c.f}: монета, а не пустышка`);
     assert.ok(c.hue > 24 && c.hue < 32, `${c.f}: медно-бронзовый тон ${c.hue.toFixed(1)}°`);
   }
-  assert.ok(Math.abs(coins[0].hue - coins[1].hue) < 3, 'обе монеты из одного металла');
+  const spread = Math.max(...coins.map((c) => c.hue)) - Math.min(...coins.map((c) => c.hue));
+  assert.ok(spread < 3, 'все монеты из одного металла');
+});
+
+test('рубль — медная монета из монограммы логотипа в поле «Вы отдаёте»', async (t) => {
+  const a = await app(t);
+  const ic = a.doc.querySelector('#exForm .field .coin-ic.rub');
+  assert.ok(ic, 'поле «Вы отдаёте» несёт иконку монеты');
+  assert.ok(ic.classList.contains('coin-art'), 'монета подключена как арт');
+  assert.ok(ic.querySelector('img'), 'в поле — картинка монеты, а не глиф');
+  assert.match(ic.querySelector('img').getAttribute('src'), /\/img\/coin-rub\.png$/);
+  assert.equal(ic.querySelectorAll('.coin3d-spin > img.coin3d-face').length, 2, 'у монеты две стороны');
+  assert.ok(ic.querySelector('.coin3d-edge'), 'и ребро — монета объёмная');
 });
 
 test('монета вращается только у выбранной валюты — и начинает оборот в момент выбора', async (t) => {

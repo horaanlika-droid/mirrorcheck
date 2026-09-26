@@ -83,6 +83,10 @@ const defaults = () => ({
   // status: 'pending' | 'approved' | 'rejected'
   brokerApps: [],
   brokerSessions: {}, // tgId -> { login, at }
+  // Брокеры, назначенные админом по user ID (без логина и пароля):
+  // { tgId, login, name, username, active, createdAt } — login совпадает с tgId,
+  // поэтому заявки, чаты, профили и выплаты продолжают жить по логину.
+  brokerAccounts: [],
   // Профиль брокера по логину: { name, username, depositBtc, depositAt, internUntil }
   brokerProfiles: {},
   // Леджер брокера: { id, login, orderId, rub, btc, at, type: 'earn' }
@@ -797,6 +801,47 @@ const brokerSessionsByLogin = (login) =>
 const allBrokerSessions = () =>
   Object.entries(db.brokerSessions).filter(([, s]) => s && s.login).map(([tgId, s]) => ({ tgId, login: s.login }));
 
+/* ---------- брокеры по user ID: назначает админ командой ---------- */
+// Логин и пароль не нужны: доступ выдаётся командой /addbroker <user id> и
+// живёт в базе. Логин такого брокера — сам Telegram ID (строкой), поэтому
+// заявки, чаты, профили, депозиты и выплаты продолжают работать по логину.
+const brokerAccounts = () => (db.brokerAccounts || []).slice();
+const brokerAccountByTg = (tgId) =>
+  (db.brokerAccounts || []).find((b) => String(b.tgId) === String(tgId)) || null;
+const brokerAccountByLogin = (login) =>
+  (db.brokerAccounts || []).find((b) => String(b.login) === String(login)) || null;
+
+const validTgId = (id) => /^[1-9]\d*$/.test(String(id)) && Number.isSafeInteger(Number(id));
+
+function upsertBrokerAccount(tgId, patch = {}) {
+  const id = String(tgId);
+  if (!validTgId(id)) throw new Error('Укажите числовой Telegram ID. Пример: /addbroker 123456789');
+  return mutate((d) => {
+    if (!Array.isArray(d.brokerAccounts)) d.brokerAccounts = [];
+    let acc = d.brokerAccounts.find((b) => String(b.tgId) === id);
+    let existed = true;
+    if (!acc) {
+      existed = false;
+      acc = { tgId: id, login: id, name: '', username: null, active: true, createdAt: Date.now() };
+      d.brokerAccounts.push(acc);
+    }
+    Object.assign(acc, patch);
+    acc.tgId = id;
+    acc.login = id;
+    return { ...acc, existed };
+  });
+}
+
+function dropBrokerAccount(tgId) {
+  const id = String(tgId);
+  return mutate((d) => {
+    if (!Array.isArray(d.brokerAccounts)) d.brokerAccounts = [];
+    d.brokerAccounts = d.brokerAccounts.filter((b) => String(b.tgId) !== id);
+    // Сессию закрываем сразу; профиль, лидер и история сделок остаются.
+    delete d.brokerSessions[id];
+  });
+}
+
 // Начисление брокеру за завершённую сделку: разница между клиентским и
 // официальным курсом (спред) минус операционные расходы площадки делится
 // 70/30 — бо́льшая часть брокеру (доля настраивается). Идемпотентно по orderId.
@@ -1053,6 +1098,11 @@ module.exports = {
   dropBrokerSession,
   brokerSessionsByLogin,
   allBrokerSessions,
+  brokerAccounts,
+  brokerAccountByTg,
+  brokerAccountByLogin,
+  upsertBrokerAccount,
+  dropBrokerAccount,
   brokerProfile,
   upsertBrokerProfile,
   brokerIsIntern,

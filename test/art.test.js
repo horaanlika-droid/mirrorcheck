@@ -154,12 +154,12 @@ test('шапка обмена — живой знак обмена, заверш
   const done = { ...paid, status: 'completed', updatedAt: now };
   const d = await app(t, [paid], { order: done });
   const doc = d.window.document;
-  // Монеты из шапки убраны: вместо них — анимированный знак обмена.
+  // Монеты из шапки убраны: вместо них — статичный знак обмена.
   assert.equal(doc.querySelector('.exchange-heading-left img'), null, 'россыпи монет в шапке больше нет');
   const badge = doc.querySelector('.exchange-heading-left .exchange-badge svg.ex-swap');
   assert.ok(badge, 'в шапке стоит знак обмена');
-  assert.ok(badge.querySelector('.ex-swap-ring'), 'стрелки разворачиваются');
-  assert.ok(badge.querySelector('.ex-sheen-band'), 'по стрелкам идёт блик');
+  assert.equal(badge.querySelector('.ex-swap-ring'), null, 'знак не вращается');
+  assert.equal(badge.querySelector('.ex-sheen-band'), null, 'бегущего блика нет');
   assert.equal(badge.querySelectorAll('.ex-arw path').length, 4, 'две стрелки путями');
   assert.ok(!doc.querySelector('#exOrder .okmark-art'), 'пока оплата не подтверждена — щита нет');
   //_pollOrder подтягивает завершение при возвращении вкладки_

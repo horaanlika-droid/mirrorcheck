@@ -1094,7 +1094,21 @@ const fmtBtc = (v) => (Math.round(Number(v) * 1e8) / 1e8).toFixed(8).replace(/\.
 const fmtBtcNum = (v) => (Math.round(Number(v) * 1e8) / 1e8).toFixed(8).replace(/\.?0+$/, '');
 
 // Кто может работать: вошедший брокер (не админ — у того свой контур).
+// Первым делом — брокеры, назначенные по user ID: пароля нет, доступ выдан
+// командой /addbroker; первый же заход в кабинет сам регистрирует сессию
+// (иначе уведомления о заявках до него не дошли бы) и профиль по логину-ID.
 function brokerCtx(ctx) {
+  const acc = store.brokerAccountByTg && store.brokerAccountByTg(ctx.from.id);
+  if (acc && acc.active !== false) {
+    if (!store.brokerSession(ctx.from.id)) store.setBrokerSession(ctx.from.id, acc.login);
+    if (!store.brokerProfile(acc.login)) {
+      store.upsertBrokerProfile(acc.login, {
+        name: ctx.from.first_name || '',
+        username: ctx.from.username || null,
+      });
+    }
+    return acc.login;
+  }
   const login = brokerLoginOf(ctx.from.id);
   if (!login) return null;
   const creds = store.brokerCreds();
@@ -1179,10 +1193,15 @@ async function brokerChatOpen(ctx, edit = true) {
 }
 
 async function brokerAuthStart(ctx) {
+  // Сюда назначенный по ID брокер попадает только с приостановленным доступом.
+  const acc = store.brokerAccountByTg && store.brokerAccountByTg(ctx.from.id);
+  if (acc && acc.active === false) {
+    return ctx.reply('🚪 Доступ брокера приостановлен администратором. Напишите в поддержку, если это ошибка.');
+  }
   const creds = store.brokerCreds();
   if (!creds.active || !creds.login || !creds.password) {
     return ctx.reply(
-      'Кабинет брокера пока не настроен — администрация сначала задаст логин и пароль в панели.\n' +
+      'Кабинет брокера открывается по приглашению: администратор назначает брокера командой /addbroker по вашему Telegram ID.\n' +
       'Если вы подали заявку через приложение, ожидайте контакта.'
     );
   }
@@ -1381,7 +1400,9 @@ async function notifyBrokersNewOrder(o) {
   const s = store.get().settings;
   const est = brokerEarnEstimate(o);
   const creds = store.brokerCreds();
-  if (!creds.active) return;
+  // Рассылка идёт и когда работают мастер-креды, и когда брокеры назначены
+  // по user ID: вход в кабинет больше не обязан зависеть от логина/пароля.
+  if (!creds.active && !(store.brokerAccounts && store.brokerAccounts().length)) return;
   const intern = Number(o.rub) <= (Number(s.internMaxRub) || 5000);
   await Promise.all(store.allBrokerSessions().map(async ({ tgId, login }) => {
     const can = store.brokerCanTake(login, o.rub);
@@ -1813,8 +1834,16 @@ async function brokersMenu(ctx, edit = true) {
   const apps = store.brokerAppsByStatus('pending');
   const adminBrokers = (store.getAdminBrokers ? store.getAdminBrokers() : [])
     .map((b) => `• <b>${esc(b.name || b.login)}</b> 🟢 онлайн`).join('\n');
+  const accounts = store.brokerAccounts ? store.brokerAccounts() : [];
+  const roster = accounts
+    .map((b) => `• <code>${esc(b.tgId)}</code>${b.name ? ` — ${esc(b.name)}` : ''} ${b.active === false ? '🔴 приостановлен' : '🟢'}`)
+    .join('\n');
   const text =
     `🤝 <b>Брокеры</b>\n\n` +
+    (accounts.length
+      ? `👤 <b>Назначенные по ID (${accounts.length}):</b>\n${roster}\n` +
+        `➕ /addbroker &lt;user id&gt; · ➖ /removebroker &lt;user id&gt; — пароли не нужны\n\n`
+      : `👤 Назначенных брокеров нет: дайте доступ командой /addbroker &lt;user id&gt; — логин и пароль не нужны.\n\n`) +
     `🔑 Логин: <code>${esc(s.brokerLogin || '— не задан —')}</code> · Пароль: ${s.brokerPassword ? '••••••' : '— не задан —'} · ${s.brokerActive ? '🟢 вход открыт' : '🔴 вход закрыт'}\n` +
     `📊 Деление спреда: брокеру <b>${s.brokerSharePercent}%</b> · площадке ${100 - s.brokerSharePercent}%, расходы ${fmtRub(s.opsExpensesRub)}/сделка\n` +
     `💸 Выплаты от ${fmtBtc(s.brokerMinPayoutBtc)} · 🏦 депозит $${s.brokerDepositUsd} (${fmtBtc(s.brokerDepositBtc)})\n` +
@@ -1913,6 +1942,34 @@ function register() {
       } catch (e) { return ctx.reply(e.message); }
     });
   }
+  // Брокеры назначаются по user ID — логины и пароли не нужны. Команда
+  // доступна всем операторам; доступ живёт в базе и переживает рестарт.
+  for (const command of ['addbroker', 'removebroker']) {
+    bot.command(command, async (ctx) => {
+      if (!isAdmin(ctx)) return;
+      flows.delete(ctx.from.id);
+      const id = ctx.match.trim();
+      try {
+        if (command === 'addbroker') {
+          const acc = store.upsertBrokerAccount(id, { active: true });
+          await ctx.reply(
+            acc.existed
+              ? `✅ Этот пользователь уже брокер — доступ подтверждён: <code>${esc(acc.tgId)}</code>.`
+              : `✅ Брокер назначен: <code>${esc(acc.tgId)}</code>. Пароль не нужен — он открывает /broker и сразу входит.`,
+            { parse_mode: 'HTML' }
+          );
+          await bot.api.sendMessage(acc.tgId,
+            '🤝 Вам выдан доступ брокера PRICELEX. Откройте /broker — логин и пароль не нужны, вход выполнится сразу.')
+            .catch(() => ctx.reply('⚠️ Не получилось написать пользователю: пусть он откроет бота и нажмёт /start, затем повторите команду.'));
+        } else {
+          if (!store.brokerAccountByTg(id)) return ctx.reply('Такого брокера нет в списке. /broker — кабинет, список — в меню «Брокеры».');
+          store.dropBrokerAccount(id);
+          await ctx.reply(`✅ Доступ брокера <code>${esc(id)}</code> закрыт, сессия сброшена.`, { parse_mode: 'HTML' });
+        }
+        return brokersMenu(ctx, false);
+      } catch (e) { return ctx.reply(e.message); }
+    });
+  }
   bot.command('start', async (ctx) => {
     if (!isAdmin(ctx)) {
       const url = store.get().settings.publicUrl;
@@ -1926,11 +1983,12 @@ function register() {
     flows.delete(ctx.from.id);
     await mainMenu(ctx, false);
   });
-  // Кабинет брокера доступен любому пользователю: вход по логину/паролю из админки.
+  // Кабинет брокера: назначенным по user ID вход открывается сразу —
+  // логин и пароль остались только у прежних (мастер-кредовых) брокеров.
   bot.command('broker', async (ctx) => {
     if (isAdmin(ctx)) {
       // админу брокерский контур не нужен, но дадим подсказку
-      return ctx.reply('Вы оператор. Брокерская панель — /broker действует для вошедших брокеров; управление брокерами — в меню «Брокеры».');
+      return ctx.reply('Вы оператор. Брокеры назначаются командой /addbroker <user id> — пароли не нужны; управление — в меню «Брокеры».');
     }
     flows.delete(ctx.from.id);
     if (brokerCtx(ctx)) return brokerHome(ctx, false);
@@ -1983,7 +2041,7 @@ function register() {
       ).catch(() => {});
       await bot.api.sendMessage(app0.userId,
         act === 'ok'
-          ? `🤝 Ваша заявка «стать брокером» одобрена!\n\nВойдите в кабинет: /broker — логин и пароль выдала администрация.\nПервый шаг — возвратный депозит $20 на период стажировки: торгуете малыми суммами, через неделю депозит можно забрать.`
+          ? `🤝 Ваша заявка «стать брокером» одобрена!\n\nОткройте /broker: если администратор назначил вас командой /addbroker, вход выполнится сразу — без логина и пароля; иначе используйте логин и пароль из сообщения администрации.\nПервый шаг — возвратный депозит $20 на период стажировки: торгуете малыми суммами, через неделю депозит можно забрать.`
           : 'Ваша заявка «стать брокером» в этот раз отклонена. Доработайте описание опыта и подайте её снова в приложении.'
       ).catch(() => {});
       return;
@@ -2174,6 +2232,17 @@ async function startBot() {
       { command: 'reviews', description: 'Отзывы и модерация' },
     ])
     .catch(() => {});
+  // Админам — свои команды: брокеры назначаются по user ID, без паролей.
+  await Promise.all(admins.all().map((id) => bot.api
+    .setMyCommands([
+      { command: 'start', description: 'Главное меню' },
+      { command: 'menu', description: 'Показать меню' },
+      { command: 'addbroker', description: 'Назначить брокера по user ID' },
+      { command: 'removebroker', description: 'Закрыть доступ брокера' },
+      { command: 'support', description: 'Чаты поддержки' },
+      { command: 'reviews', description: 'Отзывы и модерация' },
+    ], { scope: { type: 'chat', chat_id: Number(id) } })
+    .catch(() => {})));
 
   if (!admins.all().length) {
     console.warn('[PRICELEX] ВНИМАНИЕ: ADMIN_ID / ADMIN_IDS не заданы — нет администраторов.');

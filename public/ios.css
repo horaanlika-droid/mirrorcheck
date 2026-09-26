@@ -157,34 +157,14 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 .exchange-heading { margin: 6px 0 14px; align-items: flex-end; }
 .exchange-heading-left { gap: 12px; }
 
-/* Знак обмена в шапке: две стрелки разворачиваются на пол-оборота с паузой,
-   по ним в такт проходит блик. Цвета стопов — токенами, как у графика. */
+/* Знак обмена в шапке: две шампанские стрелки. Знак статичен — ни разворота,
+   ни блика; цвета стопов — токенами, как у графика. */
 .exchange-badge { width: 36px; height: 36px; flex: none; display: grid; place-items: center; }
 .ex-swap { width: 100%; height: 100%; display: block; overflow: visible; }
-.ex-arw, .ex-arw-hi { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-.ex-arw { stroke: url(#exSwapGrad); }
-.ex-arw-hi { stroke: rgba(var(--tint-hi-rgb), .95); }
+.ex-arw { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke: url(#exSwapGrad); }
 .ex-stop-1 { stop-color: var(--sand-1); }
 .ex-stop-2 { stop-color: var(--tint-fill); }
 .ex-stop-3 { stop-color: var(--sand-2); }
-/* Маска блика: чёрный — прозрачно, белый — видно. */
-.ex-sheen-0, .ex-sheen-2 { stop-color: #000; }
-.ex-sheen-1 { stop-color: #fff; }
-/* transform-box: view-box — центр вращения считается от viewBox; 50% 50%
-   совпадает с центром стрелок при любом понимании transform-box. */
-.ex-swap-ring { transform-box: view-box; transform-origin: 50% 50%; animation: ex-swap 3.4s cubic-bezier(.62, 0, .32, 1) infinite; }
-.ex-sheen-band { animation: ex-sheen 3.4s cubic-bezier(.45, 0, .3, 1) infinite; }
-@keyframes ex-swap {
-  0% { transform: rotate(0deg); }
-  38% { transform: rotate(180deg); }
-  62% { transform: rotate(180deg); }
-  100% { transform: rotate(360deg); }
-}
-/* Полоса блика идёт слева направо и уходит за кадр: в паузе знак светится. */
-@keyframes ex-sheen {
-  0%, 20% { transform: translateX(0); }
-  70%, 100% { transform: translateX(70px); }
-}
 .exchange-heading h1 { font-size: 34px; font-weight: 600; letter-spacing: -.02em; line-height: 1.08; }
 .exchange-heading p { margin-top: 5px; color: var(--mut); font-size: 13px; }
 .exchange-heading p span { color: var(--mut); }
