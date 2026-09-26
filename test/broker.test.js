@@ -293,6 +293,60 @@ test('logout drops session; /broker after logout asks login again', async () => 
   assert.ok(calls.some((c) => /Вход в кабинет брокера/.test(c.text)));
 });
 
+test('брокер по user ID: /addbroker без пароля, /removebroker снимает доступ', async () => {
+  // админ назначает нового брокера по Telegram ID — логин и пароль не нужны
+  calls = [];
+  await text(111, '/addbroker 555');
+  const acc = store.brokerAccountByTg('555');
+  assert.ok(acc && acc.login === '555' && acc.active !== false, 'аккаунт создан, логин = ID');
+  assert.ok(calls.some((c) => String(c.chat_id) === '111' && /Брокер назначен/.test(c.text)), 'админ получил подтверждение');
+  assert.ok(calls.some((c) => String(c.chat_id) === '555' && /доступ брокера PRICELEX/.test(c.text)), 'брокер получил уведомление');
+  // 555 открывает /broker — сразу кабинет, без ввода логина и пароля
+  calls = [];
+  await text(555, '/broker');
+  assert.ok(calls.some((c) => String(c.chat_id) === '555' && /Кабинет брокера/.test(c.text)), 'вход без пароля');
+  assert.equal(store.brokerSession(555).login, '555', 'сессия зарегистрировалась сама');
+  assert.ok(store.brokerProfile('555'), 'и профиль по логину-ID');
+  // повторное назначение не плодит дубликат
+  await text(111, '/addbroker 555');
+  assert.equal(store.brokerAccounts().filter((b) => b.tgId === '555').length, 1);
+  // невалидный ID — понятная ошибка
+  calls = [];
+  await text(111, '/addbroker abc');
+  assert.ok(calls.some((c) => /числовой Telegram ID/.test(c.text)));
+  // не-админ не может назначать брокеров
+  calls = [];
+  await text(555, '/addbroker 777');
+  assert.ok(!calls.some((c) => String(c.chat_id) === '111' && /Брокер назначен/.test(c.text)));
+  assert.equal(store.brokerAccountByTg('777'), null);
+  // снятие доступа: сессия сброшена, /broker снова просит вход
+  calls = [];
+  await text(111, '/removebroker 555');
+  assert.equal(store.brokerAccountByTg('555'), null, 'доступ закрыт');
+  assert.equal(store.brokerSession(555), null, 'сессия сброшена');
+  await text(555, '/broker');
+  assert.ok(calls.some((c) => String(c.chat_id) === '555' && /Вход в кабинет брокера/.test(c.text)), 'снова экран входа');
+});
+
+test('брокер по ID работает и при выключенных мастер-кредах; посторонний видит приглашение', async () => {
+  store.mutate((db) => { db.settings.brokerActive = false; db.settings.brokerLogin = ''; db.settings.brokerPassword = ''; });
+  try {
+    // посторонний без приглашения — заглушка про приглашение, а не про «не настроен»
+    calls = [];
+    await text(666, '/broker');
+    assert.ok(calls.some((c) => String(c.chat_id) === '666' && /приглашении|ожидайте контакта/i.test(c.text)));
+    // назначенному по ID вход не зависит от мастер-кредов
+    await text(111, '/addbroker 666');
+    calls = [];
+    await text(666, '/broker');
+    assert.ok(calls.some((c) => String(c.chat_id) === '666' && /Кабинет брокера/.test(c.text)), 'ID-брокер вошёл без пароля');
+    assert.equal(store.brokerSession(666).login, '666');
+  } finally {
+    store.mutate((db) => { db.settings.brokerActive = true; db.settings.brokerLogin = 'wolf'; db.settings.brokerPassword = 's3cret'; });
+    store.dropBrokerAccount(666);
+  }
+});
+
 test('admin disables broker login — sessions stop working', async () => {
   store.mutate((db) => { db.settings.brokerActive = false; });
   calls = [];

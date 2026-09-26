@@ -417,12 +417,14 @@
 
   /* ---------- медные монеты валют ---------- */
   // Сгенерированные монеты BTC и GRAM (tools/png-key.js grade --ramp=bronze).
+  // Рубли — монета из первой буквы логотипа: медный чекан с монограммой P,
+  // снятой со знака (logo-mark.png), тем же металлом, что и BTC/GRAM.
   // Две стороны и ребро: при развороте монета читается объёмом, а не плоской
   // картинкой. Крутится только монета выбранной валюты — правило в glass.css
   // висит на .currency-segment button.on, поэтому оборот стартует ровно в
   // момент выбора; монеты в полях суммы и кошелька переворачиваются один раз
   // при смене валюты (.coin-swap).
-  const COIN_ART = { BTC: '/img/coin-btc.png', GRAM: '/img/coin-gram.png' };
+  const COIN_ART = { BTC: '/img/coin-btc.png', GRAM: '/img/coin-gram.png', RUB: '/img/coin-rub.png' };
   function coinHtml(cur, size = 24) {
     const src = COIN_ART[cur] || COIN_ART.BTC;
     const face = (cls) => `<img class="${cls}" src="${src}" alt="" width="${size}" height="${size}" draggable="false">`;
@@ -698,6 +700,63 @@
     goTab(S.returnTab || 'exchange');
   }
 
+  /* ---------- свайп влево — «назад» ---------- */
+  // Жест равносилен кнопке «назад» в шапке: короткий свайп влево возвращает
+  // на прошлый экран. Отзывается только там, где есть куда возвращаться — на
+  // главном экране обмена жест молчит. Палец ведёт за собой колонку (вдвое
+  // медленнее пальца, не дальше 110 px), отпустил раньше порога — колонка
+  // возвращается на место; при prefers-reduced-motion колонка стоит, а
+  // переход всё равно происходит. Вертикальный скролл не трогаем: пока палец
+  // ушёл вниз сильнее, чем в сторону, жест не считается горизонтальным.
+  function swipeBackAvailable() {
+    return S.tab !== 'exchange' || isOrderPage();
+  }
+  function setupSwipeBack() {
+    if (setupSwipeBack.done) return;
+    setupSwipeBack.done = true;
+    const THRESHOLD = 64; // свайп — минимум столько px влево
+    const FOLLOW = 0.5;   // колонка едет за пальцем вдвое медленнее
+    let sx = 0; let sy = 0; let dx = 0; let t0 = 0; let tracking = false; let horizontal = null;
+    const column = () => $('.app');
+    const settle = (el) => {
+      if (!el || !el.style.transform) return;
+      el.style.transition = 'transform .26s cubic-bezier(.2, .8, .2, 1)';
+      el.style.transform = '';
+      setTimeout(() => { el.style.transition = ''; }, 280);
+    };
+    const reset = () => { tracking = false; horizontal = null; dx = 0; };
+    document.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return reset();
+      sx = e.touches[0].clientX;
+      sy = e.touches[0].clientY;
+      t0 = Date.now();
+      dx = 0; tracking = true; horizontal = null;
+    }, { passive: true });
+    document.addEventListener('touchmove', (e) => {
+      if (!tracking || e.touches.length !== 1) return;
+      dx = e.touches[0].clientX - sx;
+      const dy = e.touches[0].clientY - sy;
+      if (horizontal === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+        horizontal = Math.abs(dx) > Math.abs(dy) * 1.4;
+      }
+      if (!horizontal || dx >= 0 || !swipeBackAvailable()) return;
+      const el = column();
+      if (el && !reducedMotion()) {
+        el.style.transition = 'none';
+        el.style.transform = `translateX(${Math.max(-110, dx * FOLLOW)}px)`;
+      }
+    }, { passive: true });
+    document.addEventListener('touchend', () => {
+      const el = column();
+      settle(el);
+      const done = tracking && horizontal === true && dx <= -THRESHOLD
+        && Date.now() - t0 < 1000 && swipeBackAvailable();
+      reset();
+      if (done) { haptic('light'); goBack(); }
+    });
+    document.addEventListener('touchcancel', () => { settle(column()); reset(); });
+  }
+
   function renderAnnounce() {
     const el = $('#announce');
     const t = S.settings && S.settings.announcement;
@@ -810,10 +869,10 @@
   }
 
   /* ---------- знак обмена в шапке ---------- */
-  // Вместо россыпи монет — живой знак обмена: две шампанские стрелки
-  // разворачиваются на пол-оборота с паузой, по их металлу в такт идёт блик.
-  // Всё в токенах палитры: стопы градиента и маски раскрашены классами в
-  // ios.css (.ex-*), цветов в разметке нет.
+  // Вместо россыпи монет — знак обмена: две шампанские стрелки. Знак
+  // статичен: ни разворота, ни бегущего блика — всё в токенах палитры,
+  // стопы градиента раскрашены классами в ios.css (.ex-*), цветов в
+  // разметке нет.
   function exchangeBadgeHtml() {
     return `
       <span class="exchange-badge" aria-hidden="true">
@@ -824,28 +883,12 @@
               <stop class="ex-stop-2" offset=".55" />
               <stop class="ex-stop-3" offset="1" />
             </linearGradient>
-            <linearGradient id="exSheenGrad" x1="0" y1="0" x2="1" y2="0">
-              <stop class="ex-sheen-0" offset="0" />
-              <stop class="ex-sheen-1" offset=".5" />
-              <stop class="ex-sheen-2" offset="1" />
-            </linearGradient>
-            <mask id="exSheenMask" maskUnits="userSpaceOnUse" x="0" y="0" width="44" height="44">
-              <rect class="ex-sheen-band" x="-26" y="0" width="26" height="44" fill="url(#exSheenGrad)" />
-            </mask>
           </defs>
-          <g class="ex-swap-ring">
-            <g class="ex-arw">
-              <path d="M12 17 H30" />
-              <path d="M25.4 12.2 L30.6 17.4 L25.4 22.6" />
-              <path d="M32 27 H14" />
-              <path d="M18.6 22.2 L13.4 27.4 L18.6 32.6" />
-            </g>
-            <g class="ex-arw-hi" mask="url(#exSheenMask)">
-              <path d="M12 17 H30" />
-              <path d="M25.4 12.2 L30.6 17.4 L25.4 22.6" />
-              <path d="M32 27 H14" />
-              <path d="M18.6 22.2 L13.4 27.4 L18.6 32.6" />
-            </g>
+          <g class="ex-arw">
+            <path d="M12 17 H30" />
+            <path d="M25.4 12.2 L30.6 17.4 L25.4 22.6" />
+            <path d="M32 27 H14" />
+            <path d="M18.6 22.2 L13.4 27.4 L18.6 32.6" />
           </g>
         </svg>
       </span>`;
@@ -896,7 +939,7 @@
           <div class="card-title">Сумма обмена</div>
           <div class="f-label"><span>Вы отдаёте</span><span id="mmLabel"></span></div>
           <div class="field">
-            <div class="coin-ic rub">₽</div>
+            <div class="coin-ic coin-art rub coin-swap">${coinHtml('RUB', 30)}</div>
             <input id="inRub" type="number" inputmode="decimal" placeholder="5 000" min="0" step="any">
             <span class="suffix">RUB</span>
           </div>
@@ -2694,6 +2737,7 @@
     renderDemoAdmin();
     armSupportFab();
     initParallax();
+    setupSwipeBack();
     startPolling();
     function tickBrokerLoop() {
       tickLiveNumbers();

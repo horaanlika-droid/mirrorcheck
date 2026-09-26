@@ -613,32 +613,31 @@ test('капча: подпись не растягивается на всю с�
   assert.match(iosCss, /\.captcha input \{[^}]*flex: 0 0 auto;/, 'поле ответа не растягивается');
 });
 
-test('знак обмена в шапке: вместо монет — анимация в палитре приложения', async (t) => {
+test('знак обмена в шапке: вместо монет — статичный знак в палитре приложения', async (t) => {
   const a = await app(t);
   const head = a.document.querySelector('.exchange-heading-left');
   assert.ok(head, 'шапка экрана обмена отрисована');
   assert.equal(head.querySelector('img'), null, 'три монеты из шапки убраны');
   const svg = head.querySelector('.exchange-badge svg.ex-swap');
   assert.ok(svg, 'на их месте — знак обмена');
-  // Сама геометрия: две стрелки, разворот и блик.
+  // Сама геометрия: две стрелки, без кольца вращения и полосы блика.
   assert.equal(svg.querySelectorAll('.ex-arw path').length, 4, 'две стрелки описаны путями');
-  assert.ok(svg.querySelector('.ex-swap-ring'), 'есть вращающаяся группа');
-  assert.ok(svg.querySelector('.ex-sheen-band'), 'есть полоса блика');
-  assert.ok(svg.querySelector('.ex-arw-hi[mask="url(#exSheenMask)"]'), 'блик идёт по самим стрелкам');
+  assert.equal(svg.querySelector('.ex-swap-ring'), null, 'кольцо вращения убрано');
+  assert.equal(svg.querySelector('.ex-sheen-band'), null, 'полоса блика убрана');
+  assert.equal(svg.querySelector('.ex-arw-hi'), null, 'слой блика убран');
 });
 
-test('знак обмена красивется токенами и замирает при prefers-reduced-motion', () => {
+test('знак обмена красится токенами и стоит без движения', () => {
   const appJs = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
   const iosCss = fs.readFileSync(path.join(__dirname, '../public/ios.css'), 'utf8');
   const devicesCss = fs.readFileSync(path.join(__dirname, '../public/devices.css'), 'utf8');
-  // Цветов в разметке нет: стопы градиента и маски раскрашены классами.
+  // Цветов в разметке нет: стопы градиента раскрашены классами.
   assert.doesNotMatch(appJs, /stop-color="#/, 'в разметке знака нет зашитых цветов');
   assert.match(iosCss, /\.ex-stop-1 \{ stop-color: var\(--sand-1\); \}/, 'градиент — шампанский');
   assert.match(iosCss, /\.ex-stop-2 \{ stop-color: var\(--tint-fill\); \}/);
-  assert.match(iosCss, /\.ex-arw-hi \{ stroke: rgba\(var\(--tint-hi-rgb\), \.95\); \}/, 'блик — тёплый белый');
-  // Движение: пол-оборота с паузой и блик в такт.
-  assert.match(iosCss, /\.ex-swap-ring \{[^}]*animation: ex-swap [\d.]+s/);
-  assert.match(iosCss, /@keyframes ex-swap \{/);
-  assert.match(iosCss, /@keyframes ex-sheen \{/);
+  // Движения нет: ни анимации у стрелок, ни кейфреймов разворота и блика.
+  assert.doesNotMatch(iosCss, /\.ex-[a-z-]+ \{[^}]*animation:/, 'стрелки не анимируются');
+  assert.doesNotMatch(iosCss, /@keyframes ex-(swap|sheen)/, 'кейфреймы разворота и блика убраны');
+  assert.match(iosCss, /\.ex-arw \{[^}]*stroke: url\(#exSwapGrad\);[^}]*\}/, 'контур стрелок — градиентом');
   assert.match(devicesCss, /html\[data-device\] \.exchange-badge \{ width: calc\(var\(--ui-title\) \+ 2px\)/, 'знак растёт вместе с заголовком');
 });
