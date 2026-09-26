@@ -248,3 +248,102 @@ html[data-device] .profile-link {
   .hdr, .nav { background: rgba(8,13,17,.96); }
 }
 @media (prefers-reduced-motion: reduce) { .preloader { transition: none; } }
+
+/* ---------- Главный CTA «Найти реквизиты»: литая шампанская кнопка ---------- */
+.btn.btn-cta {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  min-height: 54px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--tint-fill-ink);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.42) 0%, rgba(255,255,255,.08) 46%, rgba(255,255,255,0) 62%),
+    linear-gradient(135deg, var(--sand-1) 0%, var(--tint-fill) 55%, var(--sand-2) 100%);
+  box-shadow:
+    0 14px 34px -12px rgba(var(--tint-rgb), .5),
+    0 4px 12px rgba(0,0,0,.35),
+    inset 0 1px 0 rgba(255,255,255,.6),
+    inset 0 -6px 14px rgba(var(--sand-1-rgb), .28);
+  font-weight: 700;
+}
+.btn.btn-cta::after {
+  content: '';
+  position: absolute; top: -25%; bottom: -25%; left: -85%; width: 52%;
+  background: linear-gradient(100deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.55) 50%, rgba(255,255,255,0) 100%);
+  transform: skewX(-16deg);
+  animation: btn-cta-gloss 4.2s cubic-bezier(.4, 0, .2, 1) infinite;
+  pointer-events: none;
+}
+@keyframes btn-cta-gloss {
+  0% { left: -85%; }
+  55%, 100% { left: 135%; }
+}
+.btn.btn-cta svg { filter: drop-shadow(0 1px 2px rgba(125, 106, 79, .5)); }
+.btn.btn-cta:active { filter: brightness(.96); }
+.btn.btn-cta:disabled { opacity: .45; filter: saturate(.35); box-shadow: none; }
+.btn.btn-cta:disabled::after { animation: none; opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .btn.btn-cta::after { animation: none; opacity: 0; }
+}
+
+/* ---------- Плавающая кнопка чата: диалоговая плашка у правого края ---------- */
+.support-fab {
+  position: fixed; right: 14px; top: 50%; z-index: 70;
+  display: flex; align-items: center; gap: 11px;
+  max-width: min(236px, 66vw);
+  margin: 0; padding: 13px 16px 13px 13px;
+  border: 1px solid rgba(var(--tint-rgb), .38);
+  border-radius: 20px;
+  background:
+    linear-gradient(155deg, rgba(255,255,255,.08), transparent 55%),
+    rgba(12, 16, 20, .92);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  box-shadow:
+    0 22px 44px -18px rgba(0, 0, 0, .9),
+    0 0 30px -12px rgba(var(--tint-rgb), .4),
+    inset 0 1px 0 rgba(255, 255, 255, .08);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  transform: translate(125%, -50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform .6s var(--ease-o), opacity .45s ease;
+}
+.support-fab.show { transform: translate(0, -50%); opacity: 1; pointer-events: auto; }
+.support-fab:active { transform: translate(0, -50%) scale(.97); }
+.support-fab:not(.show):active { transform: translate(125%, -50%); }
+.sf-tail {
+  position: absolute; right: -6px; top: 50%;
+  width: 12px; height: 12px;
+  transform: translateY(-50%) rotate(45deg);
+  background: rgba(12, 16, 20, .92);
+  border-right: 1px solid rgba(var(--tint-rgb), .38);
+  border-top: 1px solid rgba(var(--tint-rgb), .38);
+  border-radius: 3px;
+}
+.sf-ic {
+  flex: none; width: 38px; height: 38px; border-radius: 50%;
+  display: grid; place-items: center;
+  color: var(--tint-fill-ink);
+  background: linear-gradient(135deg, var(--sand-1) 0%, var(--tint-fill) 60%, var(--sand-3) 100%);
+  box-shadow: 0 4px 12px rgba(var(--tint-rgb), .45), inset 0 1px 0 rgba(255, 255, 255, .5);
+}
+.sf-ic svg { width: 19px; height: 19px; }
+.sf-copy { display: block; min-width: 0; }
+.sf-copy b {
+  display: block;
+  font-size: 13.5px; font-weight: 650; letter-spacing: -.01em; line-height: 1.25;
+  color: var(--ink);
+}
+.sf-copy small {
+  display: block; margin-top: 3px;
+  font-size: 11px; line-height: 1.3; color: var(--mut);
+}
+@media (prefers-reduced-motion: reduce) {
+  .support-fab { transition: none; }
+}

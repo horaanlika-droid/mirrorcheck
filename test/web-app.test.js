@@ -248,3 +248,36 @@ test('order screen keeps the platform-wide broker deposit as a quiet line', asyn
   assert.match(amount, /^0\.0200\d{4}$/, 'начало суммы ровное (0.0200), живут только последние четыре знака');
   assert.notEqual(amount.slice(-4), '0000', 'хвост не оставлен ровными нулями');
 });
+
+test('rules stay open across a live settings re-render and speak to every party', async (t) => {
+  const completed = { ...initial, status: 'completed' };
+  const a = await app(t, completed);
+  a.document.querySelector('.nav button[data-tab="profile"]').click();
+  a.document.querySelector('#view-profile [data-go="info"]').click();
+  await tick(); await tick();
+  const rules = a.document.querySelector('#view-info .rules');
+  assert.ok(rules, 'правила платформы отрисованы');
+  rules.open = true;
+  rules.dispatchEvent(new a.window.Event('toggle'));
+  await tick();
+  // Живой опрос настроек с изменением данных инфо перерисовывает экран.
+  a.handle((url) => {
+    if (url === '/api/settings') return a.json({ ...settings, rateUpdatedAt: 999999, guaranteeFundBtc: 0.03 });
+    return null;
+  });
+  await a.refresh();
+  await tick(); await tick();
+  const rules2 = a.document.querySelector('#view-info .rules');
+  assert.ok(rules2 !== rules, 'экран инфо перерисован свежими настройками');
+  assert.ok(rules2.open, 'раскрытые правила не свернулись сами под читателем');
+  const legal = a.document.querySelector('#view-info .rules-body').textContent.replace(/\s+/g, ' ');
+  assert.match(legal, /Пользователь \(Клиент\)/, 'раскрыт термин «Пользователь»');
+  assert.match(legal, /Брокер — независимый исполнитель/, 'раскрыт термин «Брокер»');
+  assert.match(legal, /Администрация — команда Платформы/, 'раскрыт термин «Администрация»');
+  assert.match(legal, /3\.1\. Пользователь:/, 'обязанности Пользователя выписаны');
+  assert.match(legal, /3\.2\. Брокер:/, 'обязанности Брокера выписаны');
+  assert.match(legal, /3\.3\. Платформа:/, 'обязанности Платформы выписаны');
+  assert.match(legal, /7\.1\. Пользователь гарантирует/, 'ответственность Пользователя выписана');
+  assert.match(legal, /7\.2\. Брокер отвечает/, 'ответственность Брокера выписана');
+  assert.match(legal, /7\.3\. Платформа отвечает/, 'ответственность Платформы выписана');
+});

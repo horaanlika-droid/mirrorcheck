@@ -74,12 +74,15 @@ const reviewsFixture = [
 
 async function app(t, { orders = completed, points: historyPoints = points, reviews = reviewsFixture, clock = null } = {}) {
   const posted = [];
+  const timers = [];
   const dom = new JSDOM(html, { url: 'https://pricelex.example', runScripts: 'outside-only', pretendToBeVisual: true });
   t.after(() => dom.window.close());
   const { window } = dom;
   if (clock) window.Date.now = () => clock.t; // тест двигает время сам
   window.console.warn = () => {};
   window.setInterval = () => 1;
+  // Таймеры копим, а не исполняем: тест сам решает, когда «прошли 20 секунд».
+  window.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
   window.fetch = async (url, opts) => {
     const pathname = new URL(url, window.location.href).pathname;
     const json = (data) => ({ ok: true, json: async () => structuredClone(data) });
@@ -110,7 +113,12 @@ async function app(t, { orders = completed, points: historyPoints = points, revi
     await tick();
     await tick();
   };
-  return { window, document: window.document, posted, showTab };
+  const fire = (ms) => {
+    const due = timers.filter((x) => x.ms === ms);
+    due.forEach((x) => x.fn());
+    return due.length;
+  };
+  return { window, document: window.document, posted, showTab, timers, fire };
 }
 
 test('hero card shows the live rate, delta and a chart built from real observations', async (t) => {
@@ -413,23 +421,26 @@ test('info tab carries the founder speech word for word and never mentions a fee
   const lines = [...a.document.querySelectorAll('#speech .sp-line')].map((p) => p.textContent.replace(/\s+/g, ' ').trim());
   assert.deepEqual(lines, [
     'PRICELEX — private crypto brokerage.',
-    'Здесь брокер работает в рамках своего депозита и ведёт операции на собственный капитал.',
-    'Не нужно ждать начальника. Не нужно собирать десять согласований. Не нужно объяснять человеку, который вчера узнал, что такое USDT, почему возможность есть именно сейчас.',
-    'Ты увидел возможность — ты должен быть способен действовать.',
+    'Одна площадка — две стороны сделки: клиент и брокер. Сразу видно, что получает каждый.',
+    'Клиенту: живой брокер ведёт обмен от заявки до выплаты — объясняет шаги, проверяет реквизиты, доводит операцию до результата.',
+    'Брокеру: работа в рамках своего депозита и на собственный капитал — без начальника и десяти согласований.',
+    'Клиенту: сумма к оплате известна заранее, а на каждом шаге остаётся след — заявка, чек, ссылка на транзакцию.',
+    'Брокеру: не нужно объяснять человеку, который вчера узнал, что такое USDT, почему возможность есть именно сейчас. Ты увидел возможность — ты должен быть способен действовать.',
     'Здесь деньги — это инструмент. А главное преимущество — скорость, опыт и понимание рынка.',
     'Нам не нужен тот, кто хочет научиться. Нам нужен тот, кто уже умеет: держит несколько источников одновременно, знает рынок, понимает ликвидность и считает риск до того, как нажмёт кнопку.',
     'И не теряется, когда возможность живёт несколько минут.',
-    'Если ты такой человек — PRICELEX тебе подходит.',
-    'Не потому что мы обещаем лёгкие деньги. А потому что мы создаём среду, где твой опыт и твой капитал можно использовать профессионально.',
-    'Отдельно — к вам, к клиенту.',
-    'Вам не нужно ничего доказывать и никуда спешить. Сделку ведёт живой брокер, сумма к оплате известна заранее, а на каждом шаге остаётся след: заявка, чек, ссылка на транзакцию.',
+    'Если ты такой брокер — PRICELEX тебе подходит. Если вам нужен такой брокер — подходит и вам.',
+    'Не потому что мы обещаем лёгкие деньги. А потому что мы создаём среду, где опыт и капитал работают профессионально — по обе стороны сделки.',
     'Мы отвечаем за качество репутацией и гарантийным депозитом — и просим вас держать свои ключи при себе. Как именно это устроено — в блоке «Безопасность» ниже.',
     'PRICELEX. Private crypto brokerage.',
   ]);
   assert.equal(a.document.querySelector('#speech .sp-sign').textContent.trim(), 'since 2025', 'речь подписана годом');
   assert.ok(!/тихие деньги/i.test(a.document.querySelector('#view-info').textContent), 'прежний девиз из продукта убран');
   assert.ok(!/комисси/i.test(a.document.querySelector('#view-info').textContent));
-  assert.equal(a.document.querySelector('#view-info .contact').href, 'https://t.me/test');
+  const contacts = [...a.document.querySelectorAll('#view-info .contact')];
+  assert.equal(contacts.length, 2, 'связь — только поддержка и штаб-квартира');
+  assert.match(contacts[0].textContent, /Поддержка/);
+  assert.match(contacts[1].textContent, /Штаб-квартира/);
 });
 
 test('info speech addresses the client on safety: keys, requisites, escrow, real channels', async (t) => {
@@ -448,11 +459,11 @@ test('info speech addresses the client on safety: keys, requisites, escrow, real
   assert.match(text, /первые и последние шесть символов/);
   assert.match(text, /заморожены на гарантийном счёте/);
   assert.match(text, /гарантийный депозит брокеров — 0\.02\d+ BTC/, 'размер депозита подставляется живой');
-  assert.match(text, /Официальные адреса только эти/, 'указаны канал, чат и поддержка');
+  assert.match(text, /Официального канала и общего чата у нас нет/, 'канал и чат разоблачены как подделка');
   assert.match(text, /инвестиционных рекомендаций здесь нет/);
   assert.match(text, /не является банком, платёжной системой/, 'дисклеймер в тон правилам');
   const links = [...card.querySelectorAll('a.inline-link')].map((x) => x.href);
-  assert.deepEqual(links, ['https://t.me/test', 'https://t.me/test'], 'ссылки — из настроек, а не хардкод');
+  assert.deepEqual(links, [], 'ссылок на канал и чат в блоке безопасности больше нет');
 });
 
 test('штаб-квартира: адрес в контактах и в правилах, ссылка ведёт на карту', async (t) => {
@@ -469,7 +480,81 @@ test('штаб-квартира: адрес в контактах и в прав
   assert.equal(hq.getAttribute('rel'), 'noopener');
   assert.match(info.textContent, /Деятельность Платформа ведёт из штаб-квартиры: Street 11B 243\/3/, 'тот же адрес — в общих положениях');
   assert.match(info.textContent, /вне его Платформа с Пользователем не общается и ничего не запрашивает/);
-  assert.equal(info.querySelectorAll('a.contact').length, 4, 'поддержка, канал, чат и адрес');
+  assert.equal(info.querySelectorAll('a.contact').length, 2, 'поддержка и адрес — канал и чат убраны');
+});
+
+test('официальный канал, общий чат и кнопка «Написать в поддержку из приложения» убраны', async (t) => {
+  const a = await app(t);
+  a.document.querySelector('.nav button[data-tab="profile"]').click();
+  a.document.querySelector('#view-profile [data-go="info"]').click();
+  await tick();
+  const info = a.document.querySelector('#view-info');
+  const contacts = [...info.querySelectorAll('.contact')];
+  assert.ok(!contacts.some((c) => /Официальный канал|Чат PRICELEX/i.test(c.textContent)), 'канала и чата в контактах нет');
+  assert.ok(!info.querySelector('#goSupport'), 'кнопка «Написать в поддержку из приложения» убрана');
+  assert.ok(!/Написать в поддержку из приложения/.test(info.textContent));
+  assert.match(info.textContent, /Канала и общего чата у PRICELEX нет/, 'раздел «Связь с нами» предупреждает о двойниках');
+});
+
+test('плавающая кнопка чата появляется после паузы 20 секунд и открывает чат', async (t) => {
+  const a = await app(t);
+  const fab = a.document.querySelector('#supportFab');
+  assert.ok(fab, 'плашка смонтирована сразу после запуска');
+  assert.ok(!fab.classList.contains('show'), 'сразу не показана — не мешает осмотреться');
+  assert.ok(a.timers.some((x) => x.ms === 20000), 'появление отложено на 20 секунд');
+  assert.equal(a.fire(20000), 1, 'ровно один таймер на показ плашки');
+  await tick();
+  assert.ok(fab.classList.contains('show'), 'через 20 секунд плашка выехала сбоку');
+  fab.click();
+  await tick(); await tick();
+  assert.ok(!a.document.querySelector('#view-support').classList.contains('hidden'), 'клик открывает чат поддержки');
+  assert.ok(!fab.classList.contains('show'), 'внутри чата плашка уезжает — дублировать себя нечем');
+  a.document.querySelector('#headerBack').click();
+  await tick(); await tick();
+  assert.ok(fab.classList.contains('show'), 'после возврата из чата плашка снова на месте');
+});
+
+test('кнопка «Найти реквизиты» — залитая шампанская CTA с бликом', async (t) => {
+  const a = await app(t);
+  const btn = a.document.querySelector('#btnGo');
+  assert.ok(btn, 'кнопка формы обмена на месте');
+  assert.ok(btn.classList.contains('btn-cta'), 'главное действие оформлено отдельной CTA');
+  const glass = fs.readFileSync(path.join(__dirname, '../public/glass.css'), 'utf8');
+  assert.match(glass, /\.btn\.btn-cta \{[\s\S]*?linear-gradient\(135deg, var\(--sand-1\)/, 'шампанский градиент');
+  assert.match(glass, /btn-cta-gloss/, 'по кнопке периодически идёт блик');
+  assert.match(glass, /\.btn\.btn-cta:disabled \{[^}]*opacity/, 'выключенное состояние приглушено');
+});
+
+test('правила платформы не сворачиваются сами: раскрытие переживает перерисовку', async (t) => {
+  const a = await app(t);
+  const openInfo = async () => {
+    // На саб-страницах нижняя навигация скрыта — идём из неё только если её видно.
+    const profile = a.document.querySelector('#view-profile');
+    if (profile.classList.contains('hidden')) {
+      a.document.querySelector('.nav button[data-tab="profile"]').click();
+      await tick();
+    }
+    a.document.querySelector('#view-profile [data-go="info"]').click();
+    await tick();
+  };
+  await openInfo();
+  const rules = a.document.querySelector('#view-info .rules');
+  rules.open = true;
+  rules.dispatchEvent(new a.window.Event('toggle'));
+  await tick();
+  a.document.querySelector('#headerBack').click();
+  await tick();
+  await openInfo();
+  const rules2 = a.document.querySelector('#view-info .rules');
+  assert.ok(rules2.open, 'раскрытые правила пережили перерисовку');
+  // Юридическая часть проговорена для всех участников процесса.
+  const legal = a.document.querySelector('#view-info').textContent.replace(/\s+/g, ' ');
+  assert.match(legal, /1\. Термины и участники/);
+  assert.match(legal, /3\. Права и обязанности сторон/);
+  assert.match(legal, /Пользователь:/);
+  assert.match(legal, /Брокер:/);
+  assert.match(legal, /Платформа:/);
+  assert.match(legal, /9\. Заключительные положения/);
 });
 
 test('active order in details stage renders broker info, call-admin button and connects to chat on problem', async (t) => {
