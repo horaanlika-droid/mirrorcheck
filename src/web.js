@@ -95,6 +95,9 @@ const orderLimiter = createRateLimiter({ windowMs: 60000, max: 100 });
 const supportLimiter = createRateLimiter({ windowMs: 60000, max: 200 });
 const captchaLimiter = createRateLimiter({ windowMs: 60000, max: 300 });
 
+const REVIEWS_PAGE = 20;
+const REVIEWS_PAGE_MAX = 50;
+
 function startWeb() {
   const app = express();
   app.disable('x-powered-by');
@@ -403,9 +406,14 @@ function startWeb() {
     res.json({ ok: true, order: clientOrder(upd) });
   });
 
+  // Отзывы страницами: ?limit=1..50 (по умолчанию 20) и ?before=<next> для
+  // следующей страницы. Без параметров — самые свежие. stats — по всей витрине.
   app.get('/api/reviews', (req, res) => {
     const a = auth(req);
-    res.json(store.publicReviews(100, a ? a.user.id : null));
+    const limit = Math.min(REVIEWS_PAGE_MAX, Math.max(1, parseInt(req.query.limit, 10) || REVIEWS_PAGE));
+    const before = store.parseReviewCursor(req.query.before);
+    if (before === undefined) return res.status(400).json({ error: 'Некорректный параметр before' });
+    res.json(store.publicReviews(limit, a ? a.user.id : null, { before }));
   });
 
   app.post('/api/reviews', (req, res) => {

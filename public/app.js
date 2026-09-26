@@ -35,6 +35,14 @@
 
   const $ = (s) => document.querySelector(s);
   const TERMINAL = ['completed', 'rejected', 'cancelled'];
+  // jsdom в тестах медиа не проигрывает: звук там не заводим вовсе.
+  const isTestEnv = typeof navigator !== 'undefined' && (/jsdom/i.test(navigator.userAgent) || navigator.userAgent === '');
+  // Настройки отклика живут в localStorage и переключаются в профиле:
+  // «дзынь» кассы на прелоадере и виброотклик на нажатия. По умолчанию включены.
+  const PREF_SOUND = 'pricelex_sound';
+  const PREF_HAPTICS = 'pricelex_haptics';
+  const prefOn = (key) => { try { return localStorage.getItem(key) !== 'off'; } catch (e) { return true; } };
+  const setPref = (key, on) => { try { localStorage.setItem(key, on ? 'on' : 'off'); } catch (e) { /* приватный режим */ } };
   // Штаб-квартира. Адрес — часть юридических данных, поэтому он живёт константой
   // в коде, а не настройкой: разъехаться с тем, что написано в правилах, дороже,
   // чем неудобство менять его через админ-меню. Показывается в контактах «Инфо»
@@ -48,7 +56,7 @@
     returnTab: 'exchange', orderOpen: false,
     currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [],
     history: { points: [], updatedFor: null },
-    reviews: { list: [], stats: { count: 0, avg: 0 }, loaded: false },
+    reviews: { list: [], stats: { count: 0, avg: 0 }, loaded: false, hasMore: false, next: null },
     reviewDraft: { orderId: null, rating: 5, text: '' },
     brokerApp: null, // последняя заявка «стать брокером»
     captcha: null, // { id, question } — активная математическая капча
@@ -206,7 +214,8 @@
   // Короткая фраза для текстов приложения: «0.02019784 BTC».
   function depositInlineHtml() {
     const dep = depositLive();
-    return `<b class="dep-btc">${depositAmountHtml(dep)}</b> BTC`;
+    // Сумма и тикер — одна неразрывная связка: «0.02019784 BTC» не рвётся строкой.
+    return `<span class="dep-inline"><b class="dep-btc">${depositAmountHtml(dep)}</b> BTC</span>`;
   }
 
   // Метка времени не должна выглядеть нарисованной: 14:00 и 14:05 сдвигаем на 1–4
@@ -293,7 +302,10 @@
     return (n / 1024 / 1024).toFixed(1) + ' МБ';
   };
   let pendingReceipt = null;
+  let lastHapticAt = 0; // время последнего импульса — по нему гасится дубль от общего обработчика
   const haptic = (t = 'light') => {
+    if (!prefOn(PREF_HAPTICS)) return;
+    lastHapticAt = Date.now();
     try {
       if (tg && tg.HapticFeedback) {
         if (t === 'success' || t === 'warning' || t === 'error') {
@@ -311,12 +323,25 @@
         else if (t === 'warning') navigator.vibrate([24, 30, 20]);
         else if (t === 'error') navigator.vibrate([30, 40, 30, 40, 30]);
         else if (t === 'heavy') navigator.vibrate(28);
-        else if (t === 'medium') navigator.vibrate(18);
+        else if (t === 'medium' || t === 'rigid') navigator.vibrate(18);
         else if (t === 'selection') navigator.vibrate(8);
         else navigator.vibrate(12);
       }
     } catch (e) {}
   };
+
+  // Виброотклик на любое нажатие. Обработчики кнопок сами зовут haptic() с
+  // подходящей силой (выбор, отправка, ошибка); всё, что осталось без отклика —
+  // ссылки, пункты правил, чипы, строки профиля, — получает лёгкий толчок здесь.
+  // Слушатель стоит на всплытии, то есть срабатывает после обработчика кнопки:
+  // если та уже отозвалась в этом касании, второй импульс не нужен.
+  const TAP_TARGET = 'button, a[href], summary, [role="button"], label, select, input[type="checkbox"], input[type="radio"]';
+  document.addEventListener('click', (e) => {
+    const el = e.target && e.target.closest ? e.target.closest(TAP_TARGET) : null;
+    if (!el || el.disabled || el.getAttribute('aria-disabled') === 'true') return;
+    if (Date.now() - lastHapticAt < 90) return;
+    haptic(el.closest('.seg, .rv-stars, .stars') ? 'selection' : 'light');
+  });
 
   let toastTimer = null;
   function toast(msg) {
@@ -386,7 +411,24 @@
     bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>',
     theme: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6.5 6.5 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M17 4h.01M20 8h.01"/></svg>',
     chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
+    sound: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6"/><path d="M18.2 6.5a8 8 0 0 1 0 11"/></svg>',
+    vibe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="3.5" width="8" height="17" rx="2"/><path d="M4.5 8.5v7M19.5 8.5v7M2 10.5v3M22 10.5v3"/></svg>',
   };
+
+  /* ---------- медные монеты валют ---------- */
+  // Сгенерированные монеты BTC и GRAM (tools/png-key.js grade --ramp=bronze).
+  // Две стороны и ребро: при развороте монета читается объёмом, а не плоской
+  // картинкой. Крутится только монета выбранной валюты — правило в glass.css
+  // висит на .currency-segment button.on, поэтому оборот стартует ровно в
+  // момент выбора; монеты в полях суммы и кошелька переворачиваются один раз
+  // при смене валюты (.coin-swap).
+  const COIN_ART = { BTC: '/img/coin-btc.png', GRAM: '/img/coin-gram.png' };
+  function coinHtml(cur, size = 24) {
+    const src = COIN_ART[cur] || COIN_ART.BTC;
+    const face = (cls) => `<img class="${cls}" src="${src}" alt="" width="${size}" height="${size}" draggable="false">`;
+    return `<span class="coin3d" style="--coin:${size}px" aria-hidden="true"><span class="coin3d-spin">`
+      + `${face('coin3d-face')}${face('coin3d-face coin3d-back')}<span class="coin3d-edge"></span></span></span>`;
+  }
 
   /* ---------- график (реальная история курса и сумм) ---------- */
   let chartSeq = 0;
@@ -830,8 +872,8 @@
         </button>` : ''}
       <div id="exForm" class="${S.order && S.orderOpen ? 'hidden' : ''}">
         <div class="seg block currency-segment" id="segCur">
-          <button type="button" data-c="BTC" class="${S.currency === 'BTC' ? 'on' : ''}">₿ BTC</button>
-          <button type="button" data-c="GRAM" class="${S.currency === 'GRAM' ? 'on' : ''}">G GRAM</button>
+          <button type="button" data-c="BTC" class="${S.currency === 'BTC' ? 'on' : ''}" aria-pressed="${S.currency === 'BTC'}">${coinHtml('BTC')}<span class="seg-label">BTC</span></button>
+          <button type="button" data-c="GRAM" class="${S.currency === 'GRAM' ? 'on' : ''}" aria-pressed="${S.currency === 'GRAM'}">${coinHtml('GRAM')}<span class="seg-label">GRAM</span></button>
         </div>
         <section class="card card-hero lux-hero">
           <div class="hero-art" aria-hidden="true"></div>
@@ -861,7 +903,7 @@
           <div class="swap-row"><div class="swap">${ICONS.down}</div></div>
           <div class="f-label"><span>Вы получаете</span><span id="cryptoLimits"></span></div>
           <div class="field">
-            <div class="coin-ic" id="getIc">₿</div>
+            <div class="coin-ic coin-art ${S.currency.toLowerCase()}" id="getIc" data-cur="${S.currency}">${coinHtml(S.currency, 30)}</div>
             <input id="inCrypto" type="number" inputmode="decimal" placeholder="0.0005" min="0" step="any">
             <span class="suffix" id="curSuffix">BTC</span>
           </div>
@@ -873,7 +915,7 @@
         <div class="card wallet-card">
           <div class="card-title">Кошелёк получателя</div>
           <div class="field">
-            <div class="coin-ic" id="walIc">₿</div>
+            <div class="coin-ic coin-art ${S.currency.toLowerCase()}" id="walIc" data-cur="${S.currency}">${coinHtml(S.currency, 30)}</div>
             <input id="inWallet" placeholder="Адрес BTC-кошелька" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
           </div>
           ${captchaHtml('capOrder')}
@@ -886,9 +928,15 @@
     `;
     $('#segCur').querySelectorAll('button').forEach((b) =>
       b.addEventListener('click', () => {
+        const changed = S.currency !== b.dataset.c;
         S.currency = b.dataset.c;
-        haptic('light');
-        $('#segCur').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+        haptic(changed ? 'selection' : 'light');
+        // Класс .on запускает вращение монеты (glass.css) — оборот начинается
+        // ровно в момент выбора, у второй монеты вращение останавливается.
+        $('#segCur').querySelectorAll('button').forEach((x) => {
+          x.classList.toggle('on', x === b);
+          x.setAttribute('aria-pressed', String(x === b));
+        });
         renderHero();
         renderFormMeta();
       })
@@ -929,12 +977,14 @@
     $('#mmLabel').textContent = `от ${fmtRub(s.minRub)} до ${fmtRub(s.maxRub)}`;
     const cl = $('#cryptoLimits');
     if (cl) cl.textContent = `≈ ${fmtTrim(s.minRub / rate)}–${fmtTrim(s.maxRub / rate)} ${cur}`;
-    const ic = $('#getIc');
-    ic.className = 'coin-ic ' + cur.toLowerCase();
-    ic.textContent = cur === 'BTC' ? '₿' : 'G';
-    const wi = $('#walIc');
-    wi.className = 'coin-ic ' + cur.toLowerCase();
-    wi.textContent = cur === 'BTC' ? '₿' : 'G';
+    // Монеты в полях меняются только со сменой валюты: renderFormMeta зовётся
+    // на каждый ввод суммы, и пересоздание картинок сбивало бы разворот.
+    [$('#getIc'), $('#walIc')].forEach((el) => {
+      if (!el || el.dataset.cur === cur) return;
+      el.dataset.cur = cur;
+      el.className = 'coin-ic coin-art coin-swap ' + cur.toLowerCase();
+      el.innerHTML = coinHtml(cur, 30);
+    });
     const sfx = $('#curSuffix');
     if (sfx) sfx.textContent = cur;
     $('#inWallet').placeholder = cur === 'BTC' ? 'Адрес BTC-кошелька (bc1… / 1… / 3…)' : 'Адрес GRAM-кошелька';
@@ -957,7 +1007,9 @@
     const s = S.settings;
     const err = $('#fErr');
     err.textContent = '';
-    if (!s) return (err.textContent = 'Курс загружается — подождите пару секунд.');
+    // Ошибка проверки формы отзывается «ошибочной» вибрацией, а не просто тишиной.
+    const fail = (msg) => { err.textContent = msg; haptic('error'); return msg; };
+    if (!s) return fail('Курс загружается — подождите пару секунд.');
     const rate = S.currency === 'BTC' ? s.rateBTC : s.rateGRAM;
     const rawRub = parseFloat($('#inRub').value);
     const rawCrypto = parseFloat($('#inCrypto').value);
@@ -965,12 +1017,12 @@
     const cryptoAmount = useCrypto ? rawCrypto : null;
     const rub = useCrypto ? rubFromCrypto(rawCrypto, rate) : rawRub;
     const wallet = ($('#inWallet').value || '').trim();
-    if (!s.online) return (err.textContent = '⛔ Обмен временно недоступен — загляните позже.');
-    if (!isFinite(rub) || rub < s.minRub) return (err.textContent = `Минимальная сумма обмена — ${fmtRub(s.minRub)} (≈ ${fmtTrim(cryptoFromRub(s.minRub, rate))} ${S.currency}).`);
-    if (rub > s.maxRub) return (err.textContent = `Максимальная сумма обмена — ${fmtRub(s.maxRub)} (≈ ${fmtTrim(cryptoFromRub(s.maxRub, rate))} ${S.currency}).`);
-    if (wallet.length < 26 || wallet.length > 128 || /\s/.test(wallet)) return (err.textContent = 'Проверьте адрес кошелька — он выглядит некорректно.');
+    if (!s.online) return fail('⛔ Обмен временно недоступен — загляните позже.');
+    if (!isFinite(rub) || rub < s.minRub) return fail(`Минимальная сумма обмена — ${fmtRub(s.minRub)} (≈ ${fmtTrim(cryptoFromRub(s.minRub, rate))} ${S.currency}).`);
+    if (rub > s.maxRub) return fail(`Максимальная сумма обмена — ${fmtRub(s.maxRub)} (≈ ${fmtTrim(cryptoFromRub(s.maxRub, rate))} ${S.currency}).`);
+    if (wallet.length < 26 || wallet.length > 128 || /\s/.test(wallet)) return fail('Проверьте адрес кошелька — он выглядит некорректно.');
     const cap = captchaPayload('capOrder');
-    if (!cap.captchaAnswer) return (err.textContent = 'Решите проверочный пример — это защита от ботов.');
+    if (!cap.captchaAnswer) return fail('Решите проверочный пример — это защита от ботов.');
     const btn = $('#btnGo');
     btn.disabled = true;
     haptic('medium');
@@ -982,7 +1034,7 @@
       S.order = r.order;
       S.orderOpen = true;
       S.orders.unshift(r.order);
-      haptic('heavy');
+      haptic('success');
       refreshCaptcha(); // пара сгорела — сразу новая для следующей заявки
       $('#exForm').classList.add('hidden');
       $('#exOrder').classList.remove('hidden');
@@ -991,6 +1043,7 @@
       renderOrderStage();
     } catch (e) {
       err.textContent = e.message;
+      haptic('error');
       toast(e.message);
       await refreshCaptcha();
     } finally {
@@ -1547,6 +1600,16 @@
           <span class="profile-row-copy"><b>Уведомления</b><small>Статус и сообщения по заявкам</small></span>
           <span class="profile-toggle" aria-hidden="true"><i></i></span>
         </button>
+        <button class="profile-row" type="button" id="profileSound" role="switch" aria-checked="${prefOn(PREF_SOUND)}">
+          <span class="profile-row-icon">${ICONS.sound}</span>
+          <span class="profile-row-copy"><b>Звук кассы</b><small>«Дзынь» при запуске приложения</small></span>
+          <span class="profile-toggle ${prefOn(PREF_SOUND) ? '' : 'off'}" aria-hidden="true"><i></i></span>
+        </button>
+        <button class="profile-row" type="button" id="profileHaptics" role="switch" aria-checked="${prefOn(PREF_HAPTICS)}">
+          <span class="profile-row-icon">${ICONS.vibe}</span>
+          <span class="profile-row-copy"><b>Виброотклик</b><small>Лёгкий отклик на нажатия</small></span>
+          <span class="profile-toggle ${prefOn(PREF_HAPTICS) ? '' : 'off'}" aria-hidden="true"><i></i></span>
+        </button>
         <div class="profile-row static-row">
           <span class="profile-row-icon language-icon">А</span>
           <span class="profile-row-copy"><b>Язык</b></span>
@@ -1590,6 +1653,20 @@
         toast('Уведомления доступны при запуске приложения в Telegram');
       }
     });
+    // Переключатели отклика: включение сразу даёт попробовать результат.
+    const wirePref = (id, key, onEnable) => {
+      const row = $('#' + id);
+      if (!row) return;
+      row.addEventListener('click', () => {
+        const on = !prefOn(key);
+        setPref(key, on);
+        row.setAttribute('aria-checked', String(on));
+        row.querySelector('.profile-toggle').classList.toggle('off', !on);
+        if (on) onEnable();
+      });
+    };
+    wirePref('profileSound', PREF_SOUND, () => kachingPlay());
+    wirePref('profileHaptics', PREF_HAPTICS, () => haptic('medium'));
     $('#profileLogout').addEventListener('click', () => {
       haptic('light');
       if (tg && typeof tg.close === 'function') tg.close();
@@ -1645,12 +1722,12 @@
     const kb = s.botUsername ? `https://t.me/${s.botUsername}` : null;
     const features = `
       <div class="feat">
-        <div class="f"><span class="i">◆</span><b>Каждый может стать брокером:</b> прозрачные условия и равный доступ для всех участников</div>
-        <div class="f"><span class="i">◆</span><b>Торговля ровно на сумму депозита:</b> брокер ведёт сделки ровно на ту сумму, какой депозит он положил (например, положил $100 — торгуете любой суммой до $100)</div>
-        <div class="f"><span class="i">◆</span><b>Гарантия для клиентов:</b> если выплата не пришла или возникли трудности, площадка компенсирует клиенту 100% средств из общего депозита брокеров — сейчас это ${depositInlineHtml()}</div>
-        <div class="f"><span class="i">◆</span><b>Депозит и подключение:</b> возвратный депозит ${s && s.brokerDepositBtc ? fmtBtcUi(s.brokerDepositBtc) : '0.0002'} BTC плюс разовый сбор${s && s.brokerDepositFeePercent ? ` — ${s.brokerDepositFeePercent}% от депозита, но не больше ${fmtBtcUi(s.brokerDepositFeeMaxBtc)} BTC` : ' — не взимается'} (сбор не возвращается, депозит возвращается после стажировки)</div>
-        <div class="f"><span class="i">◆</span><b>Доход со сделок:</b> ваша доля — ${s && s.brokerSharePercent ? s.brokerSharePercent : 70}% спреда каждой завершённой сделки, начисляется в BTC мгновенно</div>
-        <div class="f"><span class="i">◆</span><b>Выплаты в любое время:</b> вывод из бота при балансе от ${fmtBtcUi(brokerPayoutMin())} BTC</div>
+        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Каждый может стать брокером:</b> прозрачные условия и равный доступ для всех участников</span></div>
+        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Торговля ровно на сумму депозита:</b> брокер ведёт сделки ровно на ту сумму, какой депозит он положил (например, положил $100 — торгуете любой суммой до $100)</span></div>
+        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Гарантия для клиентов:</b> если выплата не пришла или возникли трудности, площадка компенсирует клиенту 100% средств из общего депозита брокеров — сейчас это ${depositInlineHtml()}</span></div>
+        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Депозит и подключение:</b> возвратный депозит <span class="nw">${s && s.brokerDepositBtc ? fmtBtcUi(s.brokerDepositBtc) : '0.0002'} BTC</span> плюс разовый сбор${s && s.brokerDepositFeePercent ? ` — ${s.brokerDepositFeePercent}% от депозита, но не больше <span class="nw">${fmtBtcUi(s.brokerDepositFeeMaxBtc)} BTC</span>` : ' — не взимается'} (сбор не возвращается, депозит возвращается после стажировки)</span></div>
+        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Доход со сделок:</b> ваша доля — ${s && s.brokerSharePercent ? s.brokerSharePercent : 70}% спреда каждой завершённой сделки, начисляется в BTC мгновенно</span></div>
+        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Выплаты в любое время:</b> вывод из бота при балансе от <span class="nw">${fmtBtcUi(brokerPayoutMin())} BTC</span></span></div>
       </div>`;
     const statusHtml = app ? `
       <div class="card">
@@ -1723,10 +1800,11 @@
     err.textContent = '';
     const experience = $('#brokerExp').value.trim();
     const contact = $('#brokerContact').value.trim();
-    if (experience.length < 10) return (err.textContent = 'Расскажите про опыт чуть подробнее (от 10 символов).');
-    if (contact.length < 3) return (err.textContent = 'Оставьте контакт для связи.');
+    const fail = (msg) => { err.textContent = msg; haptic('error'); return msg; };
+    if (experience.length < 10) return fail('Расскажите про опыт чуть подробнее (от 10 символов).');
+    if (contact.length < 3) return fail('Оставьте контакт для связи.');
     const cap = captchaPayload('capBroker');
-    if (!cap.captchaAnswer) return (err.textContent = 'Решите проверочный пример.');
+    if (!cap.captchaAnswer) return fail('Решите проверочный пример.');
     const btn = $('#brokerApply');
     btn.disabled = true;
     haptic('medium');
@@ -1736,11 +1814,12 @@
         body: { experience, contact, startParam, ...cap },
       });
       S.brokerApp = r.application;
-      haptic('heavy');
+      haptic('success');
       toast('Заявка отправлена администрации');
       renderBroker();
     } catch (e) {
       err.textContent = e.message;
+      haptic('error');
       toast(e.message);
       await refreshCaptcha();
     } finally {
@@ -1786,24 +1865,24 @@
         <div class="card-title">Безопасность</div>
         <p class="why-pair-lead">Это не страшилки, а порядок, при котором ваши средства не зависят от чьей-то доброты.</p>
         <div class="feat">
-          <div class="f"><span class="i">◆</span>Реквизиты сообщает только брокер внутри вашей заявки. Мы не пишем первыми в личку, не присылаем «резервный» адрес и не просим перевести «для проверки».</div>
-          <div class="f"><span class="i">◆</span>PRICELEX не спрашивает seed-фразу, приватный ключ, пароль от кошелька и код из SMS. Кто бы ни представился командой и что бы ни обещал — это подделка.</div>
-          <div class="f"><span class="i">◆</span>Адрес получения сверяйте сами: первые и последние шесть символов. Адрес поменялся в переписке — стоп, и только поддержка в приложении.</div>
-          <div class="f"><span class="i">◆</span>Средства по активной заявке заморожены на гарантийном счёте: ни брокер, ни третьи лица их не тронут. Общую ответственность держит гарантийный депозит брокеров — ${depositInlineHtml()}.</div>
-          <div class="f"><span class="i">◆</span>Спор решает администрация по фактам — чек, история заявки и ссылка на транзакцию, а не слова. Решение окончательное, правила платформы открыты ниже.</div>
-          <div class="f"><span class="i">◆</span>Официального канала и общего чата у нас нет — любые «канал PRICELEX» или «чат сообщества» ведут мошенники. Связь с Платформой — только поддержка внутри приложения${supportHandle() ? ` и ${esc(supportHandle())}` : ''}. Домен или хэндл с одной лишней буквой — не мы.</div>
-          <div class="f"><span class="i">◆</span>Никаких обещаний доходности и «разгона баланса»: мы про обмен и сопровождение сделки, инвестиционных рекомендаций здесь нет.</div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Реквизиты сообщает только брокер внутри вашей заявки. Мы не пишем первыми в личку, не присылаем «резервный» адрес и не просим перевести «для проверки».</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">PRICELEX не спрашивает seed-фразу, приватный ключ, пароль от кошелька и код из SMS. Кто бы ни представился командой и что бы ни обещал — это подделка.</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Адрес получения сверяйте сами: первые и последние шесть символов. Адрес поменялся в переписке — стоп, и только поддержка в приложении.</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Средства по активной заявке заморожены на гарантийном счёте: ни брокер, ни третьи лица их не тронут. Общую ответственность держит гарантийный депозит брокеров — ${depositInlineHtml()}.</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Спор решает администрация по фактам — чек, история заявки и ссылка на транзакцию, а не слова. Решение окончательное, правила платформы открыты ниже.</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Официального канала и общего чата у нас нет — любые «канал PRICELEX» или «чат сообщества» ведут мошенники. Связь с Платформой — только поддержка внутри приложения${supportHandle() ? ` и ${esc(supportHandle())}` : ''}. Домен или хэндл с одной лишней буквой — не мы.</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Никаких обещаний доходности и «разгона баланса»: мы про обмен и сопровождение сделки, инвестиционных рекомендаций здесь нет.</span></div>
         </div>
         <p class="disclaimer">Платформа не является банком, платёжной системой или оператором электронных денежных средств.</p>
       </div>
       <div class="card">
         <div class="card-title">Почему PRICELEX</div>
         <div class="feat">
-          <div class="f"><span class="i">◆</span>Проверенная и быстрая команда — сделку ведёт брокер, а не скрипт</div>
-          <div class="f"><span class="i">◆</span>Общий гарантийный депозит всех брокеров — ${depositInlineHtml()}: им страхуется каждая сделка</div>
-          <div class="f"><span class="i">◆</span>Сумма к оплате известна заранее — без доплат</div>
-          <div class="f"><span class="i">◆</span>Просадки курса отмечены на графике — видно хорошую точку входа</div>
-          <div class="f"><span class="i">◆</span>Отзывы только от реальных клиентов — после завершённого обмена</div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Проверенная и быстрая команда — сделку ведёт брокер, а не скрипт</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Общий гарантийный депозит всех брокеров — ${depositInlineHtml()}: им страхуется каждая сделка</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Сумма к оплате известна заранее — без доплат</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Просадки курса отмечены на графике — видно хорошую точку входа</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Отзывы только от реальных клиентов — после завершённого обмена</span></div>
         </div>
       </div>
       <div class="card why-pair">
@@ -1816,10 +1895,10 @@
       <div class="card">
         <div class="card-title">Как это работает</div>
         <div class="steps">
-          <div class="step"><div class="n">1</div>Выберите валюту и сумму — калькулятор сразу покажет, сколько получите.</div>
-          <div class="step"><div class="n">2</div>Укажите кошелёк и нажмите «Найти реквизиты»: брокер быстро подтвердит сделку и пришлёт точную сумму.</div>
-          <div class="step"><div class="n">3</div>Переведите сумму, прикрепите PDF-чек и нажмите «Я оплатил».</div>
-          <div class="step"><div class="n">4</div>После подтверждения средства уходят на ваш кошелёк — ссылку на транзакцию увидите в заявке.</div>
+          <div class="step"><div class="n">1</div><span class="step-copy">Выберите валюту и сумму — калькулятор сразу покажет, сколько получите.</span></div>
+          <div class="step"><div class="n">2</div><span class="step-copy">Укажите кошелёк и нажмите «Найти реквизиты»: брокер быстро подтвердит сделку и пришлёт точную сумму.</span></div>
+          <div class="step"><div class="n">3</div><span class="step-copy">Переведите сумму, прикрепите PDF-чек и нажмите «Я оплатил».</span></div>
+          <div class="step"><div class="n">4</div><span class="step-copy">После подтверждения средства уходят на ваш кошелёк — ссылку на транзакцию увидите в заявке.</span></div>
         </div>
       </div>
       <div class="card">
@@ -1904,16 +1983,71 @@
   const isTypingReview = () => !!(document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('rv-text'));
   const reviewableOrders = () => S.orders.filter((o) => o.status === 'completed' && !o.review);
 
+  // Отзывы приходят страницами (сервер: 20 свежих, дальше — по курсору next).
+  // Опрос обновляет первую страницу и не теряет то, что догружено «Показать ещё».
+  const olderReview = (a, b) => a.createdAt < b.createdAt || (a.createdAt === b.createdAt && a.id < b.id);
+
   async function loadReviews() {
     try {
       const r = await api('/api/reviews');
-      const next = { list: r.reviews || [], stats: r.stats || { count: 0, avg: 0 }, loaded: true };
+      const fresh = r.reviews || [];
+      const cur = S.reviews;
+      const edge = fresh[fresh.length - 1];
+      const tail = r.hasMore && edge && cur.list.length > fresh.length ? cur.list.filter((x) => olderReview(x, edge)) : [];
+      const next = {
+        list: [...fresh, ...tail],
+        stats: r.stats || { count: 0, avg: 0 },
+        loaded: true,
+        hasMore: tail.length ? cur.hasMore : !!r.hasMore,
+        next: tail.length ? cur.next : r.next || null,
+      };
       const changed = JSON.stringify(next) !== JSON.stringify(S.reviews);
       S.reviews = next;
       if (changed && S.tab === 'reviews' && !isTypingReview()) renderReviews();
     } catch (e) {
       // отзывы не критичны для обмена — тихо пропускаем
     }
+  }
+
+  let reviewsLoadingMore = false;
+  async function loadMoreReviews() {
+    const cur = S.reviews;
+    if (reviewsLoadingMore || !cur.hasMore || !cur.next) return;
+    reviewsLoadingMore = true;
+    const btn = $('#rvMore');
+    if (btn) btn.disabled = true;
+    try {
+      const r = await api('/api/reviews', { query: { before: cur.next } });
+      const seen = new Set(S.reviews.list.map((x) => x.id));
+      const add = (r.reviews || []).filter((x) => !seen.has(x.id));
+      S.reviews.list = [...S.reviews.list, ...add];
+      S.reviews.hasMore = !!r.hasMore;
+      S.reviews.next = r.next || null;
+      if (r.stats) S.reviews.stats = r.stats;
+      // Дописываем карточки в конец, а не перерисовываем экран: лента не прыгает.
+      const box = $('#rvList');
+      if (box && S.tab === 'reviews') box.insertAdjacentHTML('beforeend', add.map(reviewItemHtml).join(''));
+    } catch (e) {
+      toast('Не удалось загрузить отзывы — попробуйте ещё раз');
+    } finally {
+      reviewsLoadingMore = false;
+      syncReviewsMore();
+    }
+  }
+
+  const reviewsMoreHtml = () => {
+    const { list, stats, hasMore } = S.reviews;
+    if (!hasMore) return '';
+    const left = Math.max(0, (Number(stats.count) || 0) - list.length);
+    return `<button class="btn btn-ghost rv-more" id="rvMore" type="button"><span>Показать ещё</span>${left ? `<small class="rv-more-left">${left}</small>` : ''}</button>`;
+  };
+
+  function syncReviewsMore() {
+    const wrap = $('#rvMoreWrap');
+    if (!wrap) return;
+    wrap.innerHTML = reviewsMoreHtml();
+    const btn = $('#rvMore');
+    if (btn) btn.addEventListener('click', loadMoreReviews);
   }
 
   function reviewFormHtml(p, orders) {
@@ -1951,7 +2085,7 @@
       const err = $('#' + p + 'Err');
       const orderId = sel ? Number(sel.value) : getOrderId();
       const body = { orderId, rating: S.reviewDraft.rating, text: text.value.trim(), startParam };
-      if (body.text.length < 5) { err.textContent = 'Напишите хотя бы пару слов (от 5 символов).'; return; }
+      if (body.text.length < 5) { err.textContent = 'Напишите хотя бы пару слов (от 5 символов).'; haptic('error'); return; }
       const btn = $('#' + p + 'Send');
       btn.disabled = true;
       haptic('medium');
@@ -1960,10 +2094,19 @@
         const i = S.orders.findIndex((x) => x.id === r.order.id);
         if (i >= 0) S.orders[i] = r.order; else S.orders.unshift(r.order);
         if (S.order && S.order.id === r.order.id) S.order = r.order;
-        // Отзыв сразу виден автору в общем списке.
+        // Отзыв сразу виден автору в общем списке, а сводка пересчитывается по всей
+        // витрине (распределение с сервера), а не по одной загруженной странице.
         S.reviews.list = [r.review, ...S.reviews.list.filter((x) => x.id !== r.review.id)];
-        const n = S.reviews.list.length;
-        S.reviews.stats = { count: n, avg: Math.round((S.reviews.list.reduce((a, x) => a + x.rating, 0) / n) * 10) / 10 };
+        const st = S.reviews.stats || {};
+        if (st.dist) {
+          const dist = { ...st.dist, [r.review.rating]: (Number(st.dist[r.review.rating]) || 0) + 1 };
+          const count = (Number(st.count) || 0) + 1;
+          const sum = [1, 2, 3, 4, 5].reduce((a, k) => a + k * (Number(dist[k]) || 0), 0);
+          S.reviews.stats = { count, avg: Math.round((sum / count) * 10) / 10, dist };
+        } else {
+          const n = S.reviews.list.length;
+          S.reviews.stats = { count: n, avg: Math.round((S.reviews.list.reduce((a, x) => a + x.rating, 0) / n) * 10) / 10 };
+        }
         S.reviewDraft = { orderId: null, rating: 5, text: '' };
         haptic('heavy');
         toast('Спасибо! Ваш отзыв опубликован');
@@ -1971,6 +2114,7 @@
         if (S.tab === 'reviews') renderReviews();
       } catch (e) {
         err.textContent = e.message;
+        haptic('error');
         btn.disabled = false;
       }
     });
@@ -2034,9 +2178,13 @@
     const { list, stats, loaded } = S.reviews;
     const eligible = reviewableOrders();
     const hasCompleted = S.orders.some((o) => o.status === 'completed');
+    // Распределение — по всей витрине (stats.dist с сервера); старый ответ без dist —
+    // по загруженному списку.
+    const dist = stats.dist && stats.count ? stats.dist : null;
+    const total = dist ? stats.count : list.length;
     const distribution = [5, 4, 3, 2, 1].map((rating) => {
-      const count = list.filter((review) => Number(review.rating) === rating).length;
-      const percent = list.length ? Math.round((count / list.length) * 100) : 0;
+      const count = dist ? Number(dist[rating]) || 0 : list.filter((review) => Number(review.rating) === rating).length;
+      const percent = total ? Math.round((count / total) * 100) : 0;
       return `<div class="rv-dist-row"><span class="rv-dist-score">${rating} ${ICONS.starFill}</span><span class="rv-dist-track"><i style="width:${percent}%"></i></span><span class="rv-dist-percent">${percent}%</span></div>`;
     }).join('');
     v.innerHTML = `
@@ -2057,16 +2205,22 @@
       <div class="card-title" style="padding:18px 4px 11px">Отзывы клиентов</div>
       <div id="rvList">${
         list.length
-          ? list.map((r) => `
+          ? list.map(reviewItemHtml).join('')
+          : `<div class="card"><div class="empty"><div class="e-ic">✦</div>${loaded ? 'Отзывов пока нет — станьте первым, кто оценит PRICELEX.' : 'Загружаем отзывы…'}</div></div>`
+      }</div>
+      <div class="rv-more-wrap" id="rvMoreWrap"></div>`;
+    syncReviewsMore();
+    wireReviewForm('tabRv', () => (eligible[0] ? eligible[0].id : null));
+    wireDemoReply();
+  }
+
+  function reviewItemHtml(r) {
+    return `
             <article class="card rv-item">
               <div class="rv-top"><div class="rv-av">${esc((r.name || 'К').trim().charAt(0).toUpperCase())}</div><div class="rv-who"><b>${esc(r.name)}</b><span>${esc(fmtDay(r.createdAt))}</span></div>${starsHtml(r.rating)}</div>
               <p class="rv-body">${esc(r.text).replace(/\n/g, '<br>')}</p>
               ${r.reply && r.reply.text ? `<div class="rv-reply"><div class="rv-reply-h">Ответ PRICELEX<span>${esc(fmtDay(r.reply.at))}</span></div><p>${esc(r.reply.text).replace(/\n/g, '<br>')}</p></div>` : ''}
-            </article>`).join('')
-          : `<div class="card"><div class="empty"><div class="e-ic">✦</div>${loaded ? 'Отзывов пока нет — станьте первым, кто оценит PRICELEX.' : 'Загружаем отзывы…'}</div></div>`
-      }</div>`;
-    wireReviewForm('tabRv', () => (eligible[0] ? eligible[0].id : null));
-    wireDemoReply();
+            </article>`;
   }
 
   /* ---------- поддержка чат ---------- */
@@ -2172,9 +2326,13 @@
   }
 
   /* ---------- плавающая кнопка чата ---------- */
-  // Диалоговая плашка у правого края экрана. Не появляется сразу — только через
-  // 20 секунд, когда пользователь уже осмотрелся («пинг»). Клик открывает чат
-  // поддержки; внутри самого чата плашка уезжает — дублировать себя нечего.
+  // Диалоговая плашка в правом нижнем углу — над таб-баром и safe-area (на
+  // саб-страницах без таб-бара опускается к краю). Строки не переносятся:
+  // плашка растёт по тексту. Пока она на экране, у страницы запас снизу
+  // (body.has-fab), чтобы последний блок прокручивался выше плашки.
+  // Не появляется сразу — только через 20 секунд, когда пользователь уже
+  // осмотрелся («пинг»). Клик открывает чат поддержки; внутри самого чата
+  // плашка уезжает — дублировать себя нечего.
   const SUPPORT_FAB_DELAY = 20000;
   function mountSupportFab() {
     if ($('#supportFab')) return;
@@ -2194,7 +2352,9 @@
   function updateSupportFab() {
     const el = $('#supportFab');
     if (!el) return;
-    el.classList.toggle('show', Boolean(S.supportFabReady) && S.tab !== 'support');
+    const shown = Boolean(S.supportFabReady) && S.tab !== 'support';
+    el.classList.toggle('show', shown);
+    document.body.classList.toggle('has-fab', shown);
   }
   function armSupportFab() {
     mountSupportFab();
@@ -2406,13 +2566,61 @@
     window.addEventListener('resize', () => { if (S.tab === 'exchange') renderHero(); if (S.tab === 'history') renderHistory(); });
   }
 
-  /* ---------- отклик на прелоадинге ---------- */
-  // Прелоадер статичный, поэтому и тактильный рисунок короткий: мягкий толчок
-  // в момент, когда приложение просыпается, и лёгкий отклик на готовности.
-  // Импульсы «под луч» были привязаны к проходу блика по гербу — вместе с
-  // анимацией блика они убраны, отмечать тактильно больше нечего.
+  /* ---------- «дзынь» кассы и отклик на прелоадинге ---------- */
+  // Приложение просыпается звуком кассы: CC0-запись «Cash Register Fake»
+  // (CapsLok, freesound.org/s/184438 — public/sfx/CREDITS.md), 1.5 с, 18 КБ.
+  // Тактильный рисунок идёт в такт записи: мягкий толчок — ход ящика («ка»),
+  // чёткий удар через KACHING_BELL_MS — колокольчик («дзынь»), лёгкий отклик —
+  // на готовности. Импульсов «под луч» по-прежнему нет: блик с герба убран.
   // В Telegram — HapticFeedback, в обычном браузере — navigator.vibrate;
-  // при prefers-reduced-motion отклика нет вовсе.
+  // при prefers-reduced-motion вибрации нет вовсе (звук — не движение, он
+  // выключается отдельным переключателем «Звук кассы» в профиле).
+  // Звук интерфейса не должен глушить музыку пользователя: на iOS 17+
+  // audioSession переводится в 'ambient' — «дзынь» подмешивается к плееру и
+  // молчит при беззвучном режиме. WebView Telegram играет звук без жеста;
+  // браузер, который так не разрешает, получает «дзынь» на первом касании,
+  // пока логотип ещё на экране.
+  const KACHING_SRC = '/sfx/kaching.mp3';
+  const KACHING_AT = 140; // старт записи — вместе с мягким толчком
+  const KACHING_BELL_MS = 280; // колокольчик в записи звучит через 0.28 с
+  let kachingAudio = null;
+  let kachingOnTap = null;
+  function prepareKaching() {
+    if (isTestEnv || !prefOn(PREF_SOUND) || typeof window.Audio !== 'function') return null;
+    try {
+      if (navigator.audioSession && navigator.audioSession.type !== 'ambient') navigator.audioSession.type = 'ambient';
+    } catch (e) { /* старые движки без Audio Session API */ }
+    try {
+      kachingAudio = new window.Audio(KACHING_SRC);
+      kachingAudio.preload = 'auto';
+      kachingAudio.volume = 0.7;
+    } catch (e) { kachingAudio = null; }
+    return kachingAudio;
+  }
+  function kachingPlay(onBlocked) {
+    const a = kachingAudio || prepareKaching();
+    if (!a) return;
+    try {
+      a.currentTime = 0;
+      const p = a.play();
+      if (p && typeof p.catch === 'function') p.catch(() => { if (onBlocked) onBlocked(); });
+    } catch (e) { if (onBlocked) onBlocked(); }
+  }
+  function disarmKachingOnTap() {
+    if (!kachingOnTap) return;
+    document.removeEventListener('pointerdown', kachingOnTap, true);
+    document.removeEventListener('keydown', kachingOnTap, true);
+    kachingOnTap = null;
+  }
+  function armKachingOnTap() {
+    const pre = document.getElementById('preloader');
+    if (kachingOnTap || !pre || pre.classList.contains('done')) return;
+    kachingOnTap = () => { disarmKachingOnTap(); kachingPlay(); };
+    document.addEventListener('pointerdown', kachingOnTap, true);
+    document.addEventListener('keydown', kachingOnTap, true);
+  }
+  prepareKaching(); // файл начинает грузиться сразу, к 140 мс он уже в буфере
+
   const preloaderHaptics = [];
   function reducedMotion() {
     try {
@@ -2420,8 +2628,13 @@
     } catch (e) { return false; }
   }
   function startPreloaderHaptics() {
-    if (reducedMotion()) return;
-    preloaderHaptics.push(setTimeout(() => haptic('soft'), 140)); // приложение проснулось
+    const still = reducedMotion();
+    preloaderHaptics.push(setTimeout(() => {
+      kachingPlay(armKachingOnTap); // «ка-дзынь»
+      if (!still) haptic('soft'); // ход ящика кассы — приложение проснулось
+    }, KACHING_AT));
+    if (still) return;
+    preloaderHaptics.push(setTimeout(() => haptic('rigid'), KACHING_AT + KACHING_BELL_MS)); // колокольчик
   }
   function stopPreloaderHaptics() {
     while (preloaderHaptics.length) clearTimeout(preloaderHaptics.pop());
@@ -2432,6 +2645,7 @@
     const el = document.getElementById('preloader');
     if (!el || el.classList.contains('done')) return;
     stopPreloaderHaptics();
+    disarmKachingOnTap(); // после логотипа касание уже не звенит
     el.classList.add('done');
     el.setAttribute('aria-hidden', 'true');
     if (!opts.silent && !reducedMotion()) haptic('selection'); // приложение готово

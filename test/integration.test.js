@@ -541,3 +541,64 @@ test('admin replies to a review with editable date; public API hides author', as
   await click(111, `rv:${r.id}:replydel`);
   assert.equal(store.getReview(r.id).reply, null);
 });
+
+test('bot: reviews menu copes with hundreds of reviews — distribution, ≤3★ list, page jumps, seed purge', async () => {
+  const seed = require('../src/review-seed');
+  const live = store.reviewsByStatus().filter((r) => r.source !== 'seed').map((r) => r.id).sort();
+  const res = seed.seedReviews(store, { from: '2026-07-01', to: '2026-08-31' });
+  const buttons = (c) => c.reply_markup.inline_keyboard.flat();
+  const lastEdit = () => calls.filter((c) => c.method === 'editMessageText').pop();
+
+  calls = [];
+  await click(111, 'm:reviews');
+  let msg = lastEdit();
+  assert.match(msg.text, /Оценки: 5★ \d+% · 4★ \d+% · 3★ \d+% · 2★ \d+% · 1★ \d+%/, 'распределение оценок в меню');
+  assert.match(msg.text, new RegExp(`Тестовых \\(нагрузочный набор\\): <b>${res.count}</b>`));
+  assert.ok(buttons(msg).some((b) => b.callback_data === 'rvs:purge' && b.text.includes(`(${res.count})`)));
+  assert.ok(buttons(msg).some((b) => b.callback_data === 'rvl:low:0'), 'отдельный список оценок ≤3★');
+  assert.ok(!buttons(msg).some((b) => /Сгенерировать|seed/i.test(b.text)), 'генерации из бота нет — только удаление');
+
+  calls = [];
+  await click(111, 'rvl:approved:0');
+  msg = lastEdit();
+  const pages = Math.ceil(store.reviewsByStatus('approved').length / 8);
+  assert.ok(pages > 10);
+  assert.match(msg.text, new RegExp(`стр\\. 1 из ${pages}`));
+  assert.ok(buttons(msg).some((b) => b.text === '⏭' && b.callback_data === `rvl:approved:${pages - 1}`), 'переход в конец');
+  assert.ok(!buttons(msg).some((b) => b.text === '⏮'), 'на первой странице назад некуда');
+  assert.ok(buttons(msg).some((b) => b.text.startsWith('🧪')), 'тестовые отзывы помечены в списке');
+
+  calls = [];
+  await click(111, `rvl:approved:${pages - 1}`);
+  msg = lastEdit();
+  assert.ok(buttons(msg).some((b) => b.text === '⏮' && b.callback_data === 'rvl:approved:0'), 'переход в начало');
+  assert.ok(!buttons(msg).some((b) => b.text === '⏭'));
+
+  calls = [];
+  await click(111, 'rvl:low:0');
+  msg = lastEdit();
+  const ids = buttons(msg).map((b) => (b.callback_data.match(/^rv:(\d+)$/) || [])[1]).filter(Boolean);
+  assert.ok(ids.length > 0);
+  assert.ok(ids.every((id) => store.getReview(id).rating <= 3), 'в списке только оценки ≤3★');
+
+  calls = [];
+  await click(111, `rv:${ids.find((id) => store.getReview(id).source === 'seed')}`);
+  assert.match(lastEdit().text, /🧪 тестовый \(нагрузочный набор\)/, 'карточка честно говорит, что отзыв тестовый');
+
+  await click(999, 'rvs:purgeok'); // не админ
+  assert.equal(seed.countSeedReviews(store.get().reviews), res.count);
+
+  calls = [];
+  await click(111, 'rvs:purge');
+  assert.match(lastEdit().text, new RegExp(`Удалить <b>${res.count}</b> тестовых`), 'сначала подтверждение');
+  assert.equal(seed.countSeedReviews(store.get().reviews), res.count, 'до подтверждения ничего не удалено');
+  calls = [];
+  await click(111, 'rvs:purgeok');
+  assert.match(lastEdit().text, new RegExp(`Удалено тестовых отзывов: <b>${res.count}</b>`));
+  assert.equal(seed.countSeedReviews(store.get().reviews), 0);
+  assert.deepEqual(store.reviewsByStatus().map((r) => r.id).sort(), live, 'живые отзывы на месте');
+
+  calls = [];
+  await click(111, 'm:reviews');
+  assert.ok(!buttons(lastEdit()).some((b) => b.callback_data === 'rvs:purge'), 'удалять больше нечего — кнопки нет');
+});

@@ -514,13 +514,20 @@ test('плавающая кнопка чата появляется после �
   assert.ok(fab.classList.contains('show'), 'после возврата из чата плашка снова на месте');
 });
 
-test('кнопка «Найти реквизиты» — залитая шампанская CTA с бликом', async (t) => {
+test('кнопка «Найти реквизиты» — литая бронзовая CTA с бликом', async (t) => {
   const a = await app(t);
   const btn = a.document.querySelector('#btnGo');
   assert.ok(btn, 'кнопка формы обмена на месте');
   assert.ok(btn.classList.contains('btn-cta'), 'главное действие оформлено отдельной CTA');
   const glass = fs.readFileSync(path.join(__dirname, '../public/glass.css'), 'utf8');
-  assert.match(glass, /\.btn\.btn-cta \{[\s\S]*?linear-gradient\(135deg, var\(--sand-1\)/, 'шампанский градиент');
+  const cta = glass.match(/\.btn\.btn-cta \{[^}]*\}/);
+  assert.ok(cta, 'CTA описана в glass.css');
+  assert.match(cta[0], /var\(--bronze-plate\) center \/ 100% 100% no-repeat/, 'брашированная бронзовая плита');
+  assert.match(cta[0], /linear-gradient\(135deg, var\(--bronze-1\) 0%, var\(--bronze-2\) 55%, var\(--bronze-3\) 100%\)/,
+    'бронзовый градиент под плитой — на случай, пока картинка не загрузилась');
+  assert.match(cta[0], /color: var\(--bronze-ink\)/, 'тёмные чернила на бронзе');
+  assert.match(glass, /--bronze-plate: url\('\/img\/bronze-plate\.jpg'\);/);
+  assert.ok(fs.statSync(path.join(__dirname, '../public/img/bronze-plate.jpg')).size < 80 * 1024, 'плита лёгкая');
   assert.match(glass, /btn-cta-gloss/, 'по кнопке периодически идёт блик');
   assert.match(glass, /\.btn\.btn-cta:disabled \{[^}]*opacity/, 'выключенное состояние приглушено');
 });

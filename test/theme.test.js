@@ -108,7 +108,8 @@ test('профиль: настроек без переключателя тем�
   assert.equal(doc.documentElement.getAttribute('data-theme'), 'dark', 'светлая тема Telegram игнорируется');
   assert.equal(doc.querySelector('#themeSeg'), null, 'переключателя нет в разметке');
   const rows = [...doc.querySelectorAll('.profile-settings .profile-row-copy b')].map((b) => b.textContent);
-  assert.deepEqual(rows, ['Уведомления', 'Язык'], 'в настройках остались уведомления и язык');
+  assert.deepEqual(rows, ['Уведомления', 'Звук кассы', 'Виброотклик', 'Язык'],
+    'в настройках — уведомления, отклик (звук кассы и вибрация) и язык');
   assert.match(doc.querySelector('#view-profile').textContent, /Русский/);
 });
 

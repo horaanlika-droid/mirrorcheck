@@ -6,6 +6,7 @@ const admins = require('./admins');
 const rates = require('./rates');
 const receipts = require('./receipts');
 const { esc, fmtRub, fmtCrypto, fmtDate, fmtSize, parseNum, fmtMsk, parseMsk } = require('./util');
+const { countSeedReviews, purgeSeedReviews } = require('./review-seed');
 
 let bot = null;
 const flows = new Map(); // adminId -> { type, orderId?, userId?, at }
@@ -380,16 +381,18 @@ async function supportThreadView(ctx, userId, edit = true) {
 /* ---------- отзывы ---------- */
 
 const REVIEW_STATUS = { pending: '🕓 На модерации', approved: '✅ Опубликован', rejected: '🙈 Скрыт' };
-const REVIEW_LISTS = { pending: '🕓 На модерации', approved: '✅ Опубликованные', rejected: '🙈 Скрытые' };
+const REVIEW_LISTS = { pending: '🕓 На модерации', approved: '✅ Опубликованные', rejected: '🙈 Скрытые', low: '⚠️ Оценки ≤3★' };
 const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
 const REVIEWS_PAGE = 8;
 
 function reviewText(r) {
   const order = r.orderId ? store.getOrder(r.orderId) : null;
   const user = r.userId ? store.getUser(r.userId) : null;
-  const author = r.source === 'admin'
-    ? ' · добавлен оператором'
-    : user ? ` · <code>${esc(user.id)}</code>${user.username ? ' @' + esc(user.username) : ''}` : '';
+  const author = r.source === 'seed'
+    ? ' · 🧪 тестовый (нагрузочный набор)'
+    : r.source === 'admin'
+      ? ' · добавлен оператором'
+      : user ? ` · <code>${esc(user.id)}</code>${user.username ? ' @' + esc(user.username) : ''}` : '';
   return (
     `⭐ <b>Отзыв #${r.id}</b> · ${REVIEW_STATUS[r.status] || r.status}\n` +
     `${stars(r.rating)} ${r.rating}/5\n` +
@@ -456,38 +459,53 @@ async function reviewsMenu(ctx, edit = true) {
   const pub = store.publicReviews(0).stats;
   const pending = store.reviewsByStatus('pending').length;
   const hidden = store.reviewsByStatus('rejected').length;
+  const all = store.reviewsByStatus();
+  const low = all.filter((r) => r.rating <= 3).length;
+  const seeds = countSeedReviews(all);
+  const pct = (n) => (pub.count ? Math.round((n / pub.count) * 100) : 0);
+  const dist = pub.count ? `Оценки: ${[5, 4, 3, 2, 1].map((n) => `${n}★ ${pct(pub.dist[n])}%`).join(' · ')}\n` : '';
   const text =
     `⭐ <b>Отзывы</b>\n\n` +
     `Опубликовано: <b>${pub.count}</b>${pub.count ? ` · средняя оценка <b>${pub.avg.toFixed(1)}</b>` : ''}\n` +
-    `На модерации: <b>${pending}</b> · Скрыто: ${hidden}\n\n` +
+    dist +
+    `На модерации: <b>${pending}</b> · Скрыто: ${hidden}\n` +
+    (seeds ? `🧪 Тестовых (нагрузочный набор): <b>${seeds}</b> — удалите их, прежде чем открывать витрину клиентам.\n` : '') +
+    `\n` +
     `Клиент может оставить отзыв только после завершённого обмена — он попадает сюда на модерацию. ` +
     `Автор всегда видит свой отзыв опубликованным и о модерации не знает; остальным он виден только после одобрения.\n` +
     `Вы можете добавить отзыв сами, ответить на любой и отредактировать: имя, оценку, текст, дату отзыва и дату ответа (по Москве).`;
   const kb = new InlineKeyboard()
     .text(`🕓 На модерации${pending ? ` (${pending})` : ''}`, 'rvl:pending:0').row()
     .text('✅ Опубликованные', 'rvl:approved:0').text('🙈 Скрытые', 'rvl:rejected:0').row()
-    .text('➕ Добавить отзыв', 'rv:add').row()
-    .text('↩️ Назад', 'm:home');
+    .text(`⚠️ Оценки ≤3★${low ? ` (${low})` : ''}`, 'rvl:low:0').row()
+    .text('➕ Добавить отзыв', 'rv:add').row();
+  if (seeds) kb.text(`🧹 Удалить тестовые (${seeds})`, 'rvs:purge').row();
+  kb.text('↩️ Назад', 'm:home');
   return show(ctx, edit, text, kb);
 }
 
+// Сотни отзывов: страницы по REVIEWS_PAGE с переходом в начало и в конец.
 async function reviewsList(ctx, status, page = 0, edit = true) {
-  const list = store.reviewsByStatus(status);
+  const list = status === 'low'
+    ? store.reviewsByStatus().filter((r) => r.rating <= 3)
+    : store.reviewsByStatus(status);
   const pages = Math.max(1, Math.ceil(list.length / REVIEWS_PAGE));
   const p = Math.min(Math.max(0, page), pages - 1);
   const kb = new InlineKeyboard();
   for (const r of list.slice(p * REVIEWS_PAGE, (p + 1) * REVIEWS_PAGE)) {
-    kb.text(`${'★'.repeat(r.rating)} ${r.name.slice(0, 18)} · ${fmtMsk(r.createdAt).slice(0, 10)}`, `rv:${r.id}`).row();
+    const mark = `${r.source === 'seed' ? '🧪' : ''}${r.reply && r.reply.text ? '💬' : ''}`;
+    kb.text(`${mark ? mark + ' ' : ''}${'★'.repeat(r.rating)} ${r.name.slice(0, 18)} · ${fmtMsk(r.createdAt).slice(0, 10)}`, `rv:${r.id}`).row();
   }
   if (pages > 1) {
-    if (p > 0) kb.text('◀️', `rvl:${status}:${p - 1}`);
+    if (p > 0) kb.text('⏮', `rvl:${status}:0`).text('◀️', `rvl:${status}:${p - 1}`);
     kb.text(`${p + 1}/${pages}`, `rvl:${status}:${p}`);
-    if (p < pages - 1) kb.text('▶️', `rvl:${status}:${p + 1}`);
+    if (p < pages - 1) kb.text('▶️', `rvl:${status}:${p + 1}`).text('⏭', `rvl:${status}:${pages - 1}`);
     kb.row();
   }
   kb.text('⭐ Все отзывы', 'm:reviews').text('↩️ Меню', 'm:home');
-  const text = `${REVIEW_LISTS[status]} — <b>${list.length}</b>\n\n` +
-    (list.length ? 'Выберите отзыв, чтобы открыть и отредактировать:' : 'Здесь пока пусто.');
+  const text = `${REVIEW_LISTS[status]} — <b>${list.length}</b>${pages > 1 ? ` · стр. ${p + 1} из ${pages}` : ''}\n\n` +
+    (list.length ? 'Выберите отзыв, чтобы открыть и отредактировать:' : 'Здесь пока пусто.') +
+    (list.some((r) => r.source === 'seed') ? '\n🧪 — тестовый отзыв нагрузочного набора, 💬 — есть ответ PRICELEX.' : '');
   return show(ctx, edit, text, kb);
 }
 
@@ -617,8 +635,21 @@ async function reviewEditText(ctx, f, value) {
 
 async function onReviewCallback(ctx, d, prevFlow) {
   if (d === 'm:reviews') return reviewsMenu(ctx, true);
-  let m = d.match(/^rvl:(pending|approved|rejected):(\d+)$/);
+  let m = d.match(/^rvl:(pending|approved|rejected|low):(\d+)$/);
   if (m) return reviewsList(ctx, m[1], Number(m[2]), true);
+  // Нагрузочный набор (tools/seed-reviews.js) убирается отсюда, не останавливая сервер.
+  if (d === 'rvs:purge') {
+    const n = countSeedReviews(store.get().reviews);
+    if (!n) return reviewsMenu(ctx, true);
+    return show(ctx, true,
+      `🧹 Удалить <b>${n}</b> тестовых отзывов нагрузочного набора?\n\nЖивые отзывы клиентов и добавленные вами не пострадают.`,
+      new InlineKeyboard().text('🧹 Да, удалить тестовые', 'rvs:purgeok').text('↩️ Отмена', 'm:reviews'));
+  }
+  if (d === 'rvs:purgeok') {
+    const n = purgeSeedReviews(store);
+    return show(ctx, true, `🧹 Удалено тестовых отзывов: <b>${n}</b>. На витрине остались только настоящие.`,
+      new InlineKeyboard().text('⭐ Отзывы', 'm:reviews').text('↩️ Меню', 'm:home'));
+  }
   if (d === 'rv:add') return reviewAddPrompt(ctx, {}, 'name');
   m = d.match(/^rva:(rate|date):(\w+)$/);
   if (m) {
