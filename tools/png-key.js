@@ -3,7 +3,8 @@
    и скромные размеры. Альфа берётся flooded-маской фона от краёв кадра, поэтому
    тёмные металлы внутри силуэта не становятся полупрозрачными, а кромка
    получает мягкое перо по яркости. Запуск:
-     node tools/png-key.js <src.png> <dst.png> <size> */
+     node tools/png-key.js <src.png> <dst.png> <size>
+     node tools/png-key.js grade [--ramp=bronze] <file.png>…   — единый оттенок набора */
 'use strict';
 
 const fs = require('fs');
@@ -233,14 +234,30 @@ function resize(img, size) {
 // непрозрачного пикселя заменяется точкой единой рампы нового логотипа
 // (IMG_1237): тень → тёплое золото → блик по его яркости — объём и блики
 // сохраняются, оттенок становится общим у всех иконок и знака.
-const RAMP = [
+const RAMP_CHAMPAGNE = [
   [0.0, [0x2e, 0x1c, 0x0c]],
   [0.35, [0x6b, 0x45, 0x1f]],
   [0.62, [0xa9, 0x7b, 0x3c]],
   [0.82, [0xd3, 0xa9, 0x61]],
   [1.0, [0xf7, 0xe7, 0xc3]],
 ];
-function rampColor(t) {
+// Бронза монет BTC/GRAM и литой CTA: рампа снята с самих сгенерированных
+// монет (средний цвет по корзинам яркости), поэтому перекраска не меняет
+// их объём, а плита кнопки и обе монеты получают один и тот же металл —
+// заметно медновато-коричневее шампанского золота иконок (≈28° против ≈34°).
+const RAMP_BRONZE = [
+  [0.0, [0x0c, 0x05, 0x02]],
+  [0.12, [0x33, 0x1d, 0x0d]],
+  [0.3, [0x74, 0x47, 0x21]],
+  [0.45, [0xa6, 0x69, 0x31]],
+  [0.6, [0xd2, 0x8f, 0x4a]],
+  [0.75, [0xf4, 0xb8, 0x6b]],
+  [0.88, [0xfc, 0xdf, 0xa0]],
+  [1.0, [0xff, 0xfb, 0xe6]],
+];
+const RAMPS = { champagne: RAMP_CHAMPAGNE, bronze: RAMP_BRONZE };
+function rampColor(t, ramp = RAMP_CHAMPAGNE) {
+  const RAMP = ramp;
   const x = Math.min(1, Math.max(0, t));
   for (let i = 1; i < RAMP.length; i += 1) {
     if (x <= RAMP[i][0]) {
@@ -256,7 +273,7 @@ function rampColor(t) {
   }
   return RAMP[RAMP.length - 1][1];
 }
-function gradeBronze(img) {
+function gradeBronze(img, ramp = RAMP_CHAMPAGNE) {
   const { width, height, px } = img;
   for (let i = 0; i < width * height; i += 1) {
     const o = i * 4;
@@ -264,12 +281,16 @@ function gradeBronze(img) {
     const r = px[o] / 255;
     const g = px[o + 1] / 255;
     const b = px[o + 2] / 255;
-    // perceptual luminance + контрастная S-кривая, чтобы металл держал объём
+    // perceptual luminance + контрастная S-кривая, чтобы металл держал объём;
+    // бронзовая рампа снята с самих монет по яркости — её ведём линейно.
     const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    let t = Math.pow(lum, 0.92);
-    t = Math.min(1, Math.max(0, (t - 0.06) / 0.88));
-    t = t * t * (3 - 2 * t);
-    const [nr, ng, nb] = rampColor(t);
+    let t = lum;
+    if (ramp === RAMP_CHAMPAGNE) {
+      t = Math.pow(lum, 0.92);
+      t = Math.min(1, Math.max(0, (t - 0.06) / 0.88));
+      t = t * t * (3 - 2 * t);
+    }
+    const [nr, ng, nb] = rampColor(t, ramp);
     px[o] = nr; px[o + 1] = ng; px[o + 2] = nb;
   }
   return img;
@@ -318,11 +339,15 @@ function convert(src, dst, size) {
 if (require.main === module) {
   const argv = process.argv.slice(2);
   if (argv[0] === 'grade') {
-    // унификация оттенка готовых ассетов: node tools/png-key.js grade a.png b.png …
-    for (const file of argv.slice(1)) {
-      const img = gradeBronze(decodePng(file));
+    // унификация оттенка готовых ассетов: node tools/png-key.js grade [--ramp=bronze] a.png b.png …
+    const opt = argv.find((a) => a.startsWith('--ramp='));
+    const name = opt ? opt.slice('--ramp='.length) : 'champagne';
+    const ramp = RAMPS[name];
+    if (!ramp) throw new Error(`неизвестная рампа: ${name} (есть: ${Object.keys(RAMPS).join(', ')})`);
+    for (const file of argv.slice(1).filter((a) => !a.startsWith('--'))) {
+      const img = gradeBronze(decodePng(file), ramp);
       const bytes = encodePng(img, file);
-      console.log(`grade ${file} ${img.width}×${img.height} ${(bytes / 1024).toFixed(0)} KB`);
+      console.log(`grade:${name} ${file} ${img.width}×${img.height} ${(bytes / 1024).toFixed(0)} KB`);
     }
   } else {
     const [src, dst, size] = argv;
@@ -330,4 +355,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { decodePng, encodePng, keyBlack, cropAlpha, resize, convert, gradeBronze, rampColor };
+module.exports = { decodePng, encodePng, keyBlack, cropAlpha, resize, convert, gradeBronze, rampColor, RAMPS };

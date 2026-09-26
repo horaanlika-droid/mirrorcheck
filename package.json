@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "check": "node --check src/bot.js && node --check src/web.js && node --check src/config.js && node --check src/store.js && node --check src/captcha.js && node --check src/validate.js && node --check src/util.js && node --check public/devices.js && node --check public/app.js"
+    "seed:reviews": "node tools/seed-reviews.js",
+    "check": "node --check src/bot.js && node --check src/web.js && node --check src/config.js && node --check src/store.js && node --check src/review-seed.js && node --check src/captcha.js && node --check src/validate.js && node --check src/util.js && node --check tools/seed-reviews.js && node --check public/devices.js && node --check public/app.js"
   },
   "engines": {
     "node": ">=18"

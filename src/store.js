@@ -235,16 +235,25 @@ function flush() {
 }
 
 const get = () => db;
+// Счётчик изменений: по нему сбрасываются производные кэши (сортировка отзывов).
+let mutations = 0;
 const mutate = (fn) => {
   const r = fn(db);
+  mutations += 1;
   save();
   return r;
 };
 
-// Ensure data is flushed on graceful shutdown
+// Ensure data is flushed on graceful shutdown. Свой обработчик сигнала отменяет
+// выход по умолчанию, поэтому после сохранения процесс завершается сам — иначе
+// Ctrl+C и `kill` не останавливали сервер.
 try {
-  process.on('SIGINT', () => { try { flush(); } catch {} });
-  process.on('SIGTERM', () => { try { flush(); } catch {} });
+  const stop = (code) => () => {
+    try { flush(); } catch {}
+    process.exit(code);
+  };
+  process.once('SIGINT', stop(130));
+  process.once('SIGTERM', stop(143));
   process.on('beforeExit', () => { try { if (saveTimer) flush(); } catch {} });
 } catch {}
 
@@ -619,8 +628,22 @@ function deleteReview(id) {
   });
 }
 
+// Порядок витрины: новые сверху, при равном времени — больший id выше.
+// Порядок строгий — на нём держится курсор страниц.
+const newestFirst = (a, b) => (b.createdAt - a.createdAt) || (b.id - a.id);
+let sortedCache = { at: -1, src: null, len: -1, list: [] };
+// Отсортированный список пересобирается только после изменений базы, а не на
+// каждый запрос: при тысячах отзывов опрос вкладки «Отзывы» не сортирует их заново.
+function sortedReviews() {
+  const c = sortedCache;
+  if (c.at !== mutations || c.src !== db.reviews || c.len !== db.reviews.length) {
+    sortedCache = { at: mutations, src: db.reviews, len: db.reviews.length, list: db.reviews.slice().sort(newestFirst) };
+  }
+  return sortedCache.list;
+}
+
 const reviewsByStatus = (status) =>
-  db.reviews.filter((r) => !status || r.status === status).sort((a, b) => b.createdAt - a.createdAt);
+  status ? sortedReviews().filter((r) => r.status === status) : sortedReviews().slice();
 
 const publicReview = (r) => ({
   id: r.id,
@@ -631,14 +654,50 @@ const publicReview = (r) => ({
   reply: r.reply && r.reply.text ? { text: r.reply.text, at: r.reply.at } : null,
 });
 
+// Курсор страницы — «createdAt:id» последнего показанного отзыва.
+// null — первая страница, undefined — курсор испорчен.
+function parseReviewCursor(v) {
+  if (v == null || v === '') return null;
+  const m = String(v).match(/^(\d{1,15}):(\d{1,12})$/);
+  return m ? { at: Number(m[1]), id: Number(m[2]) } : undefined;
+}
+
 // Автор всегда видит свои отзывы как опубликованные — о модерации клиент не знает.
-// Остальные видят только одобренные.
-function publicReviews(limit = 100, viewerId = null) {
+// Остальные видят только одобренные. Страница — limit отзывов после курсора
+// before; stats (число, средняя, распределение по звёздам) — по всей витрине.
+function publicReviews(limit = 100, viewerId = null, opts = {}) {
   const viewer = viewerId != null ? String(viewerId) : null;
-  const list = reviewsByStatus().filter((r) => r.status === 'approved' || (viewer && r.userId === viewer));
+  const list = sortedReviews().filter((r) => r.status === 'approved' || (viewer && r.userId === viewer));
   const count = list.length;
-  const avg = count ? list.reduce((s, r) => s + r.rating, 0) / count : 0;
-  return { reviews: list.slice(0, limit).map(publicReview), stats: { count, avg: Math.round(avg * 10) / 10 } };
+  const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  let sum = 0;
+  for (const r of list) {
+    dist[r.rating] = (dist[r.rating] || 0) + 1;
+    sum += r.rating;
+  }
+  let start = 0;
+  const cur = opts.before;
+  if (cur) {
+    // Первый отзыв строго «старше» курсора — бинарный поиск по строгому порядку.
+    let lo = 0;
+    let hi = count;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const r = list[mid];
+      if (r.createdAt > cur.at || (r.createdAt === cur.at && r.id >= cur.id)) lo = mid + 1;
+      else hi = mid;
+    }
+    start = lo;
+  }
+  const page = list.slice(start, start + Math.max(0, Math.floor(limit) || 0));
+  const hasMore = start + page.length < count;
+  const last = page[page.length - 1];
+  return {
+    reviews: page.map(publicReview),
+    stats: { count, avg: count ? Math.round((sum / count) * 10) / 10 : 0, dist },
+    hasMore,
+    next: hasMore && last ? `${last.createdAt}:${last.id}` : null,
+  };
 }
 
 const reviewForOrder = (orderId) => db.reviews.find((r) => r.orderId === Number(orderId)) || null;
@@ -952,6 +1011,7 @@ load();
 module.exports = {
   get,
   mutate,
+  flush,
   publicSettings,
   touchUser,
   getUser,
@@ -978,6 +1038,7 @@ module.exports = {
   reviewsByStatus,
   publicReview,
   publicReviews,
+  parseReviewCursor,
   reviewForOrder,
   userReviews,
   avgExchangeMinutesComputed,
