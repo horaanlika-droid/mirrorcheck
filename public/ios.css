@@ -93,7 +93,7 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 
 /* ---------- Прелоадер ---------- */
 /* Спокойный кадр: большое лого, полный текст (PRICELEX · Private Crypto
-   Brokerage · Since 2025) и никакого «загрузочного» движения — слоёв блика и
+   Brokerage · Since 2026) и никакого «загрузочного» движения — слоёв блика и
    прогресс-бара больше нет, герб статичен. iOS-шкала держит пропорцию монограммы
    и воздух между графикой и буквами: лого не может стоять вплотную к набору. */
 .preloader { background: var(--bg-1); }
@@ -422,7 +422,7 @@ body { font-family: var(--font-sans); letter-spacing: -0.01em; -webkit-font-smoo
 /* ---------- Tab bar (iOS) ---------- */
 .nav {
   padding: 6px 4px calc(4px + env(safe-area-inset-bottom));
-  grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0;
+  grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0;
   border-top: 1px solid var(--sep); background: rgba(var(--bg-rgb), .84);
   backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
 }

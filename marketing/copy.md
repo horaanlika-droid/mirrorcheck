@@ -48,7 +48,7 @@
 > 📰 Канал: @pricelex_channel · 💬 Чат: @pricelex_chat
 > 📍 Штаб-квартира: Street 11B 243/3 — Umm Al Sheif — Dubai — ОАЭ
 >
-> **PRICELEX. Private crypto brokerage. Since 2025.**
+> **PRICELEX. Private crypto brokerage. Since 2026.**
 
 **Хештеги:** #PRICELEX #PrivateBrokerage #BTC #GRAM
 

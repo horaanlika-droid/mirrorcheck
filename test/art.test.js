@@ -137,12 +137,12 @@ test('навигация собрана из объёмных иконок, ин
   const d = await app(t);
   const doc = d.window.document;
   const srcs = () => [...doc.querySelectorAll('#nav button .nav-art')].map((i) => i.getAttribute('src'));
-  assert.deepEqual(srcs(), ['/img/tab-exchange.png', '/img/tab-history.png', '/img/tab-reviews.png', '/img/tab-refs.png', '/img/tab-profile.png']);
+  assert.deepEqual(srcs(), ['/img/tab-exchange.png', '/img/coin-prlx.png', '/img/tab-history.png', '/img/tab-reviews.png', '/img/tab-refs.png', '/img/tab-profile.png']);
   doc.querySelector('.nav button[data-tab="profile"]').click();
   await tick();
   doc.querySelector('#view-profile [data-go="info"]').click();
   await tick();
-  assert.equal(srcs()[4], '/img/hero-shield.png', 'пункт «Инфо» со щитом');
+  assert.equal(srcs()[5], '/img/hero-shield.png', 'пункт «Инфо» со щитом');
 });
 
 test('шапка обмена — живой знак обмена, завершение заявки — объёмный щит', async (t) => {

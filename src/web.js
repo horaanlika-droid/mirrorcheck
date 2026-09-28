@@ -7,6 +7,13 @@ const receipts = require('./receipts');
 const captcha = require('./captcha');
 const rates = require('./rates');
 const { validateInitData, parseUser } = require('./validate');
+const exchangers = require('./exchangers');
+const deposits = require('./deposits');
+const claims = require('./claims');
+const subscriptions = require('./subscriptions');
+const marketplace = require('./marketplace');
+const walletProvider = require('./walletProvider');
+const audit = require('./audit');
 
 const clientOrder = (o) => ({
   id: o.id,
@@ -17,6 +24,7 @@ const clientOrder = (o) => ({
   rate: o.rate,
   status: o.status,
   broker: o.broker || null,
+  exchangerId: o.exchangerId || null,
   requisites: o.requisites,
   payRub: o.payRub,
   receipt: o.receipt || null,
@@ -25,7 +33,12 @@ const clientOrder = (o) => ({
   adminCalledAt: o.adminCalledAt || null,
   review: (() => {
     const r = store.reviewForOrder(o.id);
-    return r ? { id: r.id } : null; // статус модерации клиенту не раскрываем
+    return r ? { id: r.id } : null;
+  })(),
+  claim: (() => {
+    const list = (store.get().claims || []).filter((c) => String(c.orderId) === String(o.id));
+    const open = list.find((c) => ['open', 'under_review'].includes(c.status));
+    return open ? { id: open.id, status: open.status } : null;
   })(),
   createdAt: o.createdAt,
   updatedAt: o.updatedAt,
@@ -105,7 +118,6 @@ function startWeb() {
   app.set('query parser', 'extended');
   app.use(express.json({ limit: '12mb' }));
 
-  // Security headers
   app.use((req, res, next) => {
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('X-Frame-Options', 'DENY');
@@ -139,7 +151,6 @@ function startWeb() {
         const url = `${safeProto}://${host}`.replace(/\/+$/, '');
         if (url !== store.get().settings.publicUrl) {
           try {
-            // eslint-disable-next-line no-new
             new URL(url);
             store.mutate((db) => {
               db.settings.publicUrl = url;
@@ -152,7 +163,6 @@ function startWeb() {
     next();
   });
 
-  // JSON parse error handling
   app.use((err, _req, res, next) => {
     if (err && err.type === 'entity.parse.failed') {
       return res.status(400).json({ error: 'Неверный формат запроса' });
@@ -186,6 +196,7 @@ function startWeb() {
     return a;
   };
 
+  // ---------- existing routes ----------
   app.post('/api/init', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
@@ -299,7 +310,13 @@ function startWeb() {
     if (!broker || !store.isAdminBroker(broker)) {
       broker = store.getRandomAdminBroker();
     }
-    const upd = store.updateOrder(o.id, { broker });
+    // Try to find exchanger by broker login
+    const ex = exchangers.getExchangerByLogin(broker);
+    let patch = { broker };
+    if (ex && ex.status === 'approved') {
+      patch.exchangerId = ex.id;
+    }
+    const upd = store.updateOrder(o.id, patch);
     bus.emit('order_event', { order: upd, type: 'broker_assigned' });
     res.json({ order: clientOrder(upd) });
   });
@@ -350,7 +367,7 @@ function startWeb() {
     if (!o || o.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
     if (!o.receipt || !receipts.exists(o.id)) return res.status(404).json({ error: 'Чек не найден' });
     res.set('Content-Type', 'application/pdf');
-    res.set('Content-Disposition', `attachment; filename="check-${o.id}.pdf"`);
+    res.set('Content-Disposition', `attachment; filename=\"check-${o.id}.pdf\"`);
     res.sendFile(receipts.filePath(o.id));
   });
 
@@ -370,17 +387,26 @@ function startWeb() {
     res.json({ order: clientOrder(o) });
   });
 
+  // Пользователь может отменить заявку в любое время (кроме терминальных)
   app.post('/api/order/:id/cancel', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
     const o = store.getOrder(req.params.id);
     if (!o || o.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
-    if (['new', 'details'].includes(o.status)) {
-      const upd = store.updateOrder(o.id, { status: 'cancelled' });
-      bus.emit('order_event', { order: upd, type: 'cancelled' });
-      return res.json({ order: clientOrder(upd) });
+    if (['completed', 'rejected', 'cancelled'].includes(o.status)) {
+      return res.json({ order: clientOrder(o) });
     }
-    res.json({ order: clientOrder(o) });
+    // Разрешаем отмену в любое время до завершения
+    const upd = store.updateOrder(o.id, { status: 'cancelled' });
+    // Если есть открытое обращение — резерв остаётся заблокированным до решения человека
+    if (upd.exchangerId) {
+      const openClaim = claims.listClaims({ orderId: upd.id }).find((c) => ['open', 'under_review', 'approved'].includes(c.status) && !c.payout);
+      if (!openClaim) {
+        try { deposits.releaseForOrder(upd.exchangerId, upd.id); } catch {}
+      }
+    }
+    bus.emit('order_event', { order: upd, type: 'cancelled' });
+    return res.json({ order: clientOrder(upd) });
   });
 
   app.post('/api/order/:id/call-admin', (req, res) => {
@@ -406,8 +432,44 @@ function startWeb() {
     res.json({ ok: true, order: clientOrder(upd) });
   });
 
-  // Отзывы страницами: ?limit=1..50 (по умолчанию 20) и ?before=<next> для
-  // следующей страницы. Без параметров — самые свежие. stats — по всей витрине.
+  // Обращение о выплате из залога — неполучение BTC достаточно
+  app.post('/api/order/:id/claim', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const o = store.getOrder(req.params.id);
+    if (!o || o.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
+    // Можно подать если BTC не получен — статус cancelled, completed без tx, paid, details
+    // Не задаём срок подачи обращения и не вводим новые условия допуска
+    if (!o.broker && !o.exchangerId) return res.status(400).json({ error: 'По заявке ещё не назначен обменник' });
+    const reason = req.body?.reason || 'btc_not_received';
+    const description = req.body?.description || '';
+    try {
+      // Определяем exchangerId
+      let exchangerId = o.exchangerId;
+      if (!exchangerId && o.broker) {
+        const ex = exchangers.getExchangerByLogin(o.broker);
+        if (ex) exchangerId = ex.id;
+        else {
+          // fallback: используем broker как exchangerId string для старых данных
+          exchangerId = o.broker;
+        }
+      }
+      const claim = claims.createClaim({
+        orderId: o.id,
+        userId: a.user.id,
+        exchangerId,
+        reason,
+        description,
+      });
+      // Переводим депозит в claim_pending (внутри createClaim уже делается, но дублируем для старых)
+      try { deposits.holdForClaim(o.id, a.user.id); } catch {}
+      bus.emit('claim_event', { claim, type: 'new' });
+      res.json({ claim });
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   app.get('/api/reviews', (req, res) => {
     const a = auth(req);
     const limit = Math.min(REVIEWS_PAGE_MAX, Math.max(1, parseInt(req.query.limit, 10) || REVIEWS_PAGE));
@@ -466,6 +528,207 @@ function startWeb() {
     res.json({ application: publicBrokerApp(store.brokerAppFor(a.user.id)) });
   });
 
+  // ---------- Франшизы и обменники ----------
+  app.post('/api/exchangers/register', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!needCaptcha(req, res)) return;
+    try {
+      const legal = req.body?.legal;
+      const experience = req.body?.experience || '';
+      const contact = req.body?.contact || '';
+      if (!legal) return res.status(400).json({ error: 'Укажите юридические реквизиты' });
+      // Запрет на seed/private key в запросе
+      const bodyStr = JSON.stringify(req.body).toLowerCase();
+      if (bodyStr.includes('seed') || bodyStr.includes('mnemonic') || bodyStr.includes('private key') || bodyStr.includes('приватный ключ')) {
+        // Проверяем, что это не просто упоминание в keyHolders basis? Но лучше отклонить если есть поля seed
+        if (req.body.seed || req.body.seedPhrase || req.body.privateKey || req.body.mnemonic) {
+          return res.status(400).json({ error: 'Приложение не собирает seed-фразы и приватные ключи' });
+        }
+      }
+      const user = store.touchUser(a.user, req.body.startParam || '');
+      const ex = exchangers.createExchanger({
+        tgId: user.id,
+        userId: user.id,
+        legal,
+        experience,
+        contact,
+      });
+      audit.log({ actorId: user.id, action: 'exchanger_registered', targetType: 'exchanger', targetId: ex.id, details: { companyName: ex.legal.companyName } });
+      bus.emit('exchanger_event', { exchanger: ex, type: 'new' });
+      res.json({ exchanger: ex });
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/exchangers/me', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const ex = exchangers.getExchangerByTgId(a.user.id);
+    if (!ex) return res.status(404).json({ error: 'not found' });
+    res.json({ exchanger: ex });
+  });
+
+  app.get('/api/exchangers/offers', (req, res) => {
+    // Маркетплейс: предложения обменников и сравнение
+    const data = marketplace.getOfferComparison();
+    res.json(data);
+  });
+
+  app.get('/api/exchangers/:id', (req, res) => {
+    const a = auth(req);
+    // Публичные данные для approved, приватные только для владельца/админа
+    const ex = exchangers.getExchangerById(req.params.id);
+    if (!ex) return res.status(404).json({ error: 'not found' });
+    if (ex.status === 'approved') {
+      // Публичная часть
+      return res.json({
+        exchanger: {
+          id: ex.id,
+          companyName: ex.legal?.companyName,
+          publicBtcAddresses: ex.legal?.publicBtcAddresses,
+          networks: ex.legal?.networks,
+          status: ex.status,
+          createdAt: ex.createdAt,
+        },
+      });
+    }
+    // Для не-одобренных — только владелец
+    if (!a || String(ex.tgId) !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
+    res.json({ exchanger: ex });
+  });
+
+  app.get('/api/exchangers/:id/deposits', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    try {
+      exchangers.assertOwnership(req.params.id, a.user.id);
+    } catch (e) {
+      return res.status(403).json({ error: e.message });
+    }
+    const list = deposits.getDeposits(req.params.id);
+    res.json({
+      deposits: list,
+      available: deposits.getAvailableBalance(req.params.id),
+      reserved: deposits.getReservedBalance(req.params.id),
+      exposure: deposits.getTotalExposure(req.params.id),
+      confirmationRule: walletProvider.getConfirmationRule(),
+      providerInfo: walletProvider.getProviderInfo(),
+    });
+  });
+
+  app.post('/api/exchangers/:id/wallet', async (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    try {
+      exchangers.assertOwnership(req.params.id, a.user.id);
+      const ex = await exchangers.createWalletForExchanger(req.params.id, a.user.id);
+      res.json({ exchanger: ex, wallet: ex.wallet });
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/exchangers/:id/deposits/simulate', async (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    try {
+      exchangers.assertOwnership(req.params.id, a.user.id);
+    } catch (e) {
+      return res.status(403).json({ error: e.message });
+    }
+    if (walletProvider.isMainnetEnabled()) {
+      return res.status(403).json({ error: 'Симуляция недоступна в mainnet режиме' });
+    }
+    const amount = Number(req.body?.amountBtc);
+    const confirmations = Number(req.body?.confirmations) || 0;
+    if (!(amount > 0)) return res.status(400).json({ error: 'amountBtc должен быть положительным' });
+    const ex = exchangers.getExchangerById(req.params.id);
+    if (!ex || !ex.wallet) return res.status(400).json({ error: 'Сначала создайте кошелёк' });
+    const provider = walletProvider.getProvider();
+    await provider.simulateDeposit(ex.wallet.address, amount, confirmations, req.body?.txId);
+    const dep = deposits.createDeposit({
+      exchangerId: ex.id,
+      amountBtc: amount,
+      txId: req.body?.txId,
+      confirmations,
+    });
+    res.json({ deposit: dep, balance: await provider.getBalance(ex.wallet.address) });
+  });
+
+  app.get('/api/exchangers/:id/orders', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    try {
+      exchangers.assertOwnership(req.params.id, a.user.id);
+    } catch (e) {
+      return res.status(403).json({ error: e.message });
+    }
+    const orders = (store.get().orders || []).filter((o) => String(o.exchangerId) === String(req.params.id) || String(o.broker) === String(exchangers.getExchangerById(req.params.id)?.login));
+    res.json({ orders: orders.map(clientOrder) });
+  });
+
+  app.get('/api/exchangers/:id/claims', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    try {
+      exchangers.assertOwnership(req.params.id, a.user.id);
+    } catch (e) {
+      return res.status(403).json({ error: e.message });
+    }
+    res.json({ claims: claims.listClaims({ exchangerId: req.params.id }) });
+  });
+
+  app.get('/api/exchangers/:id/subscription', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    try {
+      exchangers.assertOwnership(req.params.id, a.user.id);
+    } catch (e) {
+      return res.status(403).json({ error: e.message });
+    }
+    res.json({
+      subscription: subscriptions.getSubscription(req.params.id),
+      config: subscriptions.getSubscriptionConfig(),
+      access: subscriptions.isAccessAllowed(req.params.id),
+    });
+  });
+
+  app.get('/api/claims', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    res.json({ claims: claims.listClaims({ userId: a.user.id }) });
+  });
+
+  app.get('/api/claims/:id', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const c = claims.getClaim(req.params.id);
+    if (!c) return res.status(404).json({ error: 'not found' });
+    // Изоляция: пользователь видит только свои, обменник — только свои
+    if (String(c.userId) !== String(a.user.id)) {
+      const ex = exchangers.getExchangerByTgId(a.user.id);
+      if (!ex || String(ex.id) !== String(c.exchangerId)) return res.status(404).json({ error: 'not found' });
+    }
+    res.json({ claim: c });
+  });
+
+  app.get('/api/wallet/provider-info', (req, res) => {
+    res.json(walletProvider.getProviderInfo());
+  });
+
+  app.post('/api/tribute/webhook', (req, res) => {
+    // Проверка подписи должна быть здесь в реальности; пока — тестовая
+    try {
+      const event = req.body;
+      const sub = subscriptions.handleTributeWebhook(event);
+      res.json({ ok: true, subscription: sub });
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   app.get('/api/support/messages', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
@@ -520,6 +783,10 @@ function startWeb() {
       const o = store.getOrder(req.params.id);
       if (!o) return res.status(404).json({ error: 'not found' });
       const upd = store.updateOrder(o.id, { status: 'completed' });
+      if (upd.exchangerId) {
+        const openClaim = claims.listClaims({ orderId: upd.id }).find((c) => ['open', 'under_review', 'approved'].includes(c.status) && !c.payout);
+        if (!openClaim) { try { deposits.releaseForOrder(upd.exchangerId, upd.id); } catch {} }
+      }
       bus.emit('order_event', { order: upd, type: 'completed' });
       res.json({ order: clientOrder(upd) });
     });
@@ -572,6 +839,19 @@ function startWeb() {
       const msg = store.createSupportMessage(userId, 'admin', text);
       bus.emit('support_message', { message: msg, user: { id: userId } });
       res.json({ message: msg });
+    });
+    // Demo admin for exchangers
+    app.post('/api/admin/exchangers/:id/approve', (req, res) => {
+      try {
+        const ex = exchangers.updateExchangerStatus(req.params.id, 'approved', 'demo_admin', req.body?.reason);
+        res.json({ exchanger: ex });
+      } catch (e) { res.status(400).json({ error: e.message }); }
+    });
+    app.post('/api/admin/exchangers/:id/reject', (req, res) => {
+      try {
+        const ex = exchangers.updateExchangerStatus(req.params.id, 'rejected', 'demo_admin', req.body?.reason);
+        res.json({ exchanger: ex });
+      } catch (e) { res.status(400).json({ error: e.message }); }
     });
   }
 

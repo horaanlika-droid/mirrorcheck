@@ -24,6 +24,10 @@ const defaults = () => ({
   reviewSeq: 1,
   brokerSeq: 1,
   payoutSeq: 1,
+  exchangerSeq: 1,
+  exchangerDepositSeq: 1,
+  claimSeq: 1,
+  auditSeq: 1,
   settings: {
     rateBTC: 10250000, // ₽ за 1 BTC (итоговый, с комиссией)
     rateGRAM: 125, // ₽ за 1 GRAM (стартовый курс, итоговый с комиссией)
@@ -68,6 +72,15 @@ const defaults = () => ({
     internMaxRub: 5000, // стажёр работает только с заявками до этой суммы, ₽
     internDays: 7, // длительность стажировки в днях
     adminBrokers: DEFAULT_ADMIN_BROKERS,
+    // Ежемесячный платёж за доступ к платформе (Tribute)
+    subscriptionRequired: process.env.SUBSCRIPTION_REQUIRED === '1',
+    subscriptionAmountRub: Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 5000,
+    subscriptionProvider: 'tribute',
+    tributeBtcEnabled: false, // feature flag: приём BTC в оплату услуг Pricelex выключен
+    // Wallet-провайдер
+    walletProvider: (process.env.WALLET_PROVIDER || 'mock').trim() || 'mock',
+    walletMainnetEnabled: false, // реальные mainnet-депозиты выключены
+    walletConfirmations: Number(process.env.WALLET_CONFIRMATIONS) || 3,
   },
   admins: [], // дополнительные операторы; владельцы задаются через окружение
   users: {},
@@ -98,6 +111,17 @@ const defaults = () => ({
   // Выплаты брокерам: { id, login, btc, address, kind, status, createdAt, updatedAt, adminMsgIds }
   // kind: 'earning' (доход) | 'deposit' (возврат депозита); status: 'pending' | 'paid' | 'declined'
   payouts: [],
+  // Франшизы/обменники: отдельные кабинеты
+  // { id, tgId, login, status: pending|approved|rejected|suspended, legal: {companyName, inn, ogrn, legalAddress, contactEmail, contactPhone, publicBtcAddresses, networks, keyHolders}, experience, contact, createdAt, updatedAt, reviewedBy, reviewedAt, reviewReason, wallet, settings: {minRub, maxRub, tradingEnabled} }
+  exchangers: [],
+  // Депозиты обменников с жизненным циклом: available, reserved, session_active, claim_pending, release_pending, released
+  exchangerDeposits: [],
+  // Обращения о выплате из залога: { id, orderId, userId, exchangerId, reason, description, status: open|under_review|approved|rejected, createdAt, updatedAt, reviewedBy, decision, motivation, evidence, payout }
+  claims: [],
+  // Подписки: { exchangerId, provider: tribute, status: pending|active|past_due|unpaid|cancelled, externalId, amount, currency, currentPeriodStart, currentPeriodEnd, lastPaymentAt, lastEventAt, createdAt, updatedAt }
+  subscriptions: [],
+  // Аудит ролей и действий
+  auditLog: [],
 });
 
 const OLD_OPERATOR_DEFAULTS = ['@pricelex_operator', '@stonym0ntana'];
@@ -177,6 +201,13 @@ function load() {
       if (bs.internMaxRub === undefined) bs.internMaxRub = 5000;
       if (bs.internDays === undefined) bs.internDays = 7;
       if (!Array.isArray(bs.adminBrokers) || bs.adminBrokers.length === 0) bs.adminBrokers = DEFAULT_ADMIN_BROKERS;
+      if (bs.subscriptionRequired === undefined) bs.subscriptionRequired = process.env.SUBSCRIPTION_REQUIRED === '1';
+      if (bs.subscriptionAmountRub === undefined) bs.subscriptionAmountRub = Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 5000;
+      if (bs.subscriptionProvider === undefined) bs.subscriptionProvider = 'tribute';
+      if (bs.tributeBtcEnabled === undefined) bs.tributeBtcEnabled = false;
+      if (bs.walletProvider === undefined) bs.walletProvider = (process.env.WALLET_PROVIDER || 'mock').trim() || 'mock';
+      if (bs.walletMainnetEnabled === undefined) bs.walletMainnetEnabled = false;
+      if (bs.walletConfirmations === undefined) bs.walletConfirmations = Number(process.env.WALLET_CONFIRMATIONS) || 3;
       if (!db.brokerProfiles || typeof db.brokerProfiles !== 'object') db.brokerProfiles = {};
       if (!Array.isArray(db.brokerDeposits)) db.brokerDeposits = [];
       for (const dep of db.brokerDeposits) {
@@ -191,9 +222,19 @@ function load() {
         if (dep.totalBtc === undefined || dep.totalBtc === null) dep.totalBtc = Math.round((dep.btc + dep.feeBtc) * 1e8) / 1e8;
       }
       if (!Number.isFinite(db.depositSeq)) db.depositSeq = db.brokerDeposits.reduce((m, x) => Math.max(m, x.id || 0), 0) + 1;
+      if (!Array.isArray(db.exchangers)) db.exchangers = [];
+      if (!Number.isFinite(db.exchangerSeq)) db.exchangerSeq = db.exchangers.reduce((m, e) => Math.max(m, e.id || 0), 0) + 1;
+      if (!Array.isArray(db.exchangerDeposits)) db.exchangerDeposits = [];
+      if (!Number.isFinite(db.exchangerDepositSeq)) db.exchangerDepositSeq = db.exchangerDeposits.reduce((m, d) => Math.max(m, d.id || 0), 0) + 1;
+      if (!Array.isArray(db.claims)) db.claims = [];
+      if (!Number.isFinite(db.claimSeq)) db.claimSeq = db.claims.reduce((m, c) => Math.max(m, c.id || 0), 0) + 1;
+      if (!Array.isArray(db.subscriptions)) db.subscriptions = [];
+      if (!Array.isArray(db.auditLog)) db.auditLog = [];
+      if (!Number.isFinite(db.auditSeq)) db.auditSeq = db.auditLog.reduce((m, a) => Math.max(m, a.id || 0), 0) + 1;
       for (const o of db.orders || []) {
         if (o.broker === undefined) o.broker = null;
         if (o.officialRate === undefined) o.officialRate = null;
+        if (o.exchangerId === undefined) o.exchangerId = null;
       }
       db.rateHistory = db.rateHistory.filter(
         (p) => p && Number.isFinite(Number(p.at)) && Number(p.btc) > 0 && Number(p.gram) > 0
@@ -269,6 +310,7 @@ function publicSettings() {
     rateBTC: s.rateBTC,
     rateGRAM: s.rateGRAM,
     rateUpdatedAt: s.rateUpdatedAt,
+    rateSource: s.rateSource || 'manual',
     minRub: s.minRub,
     maxRub: s.maxRub,
     online: !!s.online,
@@ -297,6 +339,17 @@ function publicSettings() {
     })),
     // Среднее время обмена: ручное значение, иначе — вычисленное по сделкам.
     avgExchangeMin: Number(s.avgExchangeMin) > 0 ? Number(s.avgExchangeMin) : avgExchangeMinutesComputed(),
+    // Ежемесячный платёж за доступ (Tribute)
+    subscriptionRequired: !!s.subscriptionRequired,
+    subscriptionAmountRub: Number(s.subscriptionAmountRub) || 5000,
+    subscriptionProvider: s.subscriptionProvider || 'tribute',
+    subscriptionLabel: s.subscriptionRequired ? 'Ежемесячный платёж за доступ' : 'Ежемесячный платёж за доступ (опционально)',
+    tributeBtcEnabled: !!s.tributeBtcEnabled,
+    // Wallet-провайдер
+    walletProvider: s.walletProvider || 'mock',
+    walletMainnetEnabled: !!s.walletMainnetEnabled,
+    walletConfirmations: Number(s.walletConfirmations) || 3,
+    walletRealLockSupported: false,
   };
 }
 
@@ -358,6 +411,7 @@ function createOrder(o) {
       rate: o.rate,
       officialRate: o.officialRate || null, // официальный курс на момент заявки — из него считается спред брокера
       broker: null, // логин брокера, взявшего заявку
+      exchangerId: o.exchangerId || null, // франшиза/обменник
       crypto: o.crypto,
       status: 'new',
       requisites: null,
