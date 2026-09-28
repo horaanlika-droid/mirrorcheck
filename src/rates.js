@@ -1,6 +1,7 @@
-// Официальные курсы BTC/GRAM к рублю: автообновление с публичных бирж.
-// Итоговый курс для клиентов = официальный × (1 + feePercent/100).
-// Комиссию задаёт оператор в админ-панели, официальный курс трогать не нужно.
+// Реальные курсы BTC/GRAM к рублю: автообновление с публичных бирж.
+// Курс для клиентов — это и есть рыночный курс: площадка не добавляет сверху
+// ни процента, ни комиссии. Свою цену брокер называет сам в отклике на офер,
+// и клиент видит её рядом с рыночным курсом, а не «зашитой» в курс площадки.
 //
 // Как считается официальный курс:
 //  1. Цены BTC и GRAM в долларах берутся из 12 независимых источников: биржи
@@ -438,15 +439,13 @@ function mergeHistoryPoints({ btc, gram, usdRub }) {
 
 // Если онлайн-источники недоступны (нет сети, сбой API), формируем плавную
 // 7-дневную кривую на базе текущих курсов, чтобы график никогда не оставался пустым.
-function generateFallbackHistory({ hours = 168, fee = 0, now = Date.now() } = {}) {
+function generateFallbackHistory({ hours = 168, now = Date.now() } = {}) {
   const s = store.get().settings;
-  const feePct = Number(fee) || 0;
   const currentBtc = s.rateBTC || 7140000;
   const currentGram = s.rateGRAM || 119;
-  const feeMult = 1 + feePct / 100;
 
-  const endBaseBtc = s.baseRateBTC || Math.round(currentBtc / feeMult);
-  const endBaseGram = s.baseRateGRAM || Math.round(currentGram / feeMult);
+  const endBaseBtc = s.baseRateBTC || Math.round(currentBtc);
+  const endBaseGram = s.baseRateGRAM || Math.round(currentGram);
 
   const points = [];
   const count = Math.min(168, Math.max(24, hours));
@@ -467,8 +466,8 @@ function generateFallbackHistory({ hours = 168, fee = 0, now = Date.now() } = {}
       at,
       baseBtc,
       baseGram,
-      btc: applyFee(baseBtc, feePct),
-      gram: applyFee(baseGram, feePct),
+      btc: baseBtc,
+      gram: baseGram,
     });
   }
 
@@ -724,7 +723,6 @@ function createRateEngine({
 
 /* ---------- применение к настройкам ---------- */
 
-const applyFee = (base, fee) => Math.max(1, Math.round(base * (1 + fee / 100)));
 
 const engine = createRateEngine({
   fx: (() => {
@@ -748,11 +746,10 @@ function applyRates(official) {
   const btc = Math.round(official.btc);
   const gram = Math.round(official.gram);
   const settings = store.mutate((db) => {
-    const fee = Number(db.settings.feePercent) || 0;
     db.settings.baseRateBTC = btc;
     db.settings.baseRateGRAM = gram;
-    db.settings.rateBTC = applyFee(btc, fee);
-    db.settings.rateGRAM = applyFee(gram, fee);
+    db.settings.rateBTC = btc;
+    db.settings.rateGRAM = gram;
     db.settings.rateUpdatedAt = at;
     db.settings.rateSource = official.source;
     return db.settings;
@@ -766,33 +763,6 @@ function applyRates(official) {
     baseGram: settings.baseRateGRAM,
   });
   return settings;
-}
-
-// Пересчёт итоговых курсов после смены комиссии (официальные не трогаем).
-function recomputeWithFee() {
-  const s = store.mutate((db) => {
-    const set = db.settings;
-    const fee = Number(set.feePercent) || 0;
-    if (set.baseRateBTC) set.rateBTC = applyFee(set.baseRateBTC, fee);
-    if (set.baseRateGRAM) set.rateGRAM = applyFee(set.baseRateGRAM, fee);
-    if (Array.isArray(db.rateHistory)) {
-      for (const p of db.rateHistory) {
-        if (p.baseBtc) p.btc = applyFee(p.baseBtc, fee);
-        else if (p.btc) p.btc = applyFee(Math.round(p.btc / (1 + fee / 100)), fee);
-        if (p.baseGram) p.gram = applyFee(p.baseGram, fee);
-        else if (p.gram) p.gram = applyFee(Math.round(p.gram / (1 + fee / 100)), fee);
-      }
-    }
-    return set;
-  });
-  // Оператор изменил курс для клиентов — это тоже точка на графике.
-  store.pushRatePoint({
-    btc: s.rateBTC,
-    gram: s.rateGRAM,
-    baseBtc: s.baseRateBTC,
-    baseGram: s.baseRateGRAM,
-  });
-  return s;
 }
 
 // Гарантируем наличие недельной истории для графика в Web App.
@@ -811,27 +781,26 @@ async function ensureRateHistory({ force = false, hours = 168 } = {}) {
   if (ensureHistoryInflight) return ensureHistoryInflight;
 
   ensureHistoryInflight = (async () => {
-    const fee = Number(store.get().settings.feePercent) || 0;
     try {
       const res = await engine.fetchHistory({ hours });
       if (res && res.points && res.points.length >= 2) {
-        const pointsWithFee = res.points.map((p) => ({
+        const points = res.points.map((p) => ({
           at: p.at,
           baseBtc: p.baseBtc,
           baseGram: p.baseGram,
-          btc: applyFee(p.baseBtc, fee),
-          gram: applyFee(p.baseGram, fee),
+          btc: p.baseBtc,
+          gram: p.baseGram,
         }));
-        store.seedRateHistory(pointsWithFee);
-        console.log(`[rates] история курса за неделю загружена (${res.source}, ${pointsWithFee.length} точек, с комиссией +${fee}%)`);
+        store.seedRateHistory(points);
+        console.log(`[rates] история курса за неделю загружена (${res.source}, ${points.length} точек, без наценки)`);
         return store.get().rateHistory;
       }
     } catch (e) {
       console.warn(`[rates] онлайн-история недоступна (${e.message}), используем резервную историю за неделю`);
       if ((store.get().rateHistory || []).length < 2) {
-        const fallback = generateFallbackHistory({ hours, fee });
+        const fallback = generateFallbackHistory({ hours });
         store.seedRateHistory(fallback);
-        console.log(`[rates] базовый график курса за неделю инициализирован (${fallback.length} точек, с комиссией +${fee}%)`);
+        console.log(`[rates] базовый график курса за неделю инициализирован (${fallback.length} точек, без наценки)`);
       }
     }
     return store.get().rateHistory;
@@ -931,8 +900,6 @@ function startRates() {
 module.exports = {
   startRates,
   refreshRates,
-  recomputeWithFee,
-  applyFee,
   fetchOfficial,
   ensureRateHistory,
   generateFallbackHistory,

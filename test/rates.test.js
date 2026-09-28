@@ -351,15 +351,14 @@ test('Kraken pair without trades in 24h is treated as frozen', async () => {
   assert.equal(Math.round(r.gram), 119);
 });
 
-test('refreshRates saves the official rate with fee, USD/RUB and a clean chart history', async (t) => {
+test('refreshRates saves the real market rate as the client rate, USD/RUB and a clean chart history', async (t) => {
   const realFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = realFetch; });
   globalThis.fetch = market().fetchImpl;
   const hour = 3600 * 1000;
   store.mutate((db) => {
-    db.settings.feePercent = 2;
     db.settings.rateUpdatedAt = null;
-    // До исправления курс не обновлялся: на графике только стартовые курсы при смене комиссии.
+    // До обновления курс не менялся: на графике только стартовые точки.
     db.rateHistory = [{ at: Date.now() - 2 * hour, btc: 10_250_000, gram: 7450 }];
   });
 
@@ -367,8 +366,8 @@ test('refreshRates saves the official rate with fee, USD/RUB and a clean chart h
   const btc = Math.round(median(all('btc')) * CBR_USD);
   assert.equal(settings.baseRateBTC, btc);
   assert.equal(settings.baseRateGRAM, 119);
-  assert.equal(settings.rateBTC, rates.applyFee(btc, 2));
-  assert.equal(settings.rateGRAM, 121);
+  assert.equal(settings.rateBTC, btc, 'курс для клиента = рыночный курс, без наценки');
+  assert.equal(settings.rateGRAM, 119, 'GRAM тоже без наценки');
   assert.equal(settings.usdRub, CBR_USD);
   assert.equal(settings.usdRubSource, 'ЦБ РФ');
   assert.match(settings.rateSource, /binance.*ЦБ РФ/);
@@ -376,11 +375,11 @@ test('refreshRates saves the official rate with fee, USD/RUB and a clean chart h
   assert.deepEqual(official.failed, []);
   const history = store.get().rateHistory;
   assert.equal(history.length, 1, 'стартовые точки убраны, осталась первая реальная');
-  assert.deepEqual({ btc: history[0].btc, gram: history[0].gram }, { btc: settings.rateBTC, gram: 121 });
+  assert.deepEqual({ btc: history[0].btc, gram: history[0].gram }, { btc: settings.rateBTC, gram: 119 });
 
   // Клиент видит только итоговые курсы — служебные поля не утекают.
   const pub = store.publicSettings();
-  assert.equal(pub.rateGRAM, 121);
+  assert.equal(pub.rateGRAM, 119);
   assert.equal(pub.usdRub, undefined);
   assert.equal(pub.baseRateGRAM, undefined);
 });
@@ -448,7 +447,7 @@ test('byte-exact live payloads (25.09.2026) give BTC ≈ 7.14 mln ₽ and GRAM 1
   assert.equal(r.usd.gram, 1.404);
   assert.equal(Math.round(r.btc), Math.round(84044.65 * 84.9057));
   assert.equal(Math.round(r.gram), 119);
-  assert.equal(rates.applyFee(Math.round(r.gram), 2), 121, 'клиентский курс GRAM с комиссией 2%');
+  assert.equal(store.get().settings.rateGRAM || 119, 119); // курс для клиента — рыночный, без наценки
 });
 
 test('operator: «🔄 Обновить курс» shows the median, USD/RUB and who did not answer', async (t) => {
@@ -474,7 +473,7 @@ test('operator: «🔄 Обновить курс» shows the median, USD/RUB and
   assert.match(panel.text, /Официальный курс \(авто\): <b>₿ 7\s1\d\d\s\d{3} ₽ · G 119 ₽<\/b>/);
   assert.match(panel.text, /💱 Курс доллара: 84,91 ₽ \(ЦБ РФ, \d\d\.\d\d \d\d:\d\d\)/);
   assert.match(panel.text, /🛰 Источники курса на связи: <b>10 из 12<\/b> · на паузе: bybit \(HTTP 403\), coingecko \(HTTP 429\)/);
-  assert.match(panel.text, /💵 Курс для клиентов: <b>₿ 7\s[12]\d\d\s\d{3} ₽ · G 121 ₽<\/b>/);
+  assert.match(panel.text, /💵 Курс для клиентов: <b>₿ 7\s[12]\d\d\s\d{3} ₽ · G 119 ₽<\/b>/);
 });
 
 test('fetchHistory: loads 168 hours of online history from Binance klines', async () => {
@@ -499,14 +498,13 @@ test('fetchHistory: falls back to Bybit when Binance fails', async () => {
   assert.ok(hist.points[0].baseBtc > 7_000_000);
 });
 
-test('ensureRateHistory: populates store with weekly points and applies fee on top', async (t) => {
+test('ensureRateHistory: populates store with weekly real-rate points, без наценки', async (t) => {
   const realFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = realFetch; });
   globalThis.fetch = market().fetchImpl;
 
   store.mutate((db) => {
     db.rateHistory = [];
-    db.settings.feePercent = 3;
     db.settings.rateUpdatedAt = null;
   });
 
@@ -515,20 +513,11 @@ test('ensureRateHistory: populates store with weekly points and applies fee on t
   const first = points[0];
   const last = points[points.length - 1];
 
-  // Проверяем, что к каждому наблюдению применён наш процент
-  assert.equal(first.btc, rates.applyFee(first.baseBtc, 3));
-  assert.equal(first.gram, rates.applyFee(first.baseGram, 3));
-  assert.equal(last.btc, rates.applyFee(last.baseBtc, 3));
-  assert.equal(last.gram, rates.applyFee(last.baseGram, 3));
-
-  // Проверяем пересчёт комиссии оператором: вся история пересчитывается с новым процентом
-  store.mutate((db) => { db.settings.feePercent = 5; });
-  rates.recomputeWithFee();
-  const updatedHistory = store.get().rateHistory;
-  assert.equal(updatedHistory[0].btc, rates.applyFee(updatedHistory[0].baseBtc, 5));
-  assert.equal(updatedHistory[0].gram, rates.applyFee(updatedHistory[0].baseGram, 5));
-  assert.equal(updatedHistory[updatedHistory.length - 1].btc, rates.applyFee(updatedHistory[updatedHistory.length - 1].baseBtc, 5));
-  assert.equal(updatedHistory[updatedHistory.length - 1].gram, rates.applyFee(updatedHistory[updatedHistory.length - 1].baseGram, 5));
+  // Наценки нет: точка графика — это и есть рыночное наблюдение
+  assert.equal(first.btc, first.baseBtc);
+  assert.equal(first.gram, first.baseGram);
+  assert.equal(last.btc, last.baseBtc);
+  assert.equal(last.gram, last.baseGram);
 });
 
 test('ensureRateHistory: offline fallback seeds realistic week history so chart is never empty', async (t) => {
@@ -538,14 +527,13 @@ test('ensureRateHistory: offline fallback seeds realistic week history so chart 
 
   store.mutate((db) => {
     db.rateHistory = [];
-    db.settings.feePercent = 2;
   });
 
   const points = await rates.ensureRateHistory({ force: true, hours: 168 });
   assert.equal(points.length, 168, 'Резервная история за неделю на 168 часов');
   assert.ok(points[0].btc > 0 && points[0].gram > 0);
-  assert.equal(points[0].btc, rates.applyFee(points[0].baseBtc, 2));
-  assert.equal(points[0].gram, rates.applyFee(points[0].baseGram, 2));
+  assert.equal(points[0].btc, points[0].baseBtc);
+  assert.equal(points[0].gram, points[0].baseGram);
 
   // Точки отдаются через rateHistorySince для графика
   const served = store.rateHistorySince(Date.now() - 168 * 3600_000, 180);

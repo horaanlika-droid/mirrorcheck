@@ -56,6 +56,10 @@
     returnTab: 'exchange', orderOpen: false,
     currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [],
     history: { points: [], updatedFor: null },
+    access: null, // состояние доступа: бесплатные дни / подписка
+    brokerLogin: null, // логин брокера, если кабинет доступен этому пользователю
+    brokerLk: null, brokerLkErr: null,
+    bids: [], offerWindowSec: 120, marketRate: null,
     reviews: { list: [], stats: { count: 0, avg: 0 }, loaded: false, hasMore: false, next: null },
     reviewDraft: { orderId: null, rating: 5, text: '' },
     offers: [], offersMeta: null, claims: [],
@@ -246,7 +250,8 @@
   }
 
   const STATUS = {
-    new: { label: 'Подбор брокера', cls: 'new' },
+    collecting: { label: 'Ждём отклики брокеров', cls: 'new' },
+    new: { label: 'Брокер выдаёт реквизиты', cls: 'new' },
     details: { label: 'Ожидает оплаты', cls: 'details' },
     paid: { label: 'Подтверждение', cls: 'paid' },
     completed: { label: 'Завершён', cls: 'completed' },
@@ -384,7 +389,12 @@
         body: opts.method === 'POST' ? JSON.stringify(Object.assign({ initData, demo }, opts.body || {})) : undefined,
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Ошибка сервера');
+      if (!res.ok) {
+        const err = new Error(data.error || 'Ошибка сервера');
+        err.status = res.status;
+        err.payload = data;
+        throw err;
+      }
       return data;
     } finally {
       clearTimeout(timeout);
@@ -899,8 +909,111 @@
       </span>`;
   }
 
+  /* ---------- доступ: 3 дня бесплатно, дальше подписка на Tribute ---------- */
+
+  const accessNow = () => S.access || { ok: true, state: 'open', trialDays: 3, amountRub: 5000, tributeUrl: '' };
+  const fmtAccessUntil = (ts) => (ts ? new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) : '');
+
+  // Тихая строка состояния: бесплатные дни или активная подписка — без плашек.
+  function accessBarHtml() {
+    const a = accessNow();
+    if (a.state === 'trial') {
+      return `<div class="access-note">🎁 Бесплатный доступ: ещё ${a.daysLeft === 1 ? 'день' : a.daysLeft + ' дн.'} из ${a.trialDays}</div>`;
+    }
+    if (a.state === 'active') {
+      return `<div class="access-note">Подписка активна до ${fmtAccessUntil(a.until)}</div>`;
+    }
+    return '';
+  }
+
+  function accessSummaryUi() {
+    const a = accessNow();
+    if (a.state === 'trial') return `Бесплатно ещё ${a.daysLeft} дн. · дальше ${fmtRub(a.amountRub)}/мес`;
+    if (a.state === 'active') return `Подписка активна до ${fmtAccessUntil(a.until)}`;
+    if (a.state === 'pending') return 'Оплата на проверке';
+    if (a.state === 'open') return 'Открыт без подписки';
+    return `Оформить подписку — ${fmtRub(a.amountRub)}/мес`;
+  }
+
+  function paywallHtml() {
+    const a = accessNow();
+    const pending = a.state === 'pending';
+    const link = a.tributeUrl
+      ? `<button class="btn btn-primary mt" id="subPay">${ICONS.bolt}<span>Оформить подписку</span></button>`
+      : `<div class="note mt">Ссылку на оплату осталось вписать площадке — она появится здесь автоматически.</div>`;
+    return `
+      <section class="card paywall">
+        <div class="pw-mark">💳</div>
+        <div class="stage-title">${pending ? 'Проверяем оплату' : 'Бесплатные дни закончились'}</div>
+        <div class="stage-sub">
+          ${pending
+            ? 'Спасибо! Включим доступ сразу после подтверждения платежа на Tribute.'
+            : `Дальше доступ — подписка: минимальный месячный донат <b>${fmtRub(a.amountRub)}</b>. Никаких процентов и сборов со сделок.`}
+        </div>
+        <div class="note">
+          ${pending ? 'Обычно это занимает несколько минут.' : `Подписка одна на человека: платить можно с любой стороны — и клиент, и брокер.`}
+        </div>
+        ${link}
+        ${pending ? '' : `<button class="btn btn-ghost mt" id="subPaid">✅ Я оплатил</button>`}
+        <div class="note" style="margin-top:8px">Оплата проходит на стороне Tribute — PRICELEX не принимает деньги клиентских сделок.</div>
+      </section>`;
+  }
+
+  function wirePaywall() {
+    const pay = $('#subPay');
+    if (pay) pay.addEventListener('click', () => {
+      haptic('medium');
+      const url = accessNow().tributeUrl;
+      if (!url) return toast('Ссылка на оплату ещё не задана');
+      if (tg && typeof tg.openLink === 'function') tg.openLink(url);
+      else window.open(url, '_blank', 'noopener');
+    });
+    const paid = $('#subPaid');
+    if (paid) paid.addEventListener('click', async () => {
+      paid.disabled = true;
+      haptic('medium');
+      try {
+        const r = await api('/api/subscription/paid', { method: 'POST', body: {} });
+        S.access = r.access;
+        toast('Спасибо! Включим доступ после подтверждения оплаты');
+        renderExchange();
+        renderProfile();
+      } catch (e) {
+        toast(e.message);
+        paid.disabled = false;
+      }
+    });
+  }
+
+  // Экран доступа: офер создать нельзя, но курс виден — площадка ничего не прячет.
+  function renderExchangeGate(acc) {
+    const s = S.settings || {};
+    const cur = S.currency;
+    const rate = cur === 'BTC' ? s.rateBTC : s.rateGRAM;
+    $('#view-exchange').innerHTML = `
+      <div class="exchange-heading">
+        <div class="exchange-heading-left">
+          ${exchangeBadgeHtml()}
+          <div><h1>Обмен</h1><p>RUB <span>→</span> BTC / GRAM</p></div>
+        </div>
+      </div>
+      <section class="card card-hero lux-hero">
+        <div class="hero-art" aria-hidden="true"></div>
+        <div class="hero-top"><div class="kicker">Текущий курс</div></div>
+        <div class="hero-amount"><div class="metric"><span>${rate ? fmtRub(rate) : '—'}</span></div></div>
+        <div class="metric-sub">за 1 <b>${cur}</b> · рыночный курс, без наценки</div>
+      </section>
+      ${paywallHtml()}
+      <div class="signature">PRICELEX</div>`;
+    wirePaywall();
+    if (acc.state === 'expired') toast('Бесплатные дни закончились — нужна подписка');
+  }
+
   function renderExchange() {
     const hasOpenOrder = S.order && !TERMINAL.includes(S.order.status);
+    // Без доступа офер не создать — показываем окно подписки. Текущую сделку
+    // доводим до конца в любом случае: начатое не бросаем.
+    if (!accessNow().ok && !hasOpenOrder) return renderExchangeGate(accessNow());
     $('#view-exchange').innerHTML = `
       <div class="exchange-heading ${S.order && S.orderOpen ? 'hidden' : ''}">
         <div class="exchange-heading-left">
@@ -919,6 +1032,7 @@
           ${ICONS.chevron}
         </button>` : ''}
       <div id="exForm" class="${S.order && S.orderOpen ? 'hidden' : ''}">
+        ${accessBarHtml()}
         <div class="seg block currency-segment" id="segCur">
           <button type="button" data-c="BTC" class="${S.currency === 'BTC' ? 'on' : ''}" aria-pressed="${S.currency === 'BTC'}">${coinHtml('BTC')}<span class="seg-label">BTC</span></button>
           <button type="button" data-c="GRAM" class="${S.currency === 'GRAM' ? 'on' : ''}" aria-pressed="${S.currency === 'GRAM'}">${coinHtml('GRAM')}<span class="seg-label">GRAM</span></button>
@@ -970,13 +1084,7 @@
           <div class="f-err" id="fErr"></div>
         </div>
 
-        <button class="btn btn-cta mt" id="btnGo">${ICONS.bolt}<span>Найти реквизиты</span></button>
-        <div id="marketplace" class="mt">${offersHtml()}</div>
-        <div class="card mt" style="opacity:0.85">
-          <div class="card-title">Условия платформы</div>
-          <div class="note">PRICELEX — маркетплейс офферов обменников. Рублёвый перевод — напрямую выбранному обменнику, PRICELEX не держит и не переводит RUB за клиентские сделки. Обменник отправляет BTC в штатном потоке. У каждого обменника свой депозит и торговый лимит. Процент с депозита не удерживается. Подписка — фиксированный ежемесячный платёж через Tribute, статус обновляется по подтверждённому событию оплаты. Приём BTC в оплату услуг PRICELEX выключен за feature flag до подтверждения юр. режима. Деньги клиентов за сделки через PRICELEX не принимаются.</div>
-          <div class="note" style="margin-top:6px">Проверка обменника PRICELEX сама по себе не является лицензией и не скрывает фактические функции платформы/партнёров. Кошелёк — только через уже верифицированного wallet-провайдера с реальной блокировкой, без генерации/хранения seed/приватных ключей в приложении. Если подходящего провайдера нет или блокировку подтвердить нельзя — реальные mainnet-депозиты, автозаморозка и торговля выключены (показываем статус, не «заморожено»). Публичный BTC-адрес ≠ приватный ключ. Seed может быть доверен инициатором уполномоченным лицам, но приложение не собирает/не показывает/не хранит/не пересылает его, фиксирует только имена/роли держателей и основание полномочий.</div>
-        </div>
+        <button class="btn btn-cta mt" id="btnGo">${ICONS.bolt}<span>Опубликовать офер</span></button>
       </div>
       <div id="exOrder" class="${S.order && S.orderOpen ? '' : 'hidden'}"></div>
     `;
@@ -1010,11 +1118,6 @@
     renderHero();
     renderFormMeta();
     renderOrderStage();
-    // Подгружаем маркетплейс live-данными
-    loadOffers().then(() => {
-      const mp = $('#marketplace');
-      if (mp) mp.innerHTML = offersHtml();
-    }).catch(() => {});
   }
 
   function renderFormMeta() {
@@ -1059,7 +1162,7 @@
     btn.disabled = !s.online || Boolean(hasOpenOrder);
     btn.querySelector('span').textContent = !s.online
       ? 'Обмен временно недоступен'
-      : hasOpenOrder ? 'Сначала завершите текущую заявку' : 'Найти реквизиты';
+      : hasOpenOrder ? 'Сначала завершите текущую заявку' : 'Опубликовать офер';
   }
 
   async function submitOrder() {
@@ -1104,6 +1207,11 @@
       err.textContent = e.message;
       haptic('error');
       toast(e.message);
+      if (e.status === 402 && e.payload && e.payload.access) {
+        S.access = e.payload.access;
+        renderExchange();
+        return;
+      }
       await refreshCaptcha();
     } finally {
       btn.disabled = !S.settings.online;
@@ -1115,41 +1223,10 @@
     return `<span class="chip ${m.cls}">${m.label}</span>`;
   }
 
-  const matchingOrders = new Set();
   const searchingReqOrders = new Set();
 
-  function scheduleBrokerMatch(o) {
-    if (!o || o.status !== 'new' || o.broker) return;
-    if (matchingOrders.has(o.id)) return;
-    matchingOrders.add(o.id);
-    const isTest = typeof navigator !== 'undefined' && (/jsdom/i.test(navigator.userAgent) || navigator.userAgent === '');
-    if (isTest) return;
-    setTimeout(async () => {
-      try {
-        if (S.order && S.order.id === o.id && S.order.status === 'new' && !S.order.broker) {
-          let res = null;
-          try {
-            res = await api(`/api/order/${o.id}/assign-broker`, { method: 'POST' });
-          } catch {
-            const chosen = ADMIN_BROKERS[Math.floor(Math.random() * ADMIN_BROKERS.length)].login;
-            res = { order: { ...o, broker: chosen } };
-          }
-          if (res && res.order) {
-            S.order = res.order;
-            const idx = S.orders.findIndex((x) => x.id === res.order.id);
-            if (idx >= 0) S.orders[idx] = res.order;
-            renderOrderStage();
-            scheduleRequisitesSearch(res.order);
-          }
-        }
-      } catch (e) {
-        console.warn('Broker matching:', e);
-      } finally {
-        matchingOrders.delete(o.id);
-      }
-    }, 2800);
-  }
-
+  // В демо-режиме реквизиты подставляет демо-админка — чтобы поток можно было
+  // пройти целиком без бота. В реальном режиме реквизиты выдаёт брокер.
   function scheduleRequisitesSearch(o) {
     if (!o || o.status !== 'new' || !o.broker) return;
     if (searchingReqOrders.has(o.id)) return;
@@ -1202,74 +1279,207 @@
     }, 600);
   }
 
+  /* ---------- офер и отклики: работает как такси ---------- */
+  // Клиент публикует офер — брокеры присылают свою цену. Клиент видит рыночный
+  // курс как ориентир и решает: принять отклик сразу или подождать ещё.
+
+  let offerTicker = null;
+  let bidsSignature = '';
+
+  const bidCrypto = (b) => Number(b.crypto) || 0;
+  const bidPay = (b) => Number(b.payRub) || 0;
+  const marketRateNow = () => Number(S.marketRate) || (S.currency === 'GRAM' ? (S.settings || {}).rateGRAM : (S.settings || {}).rateBTC) || 0;
+
+  // Переплата к рыночному курсу — единственная цифра, которая честно сравнивает отклики.
+  function bidDeltaHtml(b) {
+    const market = marketRateNow();
+    const rate = Number(b.rate) || 0;
+    if (!market || !rate) return '';
+    const pct = ((rate / market) - 1) * 100;
+    if (Math.abs(pct) < 0.05) return '<span class="bid-delta eq">по рынку</span>';
+    return `<span class="bid-delta ${pct > 0 ? 'up' : 'down'}">${pct > 0 ? '+' : '−'}${Math.abs(pct).toFixed(1)}% к рынку</span>`;
+  }
+
+  function brokerCardHtml(card) {
+    if (!card) return '';
+    const initials = String(card.name || card.login || '—').slice(0, 2).toUpperCase();
+    const rating = card.rating ? `★ ${card.rating}` : '';
+    const deals = card.deals ? `${card.deals} сделок` : '';
+    return `
+      <div class="bid-broker">
+        <div class="bid-avatar">${esc(initials)}</div>
+        <div class="bid-broker-meta">
+          <b>${esc(card.name || card.login)}</b>
+          <small>${[rating, deals].filter(Boolean).join(' · ') || 'брокер PRICELEX'}</small>
+        </div>
+      </div>`;
+  }
+
+  function bidsListHtml(o) {
+    const list = S.bids || [];
+    if (!list.length) {
+      return `
+        <div class="bids-empty">
+          <div class="radar-ping"></div>
+          <div>Ждём предложения брокеров…</div>
+        </div>`;
+    }
+    return list.map((b) => `
+      <div class="bid ${b.accepted ? 'accepted' : ''}" data-bid="${b.id}">
+        ${brokerCardHtml(b.broker)}
+        <div class="bid-body">
+          <div class="bid-rate">${fmtRub(b.rate)} <span>за 1 ${esc(o.currency)}</span></div>
+          <div class="bid-get">вы получите <b>${fmtCrypto(bidCrypto(b), o.currency)}</b></div>
+          ${b.note ? `<div class="bid-note">${esc(b.note)}</div>` : ''}
+          ${bidDeltaHtml(b)}
+        </div>
+        <button class="btn btn-primary btn-sm bid-take" data-take="${b.id}" type="button">Принять</button>
+      </div>`).join('');
+  }
+
+  async function loadBids(o) {
+    try {
+      const r = await api('/api/order/' + o.id + '/bids');
+      if (!S.order || S.order.id !== o.id) return;
+      S.bids = r.bids || [];
+      S.offerWindowSec = Number(r.offerWindowSec) || S.offerWindowSec;
+      S.marketRate = Number(r.marketRate) || S.marketRate;
+      if (r.order) S.order = r.order;
+      const sig = JSON.stringify(S.bids.map((b) => [b.id, b.rate]));
+      if (sig !== bidsSignature) {
+        bidsSignature = sig;
+        renderOrderStage();
+      }
+    } catch { /* связь вернётся на следующем опросе */ }
+  }
+
+  function stopOfferTicker() {
+    if (offerTicker) { clearInterval(offerTicker); offerTicker = null; }
+  }
+
+  // Таймер окна откликов: живёт секундой, не перерисовывая список.
+  function startOfferTicker(o) {
+    stopOfferTicker();
+    if (!o.bidUntil) return;
+    const isTest = typeof navigator !== 'undefined' && (/jsdom/i.test(navigator.userAgent) || navigator.userAgent === '');
+    if (isTest) return;
+    const tick = () => {
+      const left = Math.max(0, Math.round((o.bidUntil - Date.now()) / 1000));
+      const el = document.querySelector('[data-offer-left]');
+      const bar = document.querySelector('[data-offer-bar]');
+      const total = Math.max(1, Number(S.offerWindowSec) || 120);
+      if (el) el.textContent = left > 0 ? `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}` : 'приём закрыт';
+      if (bar) bar.style.width = `${Math.min(100, (left / total) * 100)}%`;
+      if (left <= 0) {
+        stopOfferTicker();
+        renderOrderStage();
+      }
+    };
+    tick();
+    offerTicker = setInterval(tick, 1000);
+  }
+
+  async function acceptBid(bidId) {
+    const o = S.order;
+    if (!o) return;
+    haptic('medium');
+    try {
+      const r = await api('/api/order/' + o.id + '/accept', { method: 'POST', body: { bidId } });
+      S.order = r.order;
+      const i = S.orders.findIndex((x) => x.id === r.order.id);
+      if (i >= 0) S.orders[i] = r.order; else S.orders.unshift(r.order);
+      stopOfferTicker();
+      haptic('success');
+      toast('Брокер выбран — выдаёт реквизиты');
+      renderOrderStage();
+    } catch (e) {
+      toast(e.message);
+      if (e.status === 402 && e.payload && e.payload.access) {
+        S.access = e.payload.access;
+        renderExchange();
+        return;
+      }
+      await loadBids(o);
+    }
+  }
+
+  function renderOfferStage(o) {
+    const box = $('#exOrder');
+    const left = o.bidUntil ? Math.max(0, Math.round((o.bidUntil - Date.now()) / 1000)) : 0;
+    const total = Math.max(1, Number(S.offerWindowSec) || 120);
+    const market = marketRateNow();
+    box.innerHTML = `
+      <div class="card stage stage-offer">
+        <div class="offer-head">
+          <div>
+            <div class="stage-kicker">Офер #${o.id}</div>
+            <div class="offer-sum">${fmtRub(o.rub)} → ${esc(o.currency)}</div>
+          </div>
+          <div class="offer-timer">
+            <span data-offer-left>${left > 0 ? `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}` : 'приём закрыт'}</span>
+            <small>приём откликов</small>
+          </div>
+        </div>
+        <div class="offer-bar"><span data-offer-bar style="width:${Math.min(100, (left / total) * 100)}%"></span></div>
+        <div class="offer-market">
+          <span>Рыночный курс: <b>${fmtRub(market)}</b> за 1 ${esc(o.currency)}</span>
+          <span class="offer-market-note">без наценки площадки</span>
+        </div>
+        <div class="bids">${bidsListHtml(o)}</div>
+        <div class="offer-foot">
+          <span class="dot-online"></span> Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b>
+          ${(S.bids || []).length ? `<span class="offer-count">Откликов: <b>${S.bids.length}</b></span>` : ''}
+        </div>
+        <div class="note">Можно принять любой отклик сразу — или подождать ещё: брокеры видят офер одновременно.</div>
+        <button class="btn btn-ghost mt" id="btnCancel">Отменить офер</button>
+      </div>`;
+    startOfferTicker(o);
+    box.querySelectorAll('[data-take]').forEach((btn) =>
+      btn.addEventListener('click', () => acceptBid(Number(btn.dataset.take))));
+    $('#btnCancel').addEventListener('click', async () => {
+      haptic('warning');
+      await changeOrder(o, 'cancel');
+    });
+  }
+
   function renderOrderStage() {
     const box = $('#exOrder');
     const o = S.order;
     if (!box) return;
     if (o && o.status === 'completed' && !o.review && isTypingReview() && box.contains(document.activeElement)) return;
     if (!o) { box.innerHTML = ''; return; }
-    if (o.status === 'new') {
-      if (!o.broker) {
-        // Шаг 1: брокер сначала не известен — сначала подбираем брокера
-        scheduleBrokerMatch(o);
-        box.innerHTML = `
-          <div class="card stage stage-broker">
-            <div class="stage-steps-bar">
-              <span class="stage-step active"><span class="step-num">1</span> Подбор брокера</span>
-              <span class="stage-step-arrow">→</span>
-              <span class="stage-step"><span class="step-num">2</span> Поиск реквизитов</span>
+    if (o.status === 'collecting') {
+      S.marketRate = o.currency === 'GRAM' ? (S.settings || {}).rateGRAM : (S.settings || {}).rateBTC;
+      renderOfferStage(o);
+      loadBids(o);
+    } else if (o.status === 'new') {
+      // Брокер выбран клиентом — он готовит реквизиты и ведёт сделку вручную.
+      scheduleRequisitesSearch(o);
+      box.innerHTML = `
+        <div class="card stage stage-broker">
+          <div class="stage-steps-bar">
+            <span class="stage-step done"><span class="step-num">✓</span> Брокер выбран</span>
+            <span class="stage-step-arrow">→</span>
+            <span class="stage-step active"><span class="step-num">2</span> Реквизиты</span>
+          </div>
+          <div class="stage-matched-card">
+            <div class="matched-avatar">${esc(String(o.broker || '').slice(0, 2).toUpperCase())}</div>
+            <div class="matched-meta">
+              <div class="matched-label">Ваш брокер</div>
+              <div class="matched-name">${esc(o.broker || '—')}</div>
             </div>
-            <div class="stage-radar-wrap" aria-hidden="true">
-              <div class="radar-ping"></div>
-              <div class="radar-dot">🤝</div>
-            </div>
-            <div class="stage-kicker">Заявку ведёт брокер</div>
-            <div class="stage-title">Подбираем брокера…</div>
-            <div class="stage-sub">
-              Брокер сначала не известен. Распределительный центр PRICELEX подбирает проверенного брокера из команды: брокеры торгуют под общей гарантией депозита площадки, брокер сам принимает платёж и сам переводит криптовалюту вам на кошелёк.
-            </div>
-            ${depositNoteHtml()}
-            <div class="stage-online-bar">
-              <span class="dot-online"></span> Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b>
-            </div>
-            <div class="stage-brokers-pool">
-              ${ADMIN_BROKERS.map((b) => `
-                <div class="pool-chip">
-                  <span class="dot-online"></span>
-                  <span class="name">${esc(b.name)}</span>
-                </div>
-              `).join('')}
-            </div>
-            <div class="progress" aria-hidden="true"><span></span></div>
-            <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
-          </div>`;
-      } else {
-        // Шаг 2: брокер подобран — потом ищем реквизиты
-        scheduleRequisitesSearch(o);
-        box.innerHTML = `
-          <div class="card stage stage-broker">
-            <div class="stage-steps-bar">
-              <span class="stage-step done"><span class="step-num">✓</span> Брокер подобран</span>
-              <span class="stage-step-arrow">→</span>
-              <span class="stage-step active"><span class="step-num">2</span> Поиск реквизитов</span>
-            </div>
-            <div class="stage-matched-card">
-              <div class="matched-avatar">${esc(o.broker.slice(0, 2).toUpperCase())}</div>
-              <div class="matched-meta">
-                <div class="matched-label">Брокер назначен</div>
-                <div class="matched-name">${esc(o.broker)}</div>
-              </div>
-              <div class="matched-badge"><span class="dot-online"></span>онлайн</div>
-            </div>
-            <div class="stage-title">Ищем реквизиты…</div>
-            <div class="stage-sub">
-              Брокер <b>${esc(o.broker)}</b> готовит реквизиты. Брокер сам проводит обмен и сам переведёт ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code> под гарантией общего депозита всех брокеров площадки.
-            </div>
-            ${depositNoteHtml()}
-            <div class="progress" aria-hidden="true"><span></span></div>
-            <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
-          </div>`;
-      }
+            <div class="matched-badge"><span class="dot-online"></span>онлайн</div>
+          </div>
+          <div class="order-meta">
+            <div class="mrow"><span>Ваша цена</span><b>${fmtRub(o.rate)} за 1 ${esc(o.currency)}</b></div>
+            <div class="mrow"><span>К оплате</span><b>${fmtRub(o.payRub || o.rub)}</b></div>
+          </div>
+          <div class="stage-title">Брокер готовит реквизиты…</div>
+          <div class="stage-sub">Переведёте ₽ по реквизитам — брокер сам отправит ${fmtCrypto(o.crypto, o.currency)} на ваш кошелёк <code>${esc(o.wallet)}</code>.</div>
+          ${depositNoteHtml()}
+          <div class="progress" aria-hidden="true"><span></span></div>
+          <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
+        </div>`;
       $('#btnCancel').addEventListener('click', async () => {
         haptic('light');
         await changeOrder(o, 'cancel');
@@ -1535,41 +1745,6 @@
     }
   }
 
-  async function loadOffers() {
-    try {
-      const r = await api('/api/exchangers/offers');
-      S.offers = r.offers || [];
-      S.offersMeta = r.meta || null;
-    } catch {
-      S.offers = [];
-    }
-  }
-
-  function offersHtml() {
-    if (!S.offers || !S.offers.length) {
-      return `<div class="card"><div class="empty">Маркетплейс обменников пуст — пока нет одобренных франшиз с подтверждённым депозитом. Проверьте позже.</div>
-        <div class="note" style="margin-top:8px">Для каждого значения показываем источник и время обновления. Устаревшие данные помечаем явно, не выдаём за актуальный курс и не гарантируем исполнение по показанной цене. Рублёвый перевод — напрямую выбранному обменнику, PRICELEX не держит и не переводит RUB за клиентские сделки.</div></div>`;
-    }
-    const rows = S.offers.map((o) => {
-      const stale = o.isStale ? '⚠️ устарело' : '';
-      const src = o.source ? `${esc(o.source)}` : '—';
-      const upd = o.updatedAt ? fmtDate(o.updatedAt) : '—';
-      const avail = o.deposit ? `${o.deposit.available} BTC доступно · ${o.deposit.reserved} зарезервировано` : 'депозит: —';
-      const confRule = o.deposit?.confirmationRule ? `подтверждений: ${o.deposit.confirmationRule.required} · realLock=${o.deposit.confirmationRule.realLockSupported ? 'да' : 'нет'}` : '';
-      return `<div class="card" style="margin-bottom:8px">
-        <div class="row"><b>🏦 ${esc(o.legal?.companyName || o.id)}</b> <span style="opacity:0.6">#${esc(o.id)} ${o.isStale ? '⚠️' : '✅'}</span></div>
-        <div class="row"><span>Курс BTC: ${o.rate ? fmtRub(o.rate) : '—'}</span><span>источник: ${src}</span></div>
-        <div class="row"><span>Обновлён: ${upd}</span><span>${stale}</span></div>
-        <div class="row"><span>${avail}</span></div>
-        <div class="row"><span style="font-size:12px;opacity:0.7">${confRule}</span></div>
-        <div class="note" style="margin-top:6px">Подтверждённая сумма и статус депозита: только подтверждённые средства считаются доступным лимитом. Неподтверждённые не учитываются без одобренного правила подтверждения. С залога не удерживается процент. Ежемесячный платёж за доступ — отдельно, не из залога.</div>
-        ${o.walletProvider ? `<div class="note">Wallet: ${esc(o.walletProvider.provider)} · mainnet=${o.walletProvider.mainnetEnabled ? 'вкл' : 'выкл (тестовый режим)'} · ${o.walletProvider.note || ''}</div>` : ''}
-      </div>`;
-    }).join('');
-    const metaNote = S.offersMeta ? `<div class="note">Показано ${S.offersMeta.count} офферов · live-данные: ${S.offersMeta.note || ''} · Не гарантируем исполнение по показанной цене.</div>` : '';
-    return `<div class="card-title">Маркетплейс обменников</div>${rows}${metaNote}`;
-  }
-
   function resetToForm() {
     S.order = null;
     S.orderOpen = false;
@@ -1735,6 +1910,10 @@
         </div>
       </section>
       <section class="card profile-links" aria-label="Разделы">
+        <button class="profile-link" type="button" id="profileAccess">
+          <span class="profile-row-icon">💳</span>
+          <span class="profile-row-copy"><b>Доступ</b><small>${esc(accessSummaryUi())}</small></span>${ICONS.chevron}
+        </button>
         <button class="profile-link" type="button" data-go="support">
           <span class="profile-row-icon">${ICONS.chat}</span><span class="profile-row-copy"><b>Поддержка</b><small>Написать команде PRICELEX</small></span>${ICONS.chevron}
         </button>
@@ -1742,7 +1921,7 @@
           <span class="profile-row-icon">${ICONS.info}</span><span class="profile-row-copy"><b>О приложении</b><small>Правила и информация о сервисе</small></span>${ICONS.chevron}
         </button>
         <button class="profile-link" type="button" data-go="broker">
-          <span class="profile-row-icon">${ICONS.case}</span><span class="profile-row-copy"><b>Стать брокером</b><small>Присоединиться к команде</small></span>${ICONS.chevron}
+          <span class="profile-row-icon">${ICONS.case}</span><span class="profile-row-copy"><b>${S.brokerLogin ? 'Кабинет брокера' : 'Стать брокером'}</b><small>${S.brokerLogin ? 'Цена, оферы и отзывы' : 'Присоединиться к команде'}</small></span>${ICONS.chevron}
         </button>
       </section>
       <button class="profile-logout" id="profileLogout" type="button">Выйти из приложения</button>
@@ -1755,6 +1934,16 @@
       haptic('light');
       goTab(button.dataset.go);
     }));
+    const accRow = $('#profileAccess');
+    if (accRow) accRow.addEventListener('click', () => {
+      haptic('light');
+      const a = accessNow();
+      if (a.ok && a.state === 'active') return toast(`Подписка активна до ${fmtAccessUntil(a.until)}`);
+      if (a.ok && a.state === 'trial') return toast(`Бесплатный доступ: ещё ${a.daysLeft} дн.`);
+      S.tab = 'exchange';
+      goTab('exchange');
+      toast(a.state === 'pending' ? 'Оплата на проверке — включим доступ после подтверждения' : 'Оформите подписку, чтобы продолжить');
+    });
     const active = $('#profileActiveOrder');
     if (active) active.addEventListener('click', () => {
       S.orderOpen = true;
@@ -1824,6 +2013,191 @@
     return { captchaId: S.captcha ? S.captcha.id : '', captchaAnswer: answer };
   };
 
+  /* ---------- ЛК брокера: цена, график, оферы и отзывы ---------- */
+  // Брокер видит здесь ровно то, что нужно для работы: свою цену и её график,
+  // живые оферы клиентов с откликом в один тап, статистику и отзывы о себе.
+
+  const lkCurrency = () => S.lkCurrency || 'BTC';
+
+  async function loadBrokerLk(force = false) {
+    if (S.brokerLk && !force) return S.brokerLk;
+    try {
+      S.brokerLk = await api('/api/broker/me');
+      S.brokerLkErr = null;
+      if (S.brokerLk && S.brokerLk.access) S.access = S.brokerLk.access;
+    } catch (e) {
+      S.brokerLkErr = e.status === 402 ? 'subscription' : (e.message || 'error');
+      if (e.status === 402 && e.payload && e.payload.access) S.access = e.payload.access;
+    }
+    return S.brokerLk;
+  }
+
+  function lkChartSeries(lk) {
+    const cur = lkCurrency();
+    const mine = (lk.priceHistory || []).filter((p) => p.currency === cur);
+    if (mine.length >= 2) return { series: mine.map((p) => ({ at: p.at, v: p.rate })), own: true };
+    const market = (lk.marketHistory || []).map((p) => ({ at: p.at, v: cur === 'GRAM' ? p.gram : p.btc }));
+    return { series: market, own: false };
+  }
+
+  function renderBrokerLk() {
+    const v = $('#view-broker');
+    const lk = S.brokerLk;
+    if (S.brokerLkErr === 'subscription') {
+      v.innerHTML = `
+        <section class="card editorial br-hero">
+          <div class="ed-art" style="background-image:url('/img/broker.jpg')" aria-hidden="true"></div>
+          <div class="ed-body">
+            <div class="kicker gold">Кабинет брокера</div>
+            <div class="display">Доступ<br><em>по подписке</em></div>
+          </div>
+        </section>
+        ${paywallHtml()}`;
+      wirePaywall();
+      return;
+    }
+    if (!lk) {
+      v.innerHTML = '<div class="card"><div class="stage-title">Загружаем кабинет…</div></div>';
+      return;
+    }
+    const cur = lkCurrency();
+    const price = Number(lk.price && lk.price[cur]) || 0;
+    const market = Number(lk.market && lk.market[cur]) || 0;
+    const delta = market && price ? ((price / market) - 1) * 100 : 0;
+    const deltaTxt = market && price
+      ? (Math.abs(delta) < 0.05 ? 'ровно по рынку' : `${delta > 0 ? '+' : '−'}${Math.abs(delta).toFixed(1)}% к рынку`)
+      : '';
+    const offers = lk.offers || [];
+    const mine = lk.mine || [];
+    const st = lk.stats || {};
+    const b = lk.broker || {};
+    const offersHtml = offers.length ? offers.map((o) => `
+      <div class="lk-offer">
+        <div class="lk-offer-top">
+          <b>${fmtRub(o.rub)} → ${esc(o.currency)}</b>
+          <span class="lk-offer-market">рынок ${fmtRub(o.marketRate)}</span>
+        </div>
+        <div class="lk-offer-meta">
+          ${o.myBid ? `ваш отклик: <b>${fmtRub(o.myBid.rate)}</b>` : 'вы ещё не откликнулись'}
+          ${o.bids ? ` · откликов: ${o.bids}` : ''}
+        </div>
+        ${o.canTake
+          ? `<button class="btn ${o.myBid ? 'btn-ghost' : 'btn-primary'} btn-sm lk-bid" data-bid-order="${o.id}" type="button">${o.myBid ? 'Изменить отклик' : 'Откликнуться'}</button>`
+          : `<div class="note">${esc(o.limitNote || 'Лимит по депозиту не позволяет взять этот офер')}</div>`}
+      </div>`).join('') : '<div class="note">Свободных оферов сейчас нет — новые придут в бот и появятся здесь.</div>';
+
+    v.innerHTML = `
+      <section class="card lk-head">
+        <div class="lk-avatar">${esc(String(b.name || b.login || '—').slice(0, 2).toUpperCase())}</div>
+        <div class="lk-head-meta">
+          <h1>${esc(b.name || b.login || 'Брокер')}</h1>
+          <small>${[b.rating ? `★ ${b.rating}` : '', b.deals ? `${b.deals} сделок` : '', b.online ? 'онлайн' : 'офлайн'].filter(Boolean).join(' · ')}</small>
+        </div>
+        <div class="lk-head-access">${esc(accessSummaryUi())}</div>
+      </section>
+      <div class="card">
+        <div class="card-title">Моя цена</div>
+        <div class="seg block currency-segment" id="lkCur">
+          <button type="button" data-c="BTC" class="${cur === 'BTC' ? 'on' : ''}">${coinHtml('BTC')}<span class="seg-label">BTC</span></button>
+          <button type="button" data-c="GRAM" class="${cur === 'GRAM' ? 'on' : ''}">${coinHtml('GRAM')}<span class="seg-label">GRAM</span></button>
+        </div>
+        <div class="field">
+          <input id="lkPrice" type="number" inputmode="decimal" min="0" step="any" value="${price || ''}" placeholder="${market || ''}">
+          <span class="suffix">₽</span>
+        </div>
+        <div class="lk-price-meta">
+          <span>Рынок: <b>${fmtRub(market)}</b></span>
+          ${deltaTxt ? `<span class="bid-delta ${delta > 0 ? 'up' : delta < 0 ? 'down' : 'eq'}">${deltaTxt}</span>` : ''}
+        </div>
+        <button class="btn btn-primary mt" id="lkSave" type="button">${ICONS.check}<span>Сохранить цену</span></button>
+        <div class="chart" id="lkChart"></div>
+        <div class="chart-axis" id="lkAxis"></div>
+        <div class="note">${lkChartSeries(lk).own ? 'График вашей цены за неделю.' : 'Пока это рыночный график: как только сохраните свою цену, здесь появится ваша линия.'}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Оферы клиентов <span class="offer-count">${offers.length}</span></div>
+        ${offersHtml}
+        <div class="note" style="margin-top:8px">Реквизиты и подтверждение оплаты — в боте: отклик принял клиент, бот присылает заявку в работу.</div>
+      </div>
+      ${mine.length ? `
+        <div class="card">
+          <div class="card-title">Мои заявки</div>
+          ${mine.map((o) => `<div class="mrow"><span>#${o.id} · ${fmtRub(o.rub)} → ${esc(o.currency)}</span><b>${STATUS[o.status]?.label || o.status}</b></div>`).join('')}
+        </div>` : ''}
+      <div class="card">
+        <div class="card-title">Статистика</div>
+        <div class="ref-stats">
+          <div class="ref-stat"><div class="v">${st.bids || 0}</div><div class="l">откликов</div></div>
+          <div class="ref-stat"><div class="v">${st.won || 0}</div><div class="l">принято</div></div>
+          <div class="ref-stat"><div class="v">${st.completed || 0}</div><div class="l">сделок</div></div>
+        </div>
+        <div class="order-meta">
+          ${st.avgMin ? `<div class="mrow"><span>Среднее время сделки</span><b>${st.avgMin} мин</b></div>` : ''}
+          <div class="mrow"><span>Заработано</span><b>${fmtBtcUi(st.earnedBtc || 0)} BTC</b></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Отзывы о вас <span class="offer-count">${(lk.reviews || []).length}</span></div>
+        ${(lk.reviews || []).length
+          ? (lk.reviews || []).slice(0, 3).map((r) => `
+            <div class="lk-review">
+              <div class="lk-review-top"><b>${esc(r.name)}</b>${starsHtml(r.rating)}</div>
+              <div class="lk-review-text">${esc(r.text)}</div>
+            </div>`).join('')
+          : '<div class="note">Отзывы появятся после первых завершённых сделок.</div>'}
+      </div>
+      <div class="signature">PRICELEX<span>кабинет брокера</span></div>`;
+
+    $('#lkCur').querySelectorAll('button').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        S.lkCurrency = btn.dataset.c;
+        haptic('light');
+        renderBrokerLk();
+      }));
+    const save = $('#lkSave');
+    save.addEventListener('click', async () => {
+      const rate = Number($('#lkPrice').value);
+      if (!(rate > 0)) return toast('Укажите цену больше нуля');
+      save.disabled = true;
+      haptic('medium');
+      try {
+        S.brokerLk = await api('/api/broker/price', { method: 'POST', body: { currency: lkCurrency(), rate } });
+        toast('Цена сохранена — по ней вы откликаетесь');
+        renderBrokerLk();
+      } catch (e) {
+        toast(e.message);
+        save.disabled = false;
+      }
+    });
+    v.querySelectorAll('[data-bid-order]').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        haptic('medium');
+        btn.disabled = true;
+        try {
+          const r = await api('/api/broker/bid', { method: 'POST', body: { orderId: Number(btn.dataset.bidOrder) } });
+          S.brokerLk = r.payload || S.brokerLk;
+          haptic('success');
+          toast(`Отклик отправлен: ${fmtRub(r.bid.rate)} за 1`);
+          renderBrokerLk();
+        } catch (e) {
+          toast(e.message);
+          btn.disabled = false;
+          if (e.status === 402 && e.payload && e.payload.access) {
+            S.access = e.payload.access;
+            S.brokerLkErr = 'subscription';
+            renderBrokerLk();
+          }
+        }
+      }));
+    const chart = $('#lkChart');
+    if (chart) {
+      const { series } = lkChartSeries(lk);
+      const spot = renderChart(chart, series.length >= 2 ? series : [], {});
+      renderChartNote($('#lkAxis'), series.length >= 2 ? `${series.length} наблюдений за неделю` : 'недостаточно данных для графика');
+      if (spot && series.length >= 2) renderChartTip(chart, spot, fmtRub(Number(series[series.length - 1].v)), `1 ${cur}`);
+    }
+  }
+
   /* ---------- брокер: заявка ---------- */
 
   const brokerPayoutMin = () => {
@@ -1835,6 +2209,15 @@
 
   function renderBroker() {
     const v = $('#view-broker');
+    // Брокеру вкладка показывает кабинет, остальным — анкету «стать брокером».
+    if (S.brokerLogin) {
+      if (S.brokerLk || S.brokerLkErr) renderBrokerLk();
+      else {
+        v.innerHTML = '<div class="card"><div class="stage-title">Загружаем кабинет…</div></div>';
+        loadBrokerLk().then(renderBrokerLk);
+      }
+      return;
+    }
     const app = S.brokerApp;
     const s = S.settings || {};
     const kb = s.botUsername ? `https://t.me/${s.botUsername}` : null;
@@ -2013,9 +2396,9 @@
       <div class="card">
         <div class="card-title">Как это работает</div>
         <div class="steps">
-          <div class="step"><div class="n">1</div><span class="step-copy">Выберите валюту и сумму — калькулятор сразу покажет, сколько получите.</span></div>
-          <div class="step"><div class="n">2</div><span class="step-copy">Укажите кошелёк и нажмите «Найти реквизиты»: брокер быстро подтвердит сделку и пришлёт точную сумму.</span></div>
-          <div class="step"><div class="n">3</div><span class="step-copy">Переведите сумму, прикрепите PDF-чек и нажмите «Я оплатил».</span></div>
+          <div class="step"><div class="n">1</div><span class="step-copy">Выберите валюту и сумму: калькулятор считает по рыночному курсу — без наценки площадки.</span></div>
+          <div class="step"><div class="n">2</div><span class="step-copy">Укажите кошелёк и опубликуйте офер: брокеры откликнутся своей ценой за актив.</span></div>
+          <div class="step"><div class="n">3</div><span class="step-copy">Примите отклик — сразу или дождавшись окна: брокер пришлёт реквизиты, дальше перевод, PDF-чек и «Я оплатил».</span></div>
           <div class="step"><div class="n">4</div><span class="step-copy">После подтверждения средства уходят на ваш кошелёк — ссылку на транзакцию увидите в заявке.</span></div>
         </div>
       </div>
@@ -2043,14 +2426,15 @@
               <p>2.1. Деятельность Платформа ведёт из штаб-квартиры: ${esc(HQ_ADDRESS)} — этот же адрес приведён в контактах приложения. Обращения, вопросы и споры принимаются только через поддержку внутри приложения: вне его Платформа с Пользователем не общается и ничего не запрашивает.</p>
               <p>2.2. Что получает каждая сторона. Пользователь — живое сопровождение сделки и защиту гарантийным депозитом. Брокер — работу на собственный капитал в рамках своего депозита и вознаграждение по итогам Заявки. Платформа — инфраструктуру Заявок, контроль исполнения и разрешение споров.</p>
               <p>2.3. Официального канала и общего чата у Платформы нет: любые «канал PRICELEX», «чат сообщества» и рассылки от её имени ведут мошенников.</p>
+              <p>2.4. Доступ открыт по подписке: первые ${accessNow().trialDays} суток — бесплатно, далее минимальный месячный платёж ${fmtRub(accessNow().amountRub)} через Tribute. Одна подписка действует на обе стороны — и на Пользователя, и на Брокера; начатая Заявка доводится до конца без подписки.</p>
             </div>
             <div class="rule"><div class="r-n">3. Права и обязанности сторон</div>
               <p>3.1. Пользователь: указывает достоверные данные и верный адрес получения; самостоятельно сверяет адрес получения (первые и последние шесть символов); оплачивает Заявку в заявленный срок и прикладывает чек; гарантирует законное происхождение средств; хранит ключи, seed-фразы и пароли при себе — Платформа и Брокер их не запрашивают.</p>
-              <p>3.2. Брокер: принимает Заявку в работу через панель в официальном боте Платформы; сообщает реквизиты для оплаты только внутри Заявки; после подтверждения оплаты переводит актив Пользователю в полном объёме по условиям Заявки; соблюдает конфиденциальность и не выводит общение за пределы инфраструктуры Платформы; отвечает по обязательствам своим депозитом и Гарантийным депозитом.</p>
+              <p>3.2. Брокер: откликается на Заявку своей ценой из кабинета (в боте или приложении Платформы); сообщает реквизиты для оплаты только внутри Заявки; после подтверждения оплаты переводит актив Пользователю в полном объёме по условиям Заявки; соблюдает конфиденциальность и не выводит общение за пределы инфраструктуры Платформы; отвечает по обязательствам своим депозитом и Гарантийным депозитом.</p>
               <p>3.3. Платформа: обеспечивает работу инфраструктуры и Гарантийного счёта; подбирает Пользователю Брокера из проверенной команды; проверяет факт оплаты и санкционирует выплату; разрешает споры и компенсирует Пользователю ущерб из Гарантийного депозита, если Брокер не исполнил перевод.</p>
             </div>
             <div class="rule"><div class="r-n">4. Заявки и сопровождение</div>
-              <p>4.1. Сделка оформляется Заявкой, в которой Пользователь указывает сумму, валюту и адрес получения. Заявку сопровождает Брокер, принявший её в работу через панель в официальном боте Платформы.</p>
+              <p>4.1. Сделка оформляется Заявкой, в которой Пользователь указывает сумму, валюту и адрес получения. Заявку сопровождает Брокер, чей отклик выбрал Пользователь. Цену за актив называет Брокер в отклике, а Пользователь видит её до подтверждения.</p>
               <p>4.2. Брокер действует от своего имени как независимый исполнитель. Платформа обеспечивает инфраструктуру, контроль исполнения и разрешение споров.</p>
               <p>4.3. Реквизиты для оплаты сообщает только Брокер внутри защищённой сессии. Любые реквизиты, полученные из сторонних источников, Платформой не признаются. Реквизиты или адрес изменились в переписке — остановитесь и обратитесь в поддержку приложения.</p>
               <p>4.4. Каждый шаг Заявки фиксируется в приложении: заявка, чек, ссылка на транзакцию. Эта история служит доказательством при споре.</p>
@@ -2062,7 +2446,7 @@
               <p>5.4. Дополнительной защитой служит общий гарантийный депозит всех Брокеров Платформы: его текущий размер — ${depositInlineHtml()}. Если Брокер не исполнил перевод, Платформа компенсирует Пользователю ущерб из этого депозита.</p>
             </div>
             <div class="rule"><div class="r-n">6. Вознаграждение Брокера</div>
-              <p>6.1. Вознаграждение Брокера уже учтено в курсе сделки, который Пользователь видит до создания Заявки. Дополнительных скрытых удержаний с Пользователя нет.</p>
+              <p>6.1. Курс в приложении — фактический рыночный: Платформа не добавляет к нему наценку или сбор. Вознаграждение Брокера уже содержится в цене его отклика, которую Пользователь видит до подтверждения; скрытых удержаний с Пользователя нет.</p>
               <p>6.2. Начисленное вознаграждение Брокер вправе запросить к выплате в любое время через официального бота Платформы при накоплении суммы не менее 0,0002 BTC. Выплаты подтверждает Администрация.</p>
               <p>6.3. Подключение Брокера к работе начинается с возвратного депозита: его сумма, а также разовый невозвратный сбор за подключение (процент от депозита с верхним лимитом) показываются Брокеру до перевода. Депозит возвращается после стажировки; сбор не входит в возвратную сумму и не удерживается из вознаграждения Брокера.</p>
             </div>
@@ -2595,6 +2979,9 @@
       const { order } = await api('/api/order/' + current.id);
       if (S.order !== current) return;
       syncStatus();
+      // Пока идёт приём откликов, список предложений тянем вместе с заявкой.
+      if (order.status === 'collecting') loadBids(order);
+      else stopOfferTicker();
       if (JSON.stringify(order) !== JSON.stringify(current)) {
         S.order = order;
         const i = S.orders.findIndex((o) => o.id === order.id);
@@ -2777,6 +3164,9 @@
       S.settings = r.settings;
       S.me = r.me;
       S.isDemo = !!r.demo;
+      S.access = r.access || null;
+      S.brokerLogin = r.broker ? r.broker.login : null;
+      S.offerWindowSec = Number(r.settings && r.settings.offerWindowSec) || 120;
       const m = await api('/api/me');
       S.orders = m.orders;
       S.me = m.me;

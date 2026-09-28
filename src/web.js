@@ -40,6 +40,9 @@ const clientOrder = (o) => ({
     const open = list.find((c) => ['open', 'under_review'].includes(c.status));
     return open ? { id: open.id, status: open.status } : null;
   })(),
+  bidUntil: o.bidUntil || null,
+  acceptedBidId: o.acceptedBidId || null,
+  bids: ['collecting', 'new'].includes(o.status) ? store.activeBidsForOrder(o.id).length : 0,
   createdAt: o.createdAt,
   updatedAt: o.updatedAt,
 });
@@ -51,6 +54,39 @@ const clientUser = (u) => ({
   referrer: u.referrer,
   referredCount: u.referredCount || 0,
 });
+
+// Отклик брокера глазами клиента: цена, сколько получит, и карточка брокера.
+const clientBid = (b, order) => {
+  const rate = Number(b.rate) || 0;
+  const byCrypto = Boolean(order.byCrypto) && Number(order.crypto) > 0;
+  const crypto = byCrypto ? Number(order.crypto) : Math.floor(((Number(order.rub) || 0) / rate) * 1e8 + 1e-6) / 1e8;
+  const payRub = byCrypto ? Math.ceil(crypto * rate - 1e-6) : Math.round(Number(order.rub) || 0);
+  return {
+    id: b.id,
+    rate,
+    crypto,
+    payRub,
+    note: b.note || '',
+    createdAt: b.createdAt,
+    broker: store.brokerCard(b.login),
+  };
+};
+
+const offersWindowSec = (s) => {
+  const v = Number(s.offerWindowSec);
+  return Number.isFinite(v) && v >= 15 && v <= 3600 ? Math.round(v) : 120;
+};
+
+// Подписка глазами клиента: без служебных полей.
+const publicSubscription = (sub) =>
+  sub ? {
+    status: sub.status,
+    amount: sub.amount,
+    currency: sub.currency,
+    until: sub.currentPeriodEnd || null,
+    lastPaymentAt: sub.lastPaymentAt || null,
+    requestedAt: sub.requestedAt || null,
+  } : null;
 
 const publicBrokerApp = (a) =>
   a ? { id: a.id, status: a.status, experience: a.experience, contact: a.contact, createdAt: a.createdAt } : null;
@@ -201,7 +237,14 @@ function startWeb() {
     const a = needAuth(req, res);
     if (!a) return;
     const user = store.touchUser(a.user, req.body.startParam || '');
-    res.json({ me: clientUser(user), settings: store.publicSettings(), demo: a.demo });
+    const broker = brokerFor(a);
+    res.json({
+      me: clientUser(user),
+      settings: store.publicSettings(),
+      demo: a.demo,
+      broker: broker ? { login: broker.login, name: broker.name } : null,
+      access: store.accessFor(user),
+    });
   });
 
   app.get('/api/settings', (req, res) => res.json(store.publicSettings()));
@@ -245,6 +288,23 @@ function startWeb() {
     return false;
   };
 
+  /* ---------- доступ: бесплатные 3 дня, дальше подписка ---------- */
+  // Подписка одна на человека и открывает обе стороны: обмен клиенту и кабинет
+  // брокера. Оформляется минимальным месячным донатом на Tribute — ссылку хост
+  // задаёт переменной окружения (TRIBUTE_URL).
+
+  const ensureAccess = (user, res) => {
+    const access = store.accessFor(user);
+    if (access.ok) return access;
+    res.status(402).json({
+      error: access.state === 'pending'
+        ? 'Оплата на проверке — включим доступ сразу после подтверждения'
+        : `Бесплатные ${access.trialDays} дн. закончились — оформите подписку`,
+      access,
+    });
+    return null;
+  };
+
   app.post('/api/orders', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
@@ -254,6 +314,8 @@ function startWeb() {
     }
     if (!needCaptcha(req, res)) return;
     const s = store.get().settings;
+    const gateUser = store.touchUser(a.user, req.body.startParam || '');
+    if (!ensureAccess(gateUser, res)) return;
     const currency = req.body.currency;
     const wallet = String(req.body.wallet || '').trim();
     if (!s.online) return res.status(403).json({ error: 'Обмен временно недоступен' });
@@ -274,7 +336,7 @@ function startWeb() {
     if (rub < s.minRub) return res.status(400).json({ error: `Минимальная сумма — ${s.minRub} ₽` });
     if (rub > s.maxRub) return res.status(400).json({ error: `Максимальная сумма — ${s.maxRub} ₽` });
     if (!isValidWallet(wallet, currency)) return res.status(400).json({ error: 'Проверьте адрес кошелька' });
-    const user = store.touchUser(a.user, req.body.startParam || '');
+    const user = gateUser;
     const officialRate = currency === 'BTC' ? s.baseRateBTC : s.baseRateGRAM;
     const order = store.createOrder({
       userId: String(user.id),
@@ -284,12 +346,14 @@ function startWeb() {
       currency,
       wallet,
       rate,
-      officialRate: officialRate || null,
+      officialRate: officialRate || rate,
       crypto: crypto ?? rub / rate,
+      byCrypto: !hasRub,
       referrer: user.referrer,
     });
+    // Офер уходит брокерам: они присылают свою цену, клиент выбирает отклик.
     bus.emit('order_event', { order, type: 'new' });
-    res.json({ order: clientOrder(order) });
+    res.json({ order: clientOrder(order), offerWindowSec: offerWindowSec(), marketRate: rate });
   });
 
   app.get('/api/order/:id', (req, res) => {
@@ -297,7 +361,33 @@ function startWeb() {
     if (!a) return;
     const o = store.getOrder(req.params.id);
     if (!o || o.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
-    res.json({ order: clientOrder(o) });
+    res.json({
+      order: clientOrder(o),
+      bids: bidsForClient(o),
+      offerWindowSec: offerWindowSec(),
+      marketRate: o.currency === 'GRAM' ? store.get().settings.rateGRAM : store.get().settings.rateBTC,
+    });
+  });
+
+  // Клиент принял отклик брокера: цена — из отклика, дальше брокер выдаёт реквизиты.
+  app.post('/api/order/:id/accept', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const o = store.getOrder(req.params.id);
+    if (!o || o.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
+    if (!ensureAccess(store.touchUser(a.user), res)) return;
+    const r = store.acceptBid(o.id, req.body?.bidId);
+    if (!r.ok) {
+      const errors = {
+        taken: 'По этому оферу уже выбран брокер',
+        closed: 'Офер уже закрыт',
+        bid: 'Отклик больше не активен — выберите другой',
+        order: 'Заявка не найдена',
+      };
+      return res.status(400).json({ error: errors[r.reason] || 'Не удалось принять отклик' });
+    }
+    bus.emit('order_event', { order: r.order, type: 'bid_accepted', bid: r.bid, declined: r.declined });
+    res.json({ order: clientOrder(r.order), marketRate: r.bid.marketRate || null });
   });
 
   app.post('/api/order/:id/assign-broker', (req, res) => {
@@ -528,6 +618,205 @@ function startWeb() {
     res.json({ application: publicBrokerApp(store.brokerAppFor(a.user.id)) });
   });
 
+  // Окно откликов и публичный список откликов по заявке клиента.
+  const offerWindowSec = () => offersWindowSec(store.get().settings);
+  const bidsForClient = (o) =>
+    (['collecting', 'new', 'details', 'paid'].includes(o.status)
+      ? store.bidsForOrder(o.id).filter((b) => b.status === 'accepted' || b.status === 'active').map((b) => clientBid(b, o))
+      : []);
+
+  // Состояние доступа и подписки: приложение показывает окно оплаты.
+  app.get('/api/subscription', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const user = store.touchUser(a.user, req.query.startParam || '');
+    res.json({ access: store.accessFor(user), subscription: publicSubscription(store.userSub(user.id)) });
+  });
+
+  // «Я оплатил»: доступ включит оператор после проверки платежа на Tribute.
+  app.post('/api/subscription/paid', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const user = store.touchUser(a.user, req.body?.startParam || '');
+    const access = store.accessFor(user);
+    if (access.ok && access.state === 'active') {
+      return res.json({ access, subscription: publicSubscription(store.userSub(user.id)), already: true });
+    }
+    const sub = store.requestUserSubPayment(user.id, {
+      amount: Number(req.body?.amount) || access.amountRub,
+      method: req.body?.method,
+    });
+    bus.emit('subscription_event', { user, sub, type: 'request' });
+    res.json({ access: store.accessFor(user), subscription: publicSubscription(sub) });
+  });
+
+  /* ---------- ЛК брокера в Web App ---------- */
+  // Брокер заходит в приложение по своему Telegram ID: доступ выдан админом
+  // командой /addbroker, логин совпадает с ID. В демо-режиме (без BOT_TOKEN)
+  // кабинет открыт, чтобы его можно было посмотреть без бота.
+  const brokerFor = (a) => {
+    if (!a || !a.user) return null;
+    const login = String(a.user.id);
+    const account = store.brokerAccountByLogin(login) || store.brokerAccountByTg(login);
+    if (account && account.active !== false) {
+      return { login: account.login, name: account.name || login };
+    }
+    const session = store.brokerSession(login);
+    if (session && session.login) {
+      const prof = store.brokerProfile(session.login);
+      return { login: session.login, name: (prof && prof.name) || session.login };
+    }
+    if (a.demo || !config.botToken) {
+      // В демо-режиме кабинет открыт: заводим демо-брокера один раз.
+      if (!store.brokerAccountByLogin(login)) {
+        store.upsertBrokerAccount(login, { name: a.user.first_name || 'Демо-брокер', username: a.user.username || null });
+      }
+      return { login, name: a.user.first_name || 'Демо-брокер' };
+    }
+    return null;
+  };
+
+  const needBroker = (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return null;
+    const broker = brokerFor(a);
+    if (!broker) {
+      res.status(403).json({ error: 'Кабинет доступен брокерам PRICELEX' });
+      return null;
+    }
+    return { ...a, broker };
+  };
+
+  const marketRateFor = (currency) => {
+    const s = store.get().settings;
+    return currency === 'GRAM' ? Number(s.rateGRAM) || 0 : Number(s.rateBTC) || 0;
+  };
+
+  // Офер глазами брокера: сумма, валюта, сколько уже откликнулось и его лимит.
+  const brokerOfferView = (o, login) => {
+    const can = store.brokerCanTake(login, o.rub);
+    const own = store.bidsForOrder(o.id).find((b) => b.login === login && b.status === 'active') || null;
+    return {
+      id: o.id,
+      rub: o.rub,
+      currency: o.currency,
+      crypto: o.crypto,
+      marketRate: marketRateFor(o.currency),
+      bids: store.activeBidsForOrder(o.id).length,
+      createdAt: o.createdAt,
+      bidUntil: o.bidUntil || null,
+      canTake: can.ok,
+      limitNote: can.ok ? null : can.text,
+      myBid: own ? { id: own.id, rate: own.rate, updatedAt: own.updatedAt } : null,
+      status: o.status,
+    };
+  };
+
+  const brokerPayload = (broker) => {
+    const s = store.get().settings;
+    const login = broker.login;
+    const price = store.brokerPrice(login) || {};
+    const marketBtc = Number(s.rateBTC) || 0;
+    const marketGram = Number(s.rateGRAM) || 0;
+    const offers = store.get().orders
+      .filter((o) => ['collecting', 'new'].includes(o.status) && !o.broker)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 12)
+      .map((o) => brokerOfferView(o, login));
+    const mine = store.get().orders
+      .filter((o) => o.broker === login && ['new', 'details', 'paid'].includes(o.status))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 12)
+      .map((o) => brokerOfferView(o, login));
+    return {
+      broker: store.brokerCard(login),
+      stats: store.brokerStats(login),
+      price: {
+        BTC: Number(price.BTC) || marketBtc,
+        GRAM: Number(price.GRAM) || marketGram,
+        updatedAt: price.updatedAt || null,
+        custom: Boolean(price.BTC || price.GRAM),
+      },
+      market: { BTC: marketBtc, GRAM: marketGram, updatedAt: s.rateUpdatedAt || null },
+      priceHistory: store.brokerPricePoints(login, 240),
+      marketHistory: store.rateHistorySince(Date.now() - 7 * 24 * 3600 * 1000, 180),
+      offers,
+      mine,
+      reviews: store.reviewsForBroker(login).slice(0, 20).map((r) => store.publicReview(r)),
+    };
+  };
+
+  app.get('/api/broker/me', (req, res) => {
+    const a = needBroker(req, res);
+    if (!a) return;
+    const user = store.touchUser(a.user);
+    const access = store.accessFor(user);
+    if (!access.ok) return res.status(402).json({ error: 'Нужна подписка PRICELEX', access });
+    res.json({ ...brokerPayload(a.broker), access });
+  });
+
+  // Рабочая цена брокера: по ней он откликается на оферы по умолчанию.
+  app.post('/api/broker/price', (req, res) => {
+    const a = needBroker(req, res);
+    if (!a) return;
+    if (!ensureAccess(store.touchUser(a.user), res)) return;
+    const currency = req.body?.currency === 'GRAM' ? 'GRAM' : 'BTC';
+    const rate = Number(req.body?.rate);
+    const market = marketRateFor(currency);
+    if (!Number.isFinite(rate) || rate <= 0) return res.status(400).json({ error: 'Укажите цену больше нуля' });
+    if (market && (rate < market * 0.5 || rate > market * 2)) {
+      return res.status(400).json({ error: 'Цена слишком далеко от рыночного курса — проверьте значение' });
+    }
+    store.setBrokerPrice(a.broker.login, { currency, rate });
+    res.json(brokerPayload(a.broker));
+  });
+
+  // Отклик на офер клиента: цена брокера, по умолчанию — его рабочая цена.
+  app.post('/api/broker/bid', (req, res) => {
+    const a = needBroker(req, res);
+    if (!a) return;
+    if (!ensureAccess(store.touchUser(a.user), res)) return;
+    const o = store.getOrder(req.body?.orderId);
+    if (!o) return res.status(404).json({ error: 'Офер не найден' });
+    if (o.broker) return res.status(400).json({ error: 'По этому оферу уже выбран брокер' });
+    if (!['collecting', 'new'].includes(o.status)) return res.status(400).json({ error: 'Офер уже закрыт' });
+    const can = store.brokerCanTake(a.broker.login, o.rub);
+    if (!can.ok) return res.status(403).json({ error: can.text });
+    const market = marketRateFor(o.currency);
+    const price = store.brokerPrice(a.broker.login) || {};
+    const fromPrice = Number(price[o.currency]) || 0;
+    const rate = Number(req.body?.rate) || fromPrice || market;
+    if (!Number.isFinite(rate) || rate <= 0) return res.status(400).json({ error: 'Укажите цену больше нуля' });
+    if (market && (rate < market * 0.5 || rate > market * 2)) {
+      return res.status(400).json({ error: 'Цена слишком далеко от рыночного курса — проверьте значение' });
+    }
+    const r = store.placeBid({
+      orderId: o.id,
+      login: a.broker.login,
+      name: a.broker.name,
+      rate,
+      note: req.body?.note,
+      marketRate: market,
+    });
+    if (!r.ok) return res.status(400).json({ error: 'Не удалось отправить отклик' });
+    bus.emit('order_event', { order: store.getOrder(o.id), type: 'bid', bid: r.bid });
+    res.json({ bid: r.bid, payload: brokerPayload(a.broker) });
+  });
+
+  // Отклики на свой офер — для живой ленты в приложении.
+  app.get('/api/order/:id/bids', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const o = store.getOrder(req.params.id);
+    if (!o || o.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
+    res.json({
+      bids: bidsForClient(o),
+      offerWindowSec: offerWindowSec(),
+      marketRate: marketRateFor(o.currency),
+      order: clientOrder(o),
+    });
+  });
+
   // ---------- Франшизы и обменники ----------
   app.post('/api/exchangers/register', (req, res) => {
     const a = needAuth(req, res);
@@ -719,6 +1008,16 @@ function startWeb() {
   });
 
   app.post('/api/tribute/webhook', (req, res) => {
+    // Событие может относиться к пользователю (клиент или брокер) — тогда
+    // подписка включается по его Telegram ID, без участия оператора.
+    const ev = req.body || {};
+    const uid = ev.data && (ev.data.telegramId || ev.data.telegram_id || ev.data.userId || ev.data.user_id);
+    if (uid && ['payment.succeeded', 'subscription.renewed'].includes(ev.type)) {
+      const days = Number(ev.data?.days) || 30;
+      const sub = store.activateUserSub(uid, { days, amount: ev.data?.amount, externalId: ev.data?.id, by: 'tribute' });
+      bus.emit('subscription_event', { user: { id: String(uid) }, sub, type: 'activated' });
+      return res.json({ ok: true, subscription: publicSubscription(sub) });
+    }
     // Проверка подписи должна быть здесь в реальности; пока — тестовая
     try {
       const event = req.body;

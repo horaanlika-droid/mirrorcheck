@@ -238,7 +238,7 @@ test('логотип — прозрачный PNG без кленового ли
 });
 
 test('active order is a back-navigable subpage with a resume card on exchange', async (t) => {
-  const active = order(99, 'new', 'BTC', 5000, 0, 0.0005);
+  const active = order(99, 'collecting', 'BTC', 5000, 0, 0.0005);
   const a = await app(t, { orders: [active] });
   assert.equal(a.document.querySelector('#appHeader .hdr-page-title').textContent, 'Заявка');
   assert.ok(a.document.querySelector('.nav').classList.contains('hidden'));
@@ -514,7 +514,7 @@ test('плавающая кнопка чата появляется после �
   assert.ok(fab.classList.contains('show'), 'после возврата из чата плашка снова на месте');
 });
 
-test('кнопка «Найти реквизиты» — литая бронзовая CTA с бликом', async (t) => {
+test('кнопка «Опубликовать офер» — литая бронзовая CTA с бликом', async (t) => {
   const a = await app(t);
   const btn = a.document.querySelector('#btnGo');
   assert.ok(btn, 'кнопка формы обмена на месте');
