@@ -7,6 +7,13 @@ const rates = require('./rates');
 const receipts = require('./receipts');
 const { esc, fmtRub, fmtCrypto, fmtDate, fmtSize, parseNum, fmtMsk, parseMsk } = require('./util');
 const { countSeedReviews, purgeSeedReviews } = require('./review-seed');
+const exchangers = require('./exchangers');
+const deposits = require('./deposits');
+const claims = require('./claims');
+const subscriptions = require('./subscriptions');
+const walletProvider = require('./walletProvider');
+const audit = require('./audit');
+const marketplace = require('./marketplace');
 
 let bot = null;
 const flows = new Map(); // adminId -> { type, orderId?, userId?, at }
@@ -752,6 +759,8 @@ async function mainMenu(ctx, edit = false) {
   const pendingReviews = store.reviewsByStatus('pending').length;
   const pendingBrokerApps = store.brokerAppsByStatus('pending').length;
   const pendingPayouts = store.payoutsByStatus('pending').length + store.brokerDepositsByStatus('pending').length;
+  const pendingExchangers = exchangers.listExchangers({ status: 'pending' }).length;
+  const pendingClaims = claims.listClaims({ status: 'open' }).length + claims.listClaims({ status: 'under_review' }).length;
   const kb = new InlineKeyboard()
     .text(`📥 Заявки${active ? ` (${active})` : ''}`, 'm:orders')
     .text('📊 Статистика', 'm:stats')
@@ -764,6 +773,9 @@ async function mainMenu(ctx, edit = false) {
     .row()
     .text(`🤝 Брокеры${pendingBrokerApps ? ` (${pendingBrokerApps})` : ''}`, 'm:brokers')
     .text(`💸 Выплаты${pendingPayouts ? ` (${pendingPayouts})` : ''}`, 'm:payouts')
+    .row()
+    .text(`🏦 Франшизы${pendingExchangers ? ` (${pendingExchangers})` : ''}`, 'm:exchangers')
+    .text(`🛡 Обращения${pendingClaims ? ` (${pendingClaims})` : ''}`, 'm:claims')
     .row()
     .text('👥 Админы', 'm:admins');
   const text =
@@ -951,6 +963,52 @@ async function handleAdminText(ctx) {
   if (f.type === 'rvadd') return reviewAddStep(ctx, f, text);
   if (f.type === 'rvedit') return reviewEditText(ctx, f, text);
   if (f.type === 'rvreply') return reviewReplyStep(ctx, f, text);
+  if (f.type === 'ex_reject') {
+    if (text.length < 2 || text.length > 500) return ctx.reply('Причина — от 2 до 500 символов.');
+    flows.delete(ctx.from.id);
+    try {
+      const ex = exchangers.updateExchangerStatus(f.exchangerId, 'rejected', ctx.from.id, text);
+      await ctx.reply(`❌ Обменник #${ex.id} отклонён: ${esc(text)}`, { parse_mode: 'HTML' });
+      return exchangerView(ctx, ex.id, false);
+    } catch (e) {
+      return ctx.reply(`⚠️ ${e.message}`);
+    }
+  }
+  if (f.type === 'cl_decision') {
+    if (text.length < 10 || text.length > 2000) return ctx.reply('Мотивировка — от 10 до 2000 символов, обязательна.');
+    flows.delete(ctx.from.id);
+    try {
+      const cl = claims.reviewClaim({ claimId: f.claimId, reviewerId: ctx.from.id, decision: f.decision, motivation: text });
+      await ctx.reply(`✅ Решение по обращению #${cl.id}: ${cl.decision === 'approved' ? 'одобрено' : 'отклонено'}.\nМотивировка: ${esc(text)}\n\nИИ не участвует в рассмотрении — решение принял человек.`, { parse_mode: 'HTML' });
+      return claimView(ctx, cl.id, false);
+    } catch (e) {
+      return ctx.reply(`⚠️ ${e.message}`);
+    }
+  }
+  if (f.type === 'cl_payout') {
+    if (f.step === 'amount') {
+      const amt = parseNum(text);
+      if (!Number.isFinite(amt) || amt <= 0) return ctx.reply('Укажите положительную сумму BTC, например 0.0005');
+      setFlow(ctx.from.id, { type: 'cl_payout', claimId: f.claimId, step: 'tx', amountBtc: amt });
+      return ctx.reply(`Сумма ${amt} BTC. Теперь укажите txId выплаты (подтверждение в блокчейне).\n/cancel — отмена`);
+    }
+    if (f.step === 'tx') {
+      if (text.length < 5 || text.length > 128) return ctx.reply('txId — от 5 до 128 символов');
+      setFlow(ctx.from.id, { type: 'cl_payout', claimId: f.claimId, step: 'confirm', amountBtc: f.amountBtc, txId: text });
+      return ctx.reply(`Вы собираетесь подтвердить выплату ${f.amountBtc} BTC · tx ${esc(text)} по обращению #${f.claimId}.\n\nДля подтверждения введите точно: ПОДТВЕРЖДАЮ ВЫПЛАТУ\nЭто отдельное действие уполномоченного человека с явным подтверждением после ручного решения. Автоматических выплат нет.\n/cancel — отмена`, { parse_mode: 'HTML' });
+    }
+    if (f.step === 'confirm') {
+      if (text.trim() !== 'ПОДТВЕРЖДАЮ ВЫПЛАТУ') return ctx.reply('Для подтверждения введите точно: ПОДТВЕРЖДАЮ ВЫПЛАТУ');
+      flows.delete(ctx.from.id);
+      try {
+        const cl = claims.confirmPayout({ claimId: f.claimId, actorId: ctx.from.id, amountBtc: f.amountBtc, txId: f.txId, confirmationText: text.trim() });
+        await ctx.reply(`💸 Выплата по обращению #${cl.id} подтверждена: ${cl.payout.amountBtc} BTC · ${esc(cl.payout.txId)}`, { parse_mode: 'HTML' });
+        return claimView(ctx, cl.id, false);
+      } catch (e) {
+        return ctx.reply(`⚠️ ${e.message}`);
+      }
+    }
+  }
   if (f.type === 'support') {
     if (!text || text.length > 2000) return ctx.reply('Сообщение должно содержать от 1 до 2000 символов.');
     flows.delete(ctx.from.id);
@@ -1004,6 +1062,15 @@ async function handleAdminText(ctx) {
     if (f.type === 'req') {
       if (!text || text.length > 900) return ctx.reply('Реквизиты должны содержать от 1 до 900 символов. Отправьте их целиком ещё раз.');
       flows.delete(ctx.from.id);
+      // Резерв залога, если у заявки есть обменник — проверяем доступный депозит
+      if (o.exchangerId) {
+        try {
+          const reserveAmt = Number(o.crypto) || 0.001;
+          deposits.reserveForOrder({ exchangerId: o.exchangerId, orderId: o.id, amountBtc: reserveAmt });
+        } catch (e) {
+          return ctx.reply(`⚠️ Недостаточно подтверждённого депозита обменника #${o.exchangerId}: ${e.message}\nЗаявку нельзя перевести в details до пополнения депозита.`);
+        }
+      }
       const upd = store.updateOrder(o.id, { requisites: text, payRub: f.payRub, status: 'details' });
       const [, delivered] = await Promise.all([sendOrUpdateOrderAdmin(upd), notifyClient(upd)]);
       return ctx.reply(`✅ Реквизиты заявки #${o.id} опубликованы в приложении. К оплате: ${fmtRub(upd.payRub)}.\n` +
@@ -1542,6 +1609,14 @@ async function handleBrokerText(ctx) {
       return ctx.reply('Заявка уже изменилась. Откройте её заново через список заявок.');
     }
     if (!text || text.length > 900) return ctx.reply('Реквизиты должны содержать от 1 до 900 символов. Отправьте целиком ещё раз.');
+    if (o.exchangerId) {
+      try {
+        const reserveAmt = Number(o.crypto) || 0.001;
+        deposits.reserveForOrder({ exchangerId: o.exchangerId, orderId: o.id, amountBtc: reserveAmt });
+      } catch (e) {
+        return ctx.reply(`⚠️ Недостаточно подтверждённого депозита обменника #${o.exchangerId}: ${e.message}\nПополните депозит.`);
+      }
+    }
     flows.delete(ctx.from.id);
     const upd = store.updateOrder(o.id, { requisites: text, payRub: f.payRub, status: 'details' });
     await Promise.all([sendOrUpdateOrderAdmin(upd), notifyClient(upd)]);
@@ -1701,6 +1776,12 @@ async function handleBrokerCallback(ctx, d) {
   if (act === 'confirm' && ['details', 'paid'].includes(o.status)) {
     const upd = store.updateOrder(o.id, { status: 'completed' });
     const earn = store.accrueBroker(upd); // идемпотентно: повторный тап ничего не начислит
+    if (upd.exchangerId) {
+      try {
+        const openClaim = claims.listClaims({ orderId: upd.id }).find((c) => ['open', 'under_review', 'approved'].includes(c.status) && !c.payout);
+        if (!openClaim) deposits.releaseForOrder(upd.exchangerId, upd.id);
+      } catch {}
+    }
     await sendOrUpdateOrderAdmin(upd);
     const est = earn || brokerEarnEstimate(upd);
     await ctx.editMessageText(
@@ -1906,6 +1987,144 @@ async function brokerAppView(ctx, id, edit = true) {
   else await ctx.reply(text, opts);
 }
 
+/* ---------- Франшизы и обменники (новая модель) ---------- */
+
+function exchangerText(ex) {
+  const legal = ex.legal || {};
+  const kh = (legal.keyHolders || []).map((k) => `• ${esc(k.name)} — ${esc(k.role)} (${esc(k.basis)})`).join('\n');
+  return (
+    `🏦 <b>Обменник #${ex.id}</b> · ${ex.status.toUpperCase()}\n` +
+    `👤 Владелец: <code>${esc(ex.tgId)}</code> · логин <code>${esc(ex.login)}</code>\n` +
+    `🏢 Компания: ${esc(legal.companyName || '—')}\n` +
+    (legal.inn ? `🆔 ИНН: <code>${esc(legal.inn)}</code>\n` : '') +
+    (legal.ogrn ? `🆔 ОГРН: <code>${esc(legal.ogrn)}</code>\n` : '') +
+    `📍 Адрес: ${esc(legal.legalAddress || '—')}\n` +
+    `✉️ Email: ${esc(legal.contactEmail || '—')} · 📞 ${esc(legal.contactPhone || '—')}\n` +
+    `₿ Публичные адреса: ${(legal.publicBtcAddresses || []).map((a) => `<code>${esc(a)}</code>`).join(', ') || '—'}\n` +
+    `🌐 Сети: ${(legal.networks || []).join(', ') || '—'}\n` +
+    `🔑 Держатели ключа (без секретов):\n${kh || '—'}\n` +
+    (ex.experience ? `🎓 Опыт: ${esc(ex.experience)}\n` : '') +
+    (ex.contact ? `📇 Контакт: ${esc(ex.contact)}\n` : '') +
+    `🕒 Создан: ${fmtDate(ex.createdAt)}\n` +
+    (ex.reviewedAt ? `👁 Проверен: ${fmtDate(ex.reviewedAt)} · ${esc(ex.reviewedBy || '')}${ex.reviewReason ? ` · ${esc(ex.reviewReason)}` : ''}\n` : '') +
+    (ex.wallet ? `👛 Кошелёк: <code>${esc(ex.wallet.address)}</code> (${esc(ex.wallet.provider)}) · realLock=${ex.wallet.isRealLock ? 'да' : 'нет (тестовый режим)'}\n` : '👛 Кошелёк: не создан\n') +
+    `💰 Депозит доступно: ${deposits.getAvailableBalance(ex.id)} BTC · зарезервировано: ${deposits.getReservedBalance(ex.id)} BTC · экспозиция: ${deposits.getTotalExposure(ex.id)} BTC\n` +
+    (() => {
+      const sub = subscriptions.getSubscription(ex.id);
+      const cfg = subscriptions.getSubscriptionConfig();
+      return `💳 Подписка (${cfg.label}): ${sub ? `${esc(sub.status)} до ${sub.currentPeriodEnd ? fmtDate(sub.currentPeriodEnd) : '—'}` : 'нет'} · ${cfg.required ? 'обязательна' : 'опционально'} · провайдер ${cfg.provider}\n`;
+    })()
+  );
+}
+
+function exchangerKb(ex) {
+  const kb = new InlineKeyboard();
+  if (ex.status === 'pending') {
+    kb.text('✅ Одобрить', `ex:${ex.id}:approve`).text('❌ Отклонить', `ex:${ex.id}:reject`).row();
+  } else if (ex.status === 'approved') {
+    kb.text('⏸ Приостановить', `ex:${ex.id}:suspend`).text('❌ Отклонить', `ex:${ex.id}:reject`).row();
+    if (!ex.wallet) kb.text('👛 Создать кошелёк', `ex:${ex.id}:wallet`).row();
+    kb.text('📊 Депозиты', `ex:${ex.id}:deposits`).text('💳 Подписка', `ex:${ex.id}:sub`).row();
+  } else if (ex.status === 'suspended') {
+    kb.text('✅ Возобновить', `ex:${ex.id}:approve`).text('❌ Отклонить', `ex:${ex.id}:reject`).row();
+  } else if (ex.status === 'rejected') {
+    kb.text('✅ Одобрить', `ex:${ex.id}:approve`).row();
+  }
+  kb.text('📋 Все обменники', 'm:exchangers').text('↩️ Меню', 'm:home');
+  return kb;
+}
+
+async function exchangersMenu(ctx, edit = true) {
+  const pending = exchangers.listExchangers({ status: 'pending' });
+  const approved = exchangers.listExchangers({ status: 'approved' });
+  const suspended = exchangers.listExchangers({ status: 'suspended' });
+  const all = exchangers.listExchangers({ limit: 50 });
+  const kb = new InlineKeyboard();
+  for (const ex of pending.slice(0, 5)) {
+    kb.text(`⏳ #${ex.id} ${ex.legal?.companyName || ex.tgId}`, `ex:${ex.id}`).row();
+  }
+  for (const ex of approved.slice(0, 5)) {
+    kb.text(`✅ #${ex.id} ${ex.legal?.companyName || ex.tgId}`, `ex:${ex.id}`).row();
+  }
+  kb.text('🔄 Обновить', 'm:exchangers').text('↩️ Меню', 'm:home');
+  const providerInfo = walletProvider.getProviderInfo();
+  const subCfg = subscriptions.getSubscriptionConfig();
+  const text =
+    `🏦 <b>Франшизы / Обменники</b>\n\n` +
+    `⏳ На проверке: <b>${pending.length}</b> · ✅ Одобрено: <b>${approved.length}</b> · ⏸ Приостановлено: <b>${suspended.length}</b> · Всего: ${all.length}\n\n` +
+    `👛 Wallet-провайдер: <b>${esc(providerInfo.provider)}</b> · mainnet: ${providerInfo.mainnetEnabled ? 'включен' : 'выключен (тестовый режим)'} · подтверждений: ${providerInfo.confirmationRule.required}\n` +
+    `Реальная блокировка: ${providerInfo.realLockSupported ? 'поддерживается' : 'не поддерживается — показываем только статус в БД, не "заморожено"'}\n` +
+    `💳 Подписка: ${esc(subCfg.label)} · ${subCfg.required ? 'обязательна' : 'опционально'} · ${subCfg.amount} ${subCfg.currency} · провайдер ${subCfg.provider} · BTC оплата: ${subCfg.btcEnabled ? 'включена' : 'выключена (feature flag)'}\n\n` +
+    `Регистрация: обменник указывает юр. реквизиты, контакты, публичные BTC-адреса и сети, держателей ключа (только имя/роль/основание, без секрета). До ручного одобрения нельзя торговать, принимать реальные депозиты или менять боевые настройки.\n` +
+    `После одобрения партнёр администрирует только свою франшизу и свои заявки. Изоляция — по exchangerId.\n`;
+  const opts = { parse_mode: 'HTML', reply_markup: kb };
+  if (edit) await ctx.editMessageText(text, opts).catch(() => {});
+  else await ctx.reply(text, opts);
+}
+
+async function exchangerView(ctx, id, edit = true) {
+  const ex = exchangers.getExchangerById(id);
+  if (!ex) return ctx.answerCallbackQuery({ text: 'Обменник не найден' }).catch(() => {});
+  const opts = { parse_mode: 'HTML', reply_markup: exchangerKb(ex) };
+  if (edit) await ctx.editMessageText(exchangerText(ex), opts).catch(() => {});
+  else await ctx.reply(exchangerText(ex), opts);
+}
+
+function claimText(c) {
+  const order = c.orderId ? store.getOrder(c.orderId) : null;
+  return (
+    `🛡 <b>Обращение #${c.id}</b> · ${c.status.toUpperCase()}\n` +
+    `📥 Заявка #${c.orderId} · 👤 Клиент <code>${esc(c.userId)}</code> · 🏦 Обменник #${c.exchangerId}\n` +
+    `Причина: ${esc(c.reason)}${c.description ? `\n📝 ${esc(c.description)}` : ''}\n` +
+    `🕒 Создано: ${fmtDate(c.createdAt)}\n` +
+    (order ? `💵 Сумма заявки: ${fmtRub(order.payRub || order.rub)} · ${fmtCrypto(order.crypto, order.currency)}\n👛 Кошелёк клиента: <code>${esc(order.wallet)}</code>\nСтатус заявки: ${order.status}\n` : '') +
+    (c.reviewedAt ? `👁 Рассмотрел: ${esc(c.reviewedBy || '')} · ${fmtDate(c.reviewedAt)}\nРешение: ${esc(c.decision || '')}\nМотивировка: ${esc(c.motivation || '')}\n` : '') +
+    (c.evidence && c.evidence.length ? `📎 Доказательства:\n${c.evidence.map((e) => `• ${fmtDate(e.at)} ${esc(e.by)}: ${esc(e.text || '')} ${e.url ? esc(e.url) : ''}`).join('\n')}\n` : '') +
+    (c.payout ? `💸 Выплата: ${c.payout.amountBtc} BTC · tx ${esc(c.payout.txId)} · ${fmtDate(c.payout.confirmedAt)} · ${esc(c.payout.confirmedBy)}\n` : '') +
+    `\n⚠️ ИИ не участвует в рассмотрении споров, оценке доказательств, управлении залогом или запуске выплат. Решение принимает человек с обязательной мотивировкой. Автоматической выплаты при подаче обращения нет.`
+  );
+}
+
+function claimKb(c) {
+  const kb = new InlineKeyboard();
+  if (c.status === 'open') {
+    kb.text('👁 Взять в работу', `cl:${c.id}:review`).row();
+  } else if (c.status === 'under_review') {
+    kb.text('✅ Одобрить', `cl:${c.id}:approve`).text('❌ Отклонить', `cl:${c.id}:reject`).row();
+  } else if (c.status === 'approved' && !c.payout) {
+    kb.text('💸 Подтвердить выплату', `cl:${c.id}:payout`).row();
+  }
+  kb.text('📋 Все обращения', 'm:claims').text('↩️ Меню', 'm:home');
+  return kb;
+}
+
+async function claimsMenu(ctx, edit = true) {
+  const open = claims.listClaims({ status: 'open' });
+  const under = claims.listClaims({ status: 'under_review' });
+  const all = claims.listClaims({});
+  const kb = new InlineKeyboard();
+  for (const c of [...open, ...under].slice(0, 8)) {
+    kb.text(`#${c.id} ${c.status} · заявка #${c.orderId}`, `cl:${c.id}`).row();
+  }
+  kb.text('🔄 Обновить', 'm:claims').text('↩️ Меню', 'm:home');
+  const text =
+    `🛡 <b>Обращения о выплате из залога</b>\n\n` +
+    `⏳ Открыто: <b>${open.length}</b> · 👁 В работе: <b>${under.length}</b> · Всего: ${all.length}\n\n` +
+    `Неполучение BTC достаточно, чтобы подать обращение. Обращение рассматривает человек; подача не означает автоматическое одобрение или выплату. ИИ не участвует в рассмотрении, оценке доказательств, управлении залогом или запуске выплат.\n` +
+    `Если пользователь отменил заявку и подал обращение, резерв держится заблокированным до человеческого решения. Автоматической выплаты при подаче, отмене или смене статуса нет.`;
+  const opts = { parse_mode: 'HTML', reply_markup: kb };
+  if (edit) await ctx.editMessageText(text, opts).catch(() => {});
+  else await ctx.reply(text, opts);
+}
+
+async function claimView(ctx, id, edit = true) {
+  const c = claims.getClaim(id);
+  if (!c) return ctx.answerCallbackQuery({ text: 'Обращение не найдено' }).catch(() => {});
+  const opts = { parse_mode: 'HTML', reply_markup: claimKb(c) };
+  if (edit) await ctx.editMessageText(claimText(c), opts).catch(() => {});
+  else await ctx.reply(claimText(c), opts);
+}
+
 /* ---------- регистрация обработчиков ---------- */
 
 function register() {
@@ -2061,7 +2280,80 @@ function register() {
     if (d === 'm:support') return supportMenu(ctx, true);
     if (d === 'm:brokers') return brokersMenu(ctx, true);
     if (d === 'm:payouts') return payoutsMenu(ctx, true);
+    if (d === 'm:exchangers') return exchangersMenu(ctx, true);
+    if (d === 'm:claims') return claimsMenu(ctx, true);
     if (d.startsWith('bbv:')) return brokerAppView(ctx, d.slice(4), true);
+    if (d.startsWith('ex:')) {
+      const parts = d.split(':');
+      if (parts.length === 2) return exchangerView(ctx, parts[1], true);
+      if (parts.length === 3) {
+        const id = parts[1];
+        const act = parts[2];
+        const ex = exchangers.getExchangerById(id);
+        if (!ex) return ctx.answerCallbackQuery({ text: 'Обменник не найден' }).catch(() => {});
+        if (act === 'approve') {
+          const upd = exchangers.updateExchangerStatus(id, 'approved', ctx.from.id, 'Одобрено оператором');
+          await ctx.answerCallbackQuery({ text: 'Одобрено' }).catch(() => {});
+          return exchangerView(ctx, id, true);
+        }
+        if (act === 'reject') {
+          setFlow(ctx.from.id, { type: 'ex_reject', exchangerId: id });
+          return ctx.reply(`❌ Отклонение обменника #${id}. Укажите причину (до 500 символов). /cancel — отмена`);
+        }
+        if (act === 'suspend') {
+          const upd = exchangers.updateExchangerStatus(id, 'suspended', ctx.from.id, 'Приостановлено оператором');
+          await ctx.answerCallbackQuery({ text: 'Приостановлено' }).catch(() => {});
+          return exchangerView(ctx, id, true);
+        }
+        if (act === 'wallet') {
+          try {
+            const upd = await exchangers.createWalletForExchanger(id, ctx.from.id);
+            await ctx.reply(`👛 Кошелёк создан: <code>${esc(upd.wallet.address)}</code> (${upd.wallet.provider}) · realLock=${upd.wallet.isRealLock ? 'да' : 'нет (тестовый режим)'}\nТорговля в mainnet выключена до подтверждения механизма блокировки.`, { parse_mode: 'HTML' });
+            return exchangerView(ctx, id, true);
+          } catch (e) {
+            return ctx.reply(`⚠️ ${e.message}`);
+          }
+        }
+        if (act === 'deposits') {
+          const deps = deposits.getDeposits(id);
+          const avail = deposits.getAvailableBalance(id);
+          const res = deposits.getReservedBalance(id);
+          const exp = deposits.getTotalExposure(id);
+          const txt = `💰 Депозиты обменника #${id}\nДоступно: ${avail} BTC\nЗарезервировано: ${res} BTC\nЭкспозиция: ${exp} BTC\n\n` + (deps.length ? deps.slice(0, 10).map((dd) => `#${dd.id} ${dd.status} ${dd.confirmedAmountBtc || dd.amountBtc} BTC${dd.orderId ? ` · заявка #${dd.orderId}` : ''}`).join('\n') : 'Депозитов нет');
+          return ctx.reply(txt, { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('↩️ К обменнику', `ex:${id}`).text('📋 Все', 'm:exchangers') });
+        }
+        if (act === 'sub') {
+          const sub = subscriptions.getSubscription(id);
+          const cfg = subscriptions.getSubscriptionConfig();
+          const access = subscriptions.isAccessAllowed(id);
+          const txt = `💳 Подписка обменника #${id}\nСтатус: ${sub ? sub.status : 'нет'}\nДо: ${sub?.currentPeriodEnd ? fmtDate(sub.currentPeriodEnd) : '—'}\nДоступ: ${access.ok ? 'разрешён' : 'запрещён'} (${access.reason || ''})\nКонфиг: ${cfg.label} · ${cfg.amount} ${cfg.currency} · обязательна=${cfg.required} · провайдер=${cfg.provider} · BTC=${cfg.btcEnabled ? 'вкл' : 'выкл'}\n\n${cfg.note}`;
+          return ctx.reply(txt, { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('↩️ К обменнику', `ex:${id}`).text('📋 Все', 'm:exchangers') });
+        }
+      }
+    }
+    if (d.startsWith('cl:')) {
+      const parts = d.split(':');
+      if (parts.length === 2) return claimView(ctx, parts[1], true);
+      if (parts.length === 3) {
+        const id = parts[1];
+        const act = parts[2];
+        const c = claims.getClaim(id);
+        if (!c) return ctx.answerCallbackQuery({ text: 'Обращение не найдено' }).catch(() => {});
+        if (act === 'review') {
+          const upd = claims.setUnderReview(id, ctx.from.id);
+          await ctx.answerCallbackQuery({ text: 'Взято в работу' }).catch(() => {});
+          return claimView(ctx, id, true);
+        }
+        if (act === 'approve' || act === 'reject') {
+          setFlow(ctx.from.id, { type: 'cl_decision', claimId: id, decision: act === 'approve' ? 'approved' : 'rejected' });
+          return ctx.reply(`🛡 Обращение #${id} · решение: ${act === 'approve' ? 'одобрить' : 'отклонить'}. Введите мотивировку (от 10 символов, обязательно). ИИ не участвует в оценке доказательств.\n/cancel — отмена`);
+        }
+        if (act === 'payout') {
+          setFlow(ctx.from.id, { type: 'cl_payout', claimId: id, step: 'amount' });
+          return ctx.reply(`💸 Выплата по обращению #${id}. Введите сумму BTC (например 0.0005). Это отдельное действие уполномоченного человека после ручного решения, с явным подтверждением. Автоматических выплат нет.\n/cancel — отмена`);
+        }
+      }
+    }
 
     // Настройки брокерского контура — свои кнопки s:… в меню «Настройки».
     if (d === 'sb:active') {
@@ -2167,6 +2459,13 @@ function register() {
         const upd = store.updateOrder(id, { status: 'completed' });
         // Если заявку вёл брокер — начисляем ему долю спреда (идемпотентно).
         const earn = upd.broker ? store.accrueBroker(upd) : null;
+        // Резерв: если нет открытого обращения — разблокировать
+        if (upd.exchangerId) {
+          try {
+            const openClaim = claims.listClaims({ orderId: upd.id }).find((c) => ['open', 'under_review', 'approved'].includes(c.status) && !c.payout);
+            if (!openClaim) deposits.releaseForOrder(upd.exchangerId, upd.id);
+          } catch {}
+        }
         await sendOrUpdateOrderAdmin(upd);
         await ctx.reply(
           `📨 <b>Заявка #${id} завершена.</b>\nОтправьте клиенту вручную:\n🪙 <b>${fmtCrypto(upd.crypto, upd.currency)}</b>\n👛 <code>${esc(upd.wallet)}</code>` +

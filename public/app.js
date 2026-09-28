@@ -58,6 +58,7 @@
     history: { points: [], updatedFor: null },
     reviews: { list: [], stats: { count: 0, avg: 0 }, loaded: false, hasMore: false, next: null },
     reviewDraft: { orderId: null, rating: 5, text: '' },
+    offers: [], offersMeta: null, claims: [],
     brokerApp: null, // последняя заявка «стать брокером»
     captcha: null, // { id, question } — активная математическая капча
     rulesOpen: false, // «Правила платформы» раскрыты — состояние живёт вне перерисовки
@@ -424,12 +425,20 @@
   // висит на .currency-segment button.on, поэтому оборот стартует ровно в
   // момент выбора; монеты в полях суммы и кошелька переворачиваются один раз
   // при смене валюты (.coin-swap).
-  const COIN_ART = { BTC: '/img/coin-btc.png', GRAM: '/img/coin-gram.png', RUB: '/img/coin-rub.png' };
+  const COIN_ART = {
+    BTC: '/img/coin-btc.png',
+    GRAM: '/img/coin-gram.png',
+    RUB: '/img/coin-rub.png',
+    PRLX: '/img/coin-prlx.png',
+    PRLX_QR: '/img/coin-prlx-back.png',
+    PRLX_BACK: '/img/coin-prlx-back.png',
+  };
   function coinHtml(cur, size = 24) {
     const src = COIN_ART[cur] || COIN_ART.BTC;
-    const face = (cls) => `<img class="${cls}" src="${src}" alt="" width="${size}" height="${size}" draggable="false">`;
+    const srcBack = cur === 'PRLX' ? COIN_ART.PRLX_QR : src;
+    const face = (cls, s) => `<img class="${cls}" src="${s}" alt="" width="${size}" height="${size}" draggable="false">`;
     return `<span class="coin3d" style="--coin:${size}px" aria-hidden="true"><span class="coin3d-spin">`
-      + `${face('coin3d-face')}${face('coin3d-face coin3d-back')}<span class="coin3d-edge"></span></span></span>`;
+      + `${face('coin3d-face', src)}${face('coin3d-face coin3d-back', srcBack)}<span class="coin3d-edge"></span></span></span>`;
   }
 
   /* ---------- график (реальная история курса и сумм) ---------- */
@@ -781,6 +790,7 @@
     if (tab === 'broker') { renderBroker(); loadBrokerStatus(); }
     if (tab === 'desk') renderDesk();
     if (tab === 'info') renderInfo();
+    if (tab === 'prlx') renderPRLX();
     if (tab === 'support') renderSupport();
     if (tab === 'reviews') { renderReviews(); loadReviews(); }
     // Возвращаясь на обмен, сразу обновляем живые числа (курс, депозит, брокеры),
@@ -840,7 +850,7 @@
 
   function renderNav() {
     const nav = $('#nav');
-    const visible = ['exchange', 'history', 'reviews', 'refs', 'info'].includes(S.tab) && !isOrderPage();
+    const visible = ['exchange', 'history', 'reviews', 'refs', 'info', 'prlx'].includes(S.tab) && !isOrderPage();
     nav.classList.toggle('hidden', !visible);
     $('.app').classList.toggle('subpage', isSubpage());
     if (!visible) { nav.innerHTML = ''; return; }
@@ -851,6 +861,7 @@
       : ['profile', 'Профиль', '/img/tab-profile.png'];
     const items = [
       ['exchange', 'Обмен', '/img/tab-exchange.png'],
+      ['prlx', 'PRLX', '/img/coin-prlx.png'],
       ['history', 'История', '/img/tab-history.png'],
       ['reviews', 'Отзывы', '/img/tab-reviews.png'],
       ['refs', 'Рефералы', '/img/tab-refs.png'],
@@ -966,6 +977,12 @@
         </div>
 
         <button class="btn btn-cta mt" id="btnGo">${ICONS.bolt}<span>Найти реквизиты</span></button>
+        <div id="marketplace" class="mt">${offersHtml()}</div>
+        <div class="card mt" style="opacity:0.85">
+          <div class="card-title">Условия платформы</div>
+          <div class="note">PRICELEX — маркетплейс офферов обменников. Рублёвый перевод — напрямую выбранному обменнику, PRICELEX не держит и не переводит RUB за клиентские сделки. Обменник отправляет BTC в штатном потоке. У каждого обменника свой депозит и торговый лимит. Процент с депозита не удерживается. Подписка — фиксированный ежемесячный платёж через Tribute, статус обновляется по подтверждённому событию оплаты. Приём BTC в оплату услуг PRICELEX выключен за feature flag до подтверждения юр. режима. Деньги клиентов за сделки через PRICELEX не принимаются.</div>
+          <div class="note" style="margin-top:6px">Проверка обменника PRICELEX сама по себе не является лицензией и не скрывает фактические функции платформы/партнёров. Кошелёк — только через уже верифицированного wallet-провайдера с реальной блокировкой, без генерации/хранения seed/приватных ключей в приложении. Если подходящего провайдера нет или блокировку подтвердить нельзя — реальные mainnet-депозиты, автозаморозка и торговля выключены (показываем статус, не «заморожено»). Публичный BTC-адрес ≠ приватный ключ. Seed может быть доверен инициатором уполномоченным лицам, но приложение не собирает/не показывает/не хранит/не пересылает его, фиксирует только имена/роли держателей и основание полномочий.</div>
+        </div>
       </div>
       <div id="exOrder" class="${S.order && S.orderOpen ? '' : 'hidden'}"></div>
     `;
@@ -999,6 +1016,11 @@
     renderHero();
     renderFormMeta();
     renderOrderStage();
+    // Подгружаем маркетплейс live-данными
+    loadOffers().then(() => {
+      const mp = $('#marketplace');
+      if (mp) mp.innerHTML = offersHtml();
+    }).catch(() => {});
   }
 
   function renderFormMeta() {
@@ -1317,7 +1339,7 @@
         <div class="card stage">
           <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">⏳</div></div>
           <div class="stage-title">Подтверждаем оплату</div>
-          <div class="stage-sub">Брокер <b>${esc(o.broker || 'stony montana')}</b> проверяет поступление ${fmtRub(o.payRub || o.rub)} по заявке <b>#${o.id}</b> и сам переводит ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code>.<br>Средства клиента застрахованы общим депозитом брокеров платформы.</div>
+          <div class="stage-sub">Брокер <b>${esc(o.broker || 'stony montana')}</b> проверяет поступление ${fmtRub(o.payRub || o.rub)} по заявке <b>#${o.id}</b> и сам переводит ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code>.<br>Средства клиента застрахованы залогом обменника.</div>
           ${depositNoteHtml()}
           ${o.receipt
             ? `<div class="note">🧾 Чек <b>${esc(o.receipt.name)}</b> отправлен ✅</div>`
@@ -1332,18 +1354,23 @@
               <div class="acb-icon">🛡️</div>
               <div class="acb-body">
                 <b>Администратор вызван в чат</b>
-                <span>Администратор подключается к сделке #${o.id}. Брокеры работают под гарантией общего депозита площадки.</span>
+                <span>Администратор подключается к сделке #${o.id}. Обменники работают под залогом депозита.</span>
               </div>
               <button class="btn btn-ghost btn-sm acb-btn" id="btnGoSupportChat" type="button">💬 В чат</button>
             </div>
           ` : `
             <button class="btn btn-ghost btn-problem mt" id="btnCallAdmin" type="button">🆘 Проблема с выплатой? Позвать админа в чат</button>
           `}
+          <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку (в любое время)</button>
+          <button class="btn btn-ghost btn-problem mt" id="btnClaim">🛡 Не пришёл BTC — подать обращение на выплату из залога</button>
+          <div class="note" style="margin-top:8px">Неполучение BTC достаточно для подачи обращения. Обращение рассматривает человек; подача ≠ автоматическое одобрение или выплата. ИИ не участвует в споре.</div>
         </div>`;
       const bCall = $('#btnCallAdmin');
       if (bCall) bCall.addEventListener('click', () => callAdmin(o));
       const bGoChat = $('#btnGoSupportChat');
       if (bGoChat) bGoChat.addEventListener('click', () => { haptic('light'); goTab('support'); });
+      $('#btnCancel').addEventListener('click', async () => { haptic('warning'); await changeOrder(o, 'cancel'); });
+      $('#btnClaim').addEventListener('click', async () => { haptic('light'); await fileClaim(o); });
       if (!o.receipt) {
         wireReceiptPicker(o);
         $('#btnSendReceipt').addEventListener('click', async () => {
@@ -1367,24 +1394,26 @@
         });
       }
     } else if (o.status === 'completed') {
+      const hasTx = !!o.txUrl;
       box.innerHTML = `
         <div class="card stage">
           <img class="okmark-art" src="/img/hero-shield.png" alt="" width="88" height="88" />
           <div class="stage-title">Обмен завершён!</div>
-          <div class="stage-sub">Брокер <b>${esc(o.broker || 'stony montana')}</b> завершил сделку: ${fmtRub(o.payRub || o.rub)} → <b>${fmtCrypto(o.crypto, o.currency)}</b> отправлены на ваш кошелёк <code>${esc(o.wallet)}</code>.</div>
+          <div class="stage-sub">Брокер <b>${esc(o.broker || o.exchangerId || 'PRICELEX')}</b> завершил сделку: ${fmtRub(o.payRub || o.rub)} → <b>${fmtCrypto(o.crypto, o.currency)}</b> отправлены на ваш кошелёк <code>${esc(o.wallet)}</code>.</div>
           ${o.txUrl ? `
             <div class="tx-box">
               <div class="tx-label">🔗 Транзакция в блокчейне</div>
               <a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a>
               <button class="btn btn-ghost btn-sm" style="margin-top:11px" id="cpTx">${ICONS.copy}<span>Копировать ссылку</span></button>
             </div>
-          ` : `<div class="note">Брокер отправил средства напрямую на ваш кошелёк. Ссылка на блокчейн появится здесь, если брокер её добавит.</div>`}
+          ` : `<div class="note">Средства отправлены на ваш кошелёк. Если BTC не пришёл — подайте обращение: неполучение достаточно. Ссылка на блокчейн появится здесь, если её добавит обменник.</div>`}
+          ${!hasTx ? `<button class="btn btn-ghost btn-problem mt" id="btnClaim">🛡 BTC не пришёл — подать обращение на выплату из залога</button><div class="note" style="margin-top:8px">Подача обращения не означает автоматическое одобрение/выплату. Рассматривает человек с обязательной мотивировкой. ИИ не участвует.</div>` : ''}
           ${o.adminCalled ? `
             <div class="admin-call-banner">
               <div class="acb-icon">🛡️</div>
               <div class="acb-body">
                 <b>Администратор подключился</b>
-                <span>Если выплата от брокера не поступила — администратор компенсирует средства из общего депозита брокеров.</span>
+                <span>Если выплата не поступила — средства компенсируются из залога обменника после ручной проверки.</span>
               </div>
               <button class="btn btn-ghost btn-sm acb-btn" id="btnGoSupportChat" type="button">💬 В чат</button>
             </div>
@@ -1404,14 +1433,18 @@
       if (bGoChat) bGoChat.addEventListener('click', () => { haptic('light'); goTab('support'); });
     } else {
       const rej = o.status === 'rejected';
+      const cancelled = o.status === 'cancelled';
       box.innerHTML = `
         <div class="card stage">
           <div class="failmark">${rej ? '🔴' : '⚪'}</div>
           <div class="stage-title">${rej ? 'Заявка отклонена' : 'Заявка отменена'}</div>
-          <div class="stage-sub">${rej ? `Заявка #${o.id} отклонена. Если это ошибка — напишите в поддержку ${supportLinkHtml()}.` : 'Вы отменили заявку #' + o.id + '.'}</div>
+          <div class="stage-sub">${rej ? `Заявка #${o.id} отклонена. Если это ошибка — напишите в поддержку ${supportLinkHtml()}.` : 'Вы отменили заявку #' + o.id + '. Вы можете отменить в любое время до завершения.'}</div>
           ${o.txUrl ? `<div class="tx-box"><div class="tx-label">🔗 Блокчейн</div><a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a></div>` : ''}
+          ${cancelled ? `<button class="btn btn-ghost btn-problem mt" id="btnClaim">🛡 BTC не получен — подать обращение на выплату из залога</button><div class="note" style="margin-top:8px">Если вы отменили, но BTC не пришёл — неполучение достаточно для подачи обращения. Резерв остаётся заблокированным до человеческого решения. Автоматической выплаты нет.</div>` : ''}
           <button class="btn btn-primary mt" id="btnNew">Создать заявку</button>
         </div>`;
+      const bClaim = $('#btnClaim');
+      if (bClaim) bClaim.addEventListener('click', async () => { haptic('light'); await fileClaim(o); });
       $('#btnNew').addEventListener('click', resetToForm);
     }
   }
@@ -1493,6 +1526,54 @@
     } catch (e) {
       toast('Не удалось отправить действие. Проверьте связь и повторите.');
     }
+  }
+
+  async function fileClaim(order) {
+    try {
+      const reason = 'btc_not_received';
+      const description = prompt('Опишите ситуацию (необязательно, до 2000 символов): неполучение BTC достаточно для подачи обращения. Рассмотрит человек, автоматической выплаты нет.');
+      if (description === null) return;
+      const r = await api(`/api/order/${order.id}/claim`, { method: 'POST', body: { reason, description: (description || '').slice(0, 2000) } });
+      toast(`🛡 Обращение #${r.claim.id} создано. Резерв заблокирован до решения человека. Автовыплаты нет.`);
+      S.claims.unshift(r.claim);
+    } catch (e) {
+      toast(e.message || 'Не удалось подать обращение');
+    }
+  }
+
+  async function loadOffers() {
+    try {
+      const r = await api('/api/exchangers/offers');
+      S.offers = r.offers || [];
+      S.offersMeta = r.meta || null;
+    } catch {
+      S.offers = [];
+    }
+  }
+
+  function offersHtml() {
+    if (!S.offers || !S.offers.length) {
+      return `<div class="card"><div class="empty">Маркетплейс обменников пуст — пока нет одобренных франшиз с подтверждённым депозитом. Проверьте позже.</div>
+        <div class="note" style="margin-top:8px">Для каждого значения показываем источник и время обновления. Устаревшие данные помечаем явно, не выдаём за актуальный курс и не гарантируем исполнение по показанной цене. Рублёвый перевод — напрямую выбранному обменнику, PRICELEX не держит и не переводит RUB за клиентские сделки.</div></div>`;
+    }
+    const rows = S.offers.map((o) => {
+      const stale = o.isStale ? '⚠️ устарело' : '';
+      const src = o.source ? `${esc(o.source)}` : '—';
+      const upd = o.updatedAt ? fmtDate(o.updatedAt) : '—';
+      const avail = o.deposit ? `${o.deposit.available} BTC доступно · ${o.deposit.reserved} зарезервировано` : 'депозит: —';
+      const confRule = o.deposit?.confirmationRule ? `подтверждений: ${o.deposit.confirmationRule.required} · realLock=${o.deposit.confirmationRule.realLockSupported ? 'да' : 'нет'}` : '';
+      return `<div class="card" style="margin-bottom:8px">
+        <div class="row"><b>🏦 ${esc(o.legal?.companyName || o.id)}</b> <span style="opacity:0.6">#${esc(o.id)} ${o.isStale ? '⚠️' : '✅'}</span></div>
+        <div class="row"><span>Курс BTC: ${o.rate ? fmtRub(o.rate) : '—'}</span><span>источник: ${src}</span></div>
+        <div class="row"><span>Обновлён: ${upd}</span><span>${stale}</span></div>
+        <div class="row"><span>${avail}</span></div>
+        <div class="row"><span style="font-size:12px;opacity:0.7">${confRule}</span></div>
+        <div class="note" style="margin-top:6px">Подтверждённая сумма и статус депозита: только подтверждённые средства считаются доступным лимитом. Неподтверждённые не учитываются без одобренного правила подтверждения. С залога не удерживается процент. Ежемесячный платёж за доступ — отдельно, не из залога.</div>
+        ${o.walletProvider ? `<div class="note">Wallet: ${esc(o.walletProvider.provider)} · mainnet=${o.walletProvider.mainnetEnabled ? 'вкл' : 'выкл (тестовый режим)'} · ${o.walletProvider.note || ''}</div>` : ''}
+      </div>`;
+    }).join('');
+    const metaNote = S.offersMeta ? `<div class="note">Показано ${S.offersMeta.count} офферов · live-данные: ${S.offersMeta.note || ''} · Не гарантируем исполнение по показанной цене.</div>` : '';
+    return `<div class="card-title">Маркетплейс обменников</div>${rows}${metaNote}`;
   }
 
   function resetToForm() {
@@ -1901,7 +1982,7 @@
           <p class="sp-line">Не потому что мы обещаем лёгкие деньги. А потому что мы создаём среду, где опыт и капитал работают профессионально — по обе стороны сделки.</p>
           <p class="sp-line">Мы отвечаем за качество <em>репутацией и гарантийным депозитом</em> — и просим вас держать свои ключи при себе. Как именно это устроено — в блоке «Безопасность» ниже.</p>
           <p class="sp-line big">PRICELEX. <em>Private crypto brokerage.</em></p>
-          <div class="sp-sign">since 2025</div>
+          <div class="sp-sign">since 2026</div>
         </div>
       </section>
       <div class="card">
@@ -1929,7 +2010,7 @@
         </div>
       </div>
       <div class="card why-pair">
-        <div class="kicker gold">since 2025</div>
+        <div class="kicker gold">since 2026</div>
         <div class="card-title">Почему только BTC и GRAM</div>
         <p class="why-pair-lead">Две пары. Самые точные рыночные отклики. Прямой путь в любую валюту.</p>
         <p class="why-pair-body">Bitcoin и GRAM — то, чем рынок дышит каждый день: глубина, ликвидность, привычная конвертация. Мы не держим витрину из десятков тикеров — ведём две пары, которые действительно обмениваются чисто и быстро.</p>
@@ -2009,7 +2090,7 @@
           </div>
         </details>
       </div>
-      <div class="signature">PRICELEX<span>private crypto brokerage · since 2025</span></div>`;
+      <div class="signature">PRICELEX<span>private crypto brokerage · since 2026</span></div>`;
     // Правила платформы не должны сворачиваться сами: перерисовка (например, после
     // опроса настроек) возвращает <details> в закрытое состояние, поэтому факт
     // раскрытия живёт в состоянии приложения и восстанавливается после рендера.
@@ -2018,6 +2099,145 @@
       rules.open = Boolean(S.rulesOpen);
       rules.addEventListener('toggle', () => { S.rulesOpen = rules.open; });
     }
+  }
+
+  /* ---------- PRLX meme coin — countdown 90 days in hours ---------- */
+  const PRLX_DROP_KEY = 'prlx_drop_at';
+  const PRLX_HOURS_TOTAL = 90 * 24; // 2160 hours
+  function getPrlxDropAt() {
+    try {
+      const saved = localStorage.getItem(PRLX_DROP_KEY);
+      if (saved) {
+        const ts = Number(saved);
+        if (Number.isFinite(ts) && ts > Date.now()) return ts;
+      }
+    } catch {}
+    // Фиксируем дроп через 90 дней от первого открытия, сохраняем
+    const at = Date.now() + PRLX_HOURS_TOTAL * 3600 * 1000;
+    try { localStorage.setItem(PRLX_DROP_KEY, String(at)); } catch {}
+    return at;
+  }
+  function formatHoursCountdown(msLeft) {
+    if (msLeft <= 0) return { h: 0, m: 0, s: 0, totalH: 0, done: true };
+    const totalSec = Math.floor(msLeft / 1000);
+    const totalH = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    return { h: totalH, m, s, totalH, done: false };
+  }
+  let prlxTimer = null;
+  function renderPRLX() {
+    const v = $('#view-prlx');
+    if (!v) return;
+    const dropAt = getPrlxDropAt();
+    const now = Date.now();
+    const left = dropAt - now;
+    const cd = formatHoursCountdown(left);
+    const total = PRLX_HOURS_TOTAL;
+    const progress = Math.max(0, Math.min(100, ((total - cd.totalH) / total) * 100));
+    const days = Math.floor(cd.totalH / 24);
+    const hours = cd.totalH % 24;
+
+    v.innerHTML = `
+      <section class="card editorial prlx-hero" style="position:relative;overflow:hidden">
+        <div class="ed-art" style="background-image:url('/img/coin-prlx.png');background-size:420px;background-position:center 20%;opacity:0.18;filter:brightness(1.2)" aria-hidden="true"></div>
+        <div class="ed-body" style="position:relative;z-index:1">
+          <div class="kicker gold">since 2026 · private crypto brokerage</div>
+          <div class="display" style="line-height:0.9">PRLX<br><em style="font-size:0.55em;opacity:0.8">meme coin</em></div>
+          <p class="sp-line big" style="margin-top:12px">Наш мем-коин в стиле PRICELEX — бронза, чекан, без лишнего шума. <em>Только для своих.</em></p>
+        </div>
+      </section>
+
+      <div class="card" style="text-align:center">
+        <div class="card-title" style="justify-content:center">До дропа</div>
+        <div style="display:flex;justify-content:center;align-items:center;gap:18px;margin:18px 0">
+          <div class="coin-ic coin-art prlx coin-swap" style="width:92px;height:92px">${coinHtml('PRLX', 92)}</div>
+          <div>
+            <div style="font-size:38px;font-weight:800;letter-spacing:-0.02em;line-height:1">${cd.done ? '0' : cd.totalH}<span style="font-size:18px;opacity:0.6;margin-left:4px">часов</span></div>
+            <div style="font-size:14px;opacity:0.7;margin-top:4px">${days}д ${hours}ч · ${cd.m}м ${cd.s}с · всего ${total}ч</div>
+            <div style="font-size:12px;opacity:0.5;margin-top:2px">90 дней = 2160 часов · обратный отсчёт по часам</div>
+          </div>
+        </div>
+        <div class="progress" style="height:8px;border-radius:99px;overflow:hidden;background:rgba(255,255,255,0.08)"><span style="display:block;height:100%;width:${progress.toFixed(2)}%;background:linear-gradient(90deg,#d6b87a,#8a6a3a);transition:width 0.5s"></span></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;opacity:0.5;margin-top:6px"><span>старт</span><span>${progress.toFixed(1)}% прошло</span><span>дроп</span></div>
+        <div class="note" style="margin-top:12px">Дроп через ${PRLX_HOURS_TOTAL} часов. Таймер живёт в этом браузере и тикает по часам. Дизайн монеты — в нашем стиле: бронзовый чекан PRICELEX, монограмма PRLX, тёмный фон, шампанское золото.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Как будет выглядеть PRLX — европейский чекан</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+          <div style="background:rgba(255,255,255,0.04);border-radius:16px;padding:14px;text-align:center">
+            <div style="width:84px;height:84px;margin:0 auto 10px">${coinHtml('PRLX', 84)}</div>
+            <div style="font-weight:700">Лицевая — рыцарь спешит на свидание</div>
+            <div style="font-size:12px;opacity:0.6;margin-top:4px">Без копья и QR, без точек по кругу. Рыцарь с букетом цветами вниз как меч, спешит на свидание. Сверху PRICELEX аркой, снизу PRLX и 2026. Ровная как у ЦБ, затертая слегка, один материал на обе стороны.</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border-radius:16px;padding:14px;text-align:center">
+            <div style="width:84px;height:84px;margin:0 auto 10px"><img src="/img/coin-prlx-back.png" alt="PRLX IPO 2026" width="84" height="84" style="border-radius:50%"></div>
+            <div style="font-weight:700">Оборотная — дата и IPO</div>
+            <div style="font-size:12px;opacity:0.6;margin-top:4px">Решка литая: сверху IPO, внизу 2026, в центре букет цветов сверху. Без льва, без короны, просто цветы. Один материал с лицевой, ровная как у ЦБ, затертая слегка, без точек.</div>
+          </div>
+        </div>
+        <div class="feat" style="margin-top:16px">
+          <div class="f"><span class="i">◆</span><span class="f-copy"><b>Название:</b> PRLX · <b>Тикер:</b> PRLX · <b>Сеть:</b> TBD · <b>Стиль:</b> европейские монеты, бронзовый чекан</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy"><b>Гравировка:</b> рыцарь спешит на свидание с букетом (без копья, без QR), точечный кант, замок. Чуть менее потёртая.</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy"><b>Номинал:</b> на обороте 21 — выдаётся за 21 PRLX. Каждая монета привязана к коину.</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy"><b>Вайб:</b> private crypto brokerage · since 2026 · шампанское золото, графит, бронза</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy"><b>Дроп:</b> через ${total} часов. Сначала часы, потом детали.</span></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button class="btn btn-primary" id="prlxNotify" type="button">${ICONS.bell}<span>Напомнить о дропе</span></button>
+          <button class="btn btn-ghost" id="prlxShare" type="button"><span>Поделиться</span></button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Токеномика (драфт, в стиле PRICELEX)</div>
+        <div class="f-meta" style="margin-top:8px">
+          <div class="row"><span>Общий саплай</span><b>1 000 000 000 PRLX</b></div>
+          <div class="row"><span>Комьюнити / дроп</span><b>60% · по часам, честно</b></div>
+          <div class="row"><span>Команда / брокеры</span><b>20% · вестинг 90 дней</b></div>
+          <div class="row"><span>Ликвидность</span><b>15% · locked</b></div>
+          <div class="row"><span>Мемы / резерв</span><b>5% · для угара</b></div>
+        </div>
+        <p class="disclaimer" style="margin-top:10px">Это мем-коин. Не является инвестиционной рекомендацией. Дизайн и механика — в стиле PRICELEX: без обещаний доходности, только культура и комьюнити.</p>
+      </div>
+
+      <div class="signature">PRICELEX<span>PRLX · meme coin · since 2026 · drop in ${cd.totalH}h</span></div>
+    `;
+
+    const btnNotify = $('#prlxNotify');
+    if (btnNotify) btnNotify.addEventListener('click', () => {
+      haptic('light');
+      toast('🔔 Напомню за 24 часа до дропа (пока в этом браузере). PRLX — скоро.');
+      try { localStorage.setItem('prlx_notify', '1'); } catch {}
+    });
+    const btnShare = $('#prlxShare');
+    if (btnShare) btnShare.addEventListener('click', async () => {
+      haptic('light');
+      const text = `PRLX — мем-коин от PRICELEX. Дроп через ${cd.totalH} часов. Бронзовый чекан, since 2026.`;
+      if (navigator.share) {
+        try { await navigator.share({ title: 'PRLX', text }); } catch {}
+      } else {
+        copyText(text, 'Скопировано — поделись PRLX');
+      }
+    });
+
+    if (prlxTimer) clearInterval(prlxTimer);
+    prlxTimer = setInterval(() => {
+      const left2 = getPrlxDropAt() - Date.now();
+      const cd2 = formatHoursCountdown(left2);
+      const el = document.querySelector('#view-prlx .card');
+      if (!el) { clearInterval(prlxTimer); return; }
+      // Обновляем только цифры, не перерисовывая всю страницу
+      const hourEl = document.querySelector('#view-prlx [style*=\"font-size:38px\"]');
+      if (hourEl) hourEl.innerHTML = `${cd2.done ? '0' : cd2.totalH}<span style=\"font-size:18px;opacity:0.6;margin-left:4px\">часов</span>`;
+      const sub = document.querySelector('#view-prlx [style*=\"font-size:14px;opacity:0.7\"]');
+      if (sub) sub.textContent = `${Math.floor(cd2.totalH/24)}д ${cd2.totalH%24}ч · ${cd2.m}м ${cd2.s}с · всего ${total}ч`;
+      if (cd2.done) {
+        clearInterval(prlxTimer);
+        toast('🚀 PRLX дроп! Время пришло.');
+      }
+    }, 1000);
   }
 
   /* ---------- отзывы ---------- */

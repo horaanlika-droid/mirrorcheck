@@ -1,5 +1,5 @@
 // Прелоадер: статичный кадр — большое лого, полный текст (PRICELEX · Private
-// Crypto Brokerage · Since 2025) и никакого «загрузочного» движения. Кадр
+// Crypto Brokerage · Since 2026) и никакого «загрузочного» движения. Кадр
 // держится подольше и уходит целиком, когда данные готовы. Звук — «дзынь»
 // кассы (CC0), тактильный отклик идёт в такт записи: толчок на старте, удар
 // колокольчика и ответ на готовности. Таймеры подменяются,
@@ -91,9 +91,9 @@ const runUpTo = ({ timers }, limit) => [...timers.values()]
 // Только те правила, что относятся к прелоадеру: по ним сверяем «нет анимаций».
 const preloaderRules = (css) => css.split(/\n(?=\S)/).filter((b) => /\.preloader/.test(b)).join('\n');
 
-test('прелоадер: большое лого и полный текст — PRICELEX, Private Crypto Brokerage, Since 2025', () => {
+test('прелоадер: большое лого и полный текст — PRICELEX, Private Crypto Brokerage, Since 2026', () => {
   assert.match(html, /class="preloader-wordmark" src="\/img\/logo-full\.png"/);
-  assert.match(html, /alt="PRICELEX — Since 2025" width="1200" height="561"/);
+  assert.match(html, /alt="PRICELEX — Since 2026" width="1200" height="561"/);
   assert.match(html, /<div class="preloader-tag">Private Crypto Brokerage<\/div>/);
   assert.doesNotMatch(html, /preloader-logo-wrap|preloader-logo-sheen/);
   assert.match(html, /class="preloader-bar"/);

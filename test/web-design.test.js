@@ -195,7 +195,7 @@ test('empty history keeps a friendly state and does not render a chart', async (
 test('five-tab navigation opens profile, info and support as secondary screens', async (t) => {
   const a = await app(t);
   const tabs = [...a.document.querySelectorAll('.nav button')].map((b) => b.dataset.tab);
-  assert.deepEqual(tabs, ['exchange', 'history', 'reviews', 'refs', 'profile']);
+  assert.deepEqual(tabs, ['exchange', 'prlx', 'history', 'reviews', 'refs', 'profile']);
   assert.equal(a.document.querySelector('#appHeader .hdr-logo').textContent, 'PRICELEX');
 
   a.document.querySelector('.nav button[data-tab="profile"]').click();
@@ -203,7 +203,7 @@ test('five-tab navigation opens profile, info and support as secondary screens',
   assert.ok(a.document.querySelector('.nav').classList.contains('hidden'));
   a.document.querySelector('#view-profile [data-go="info"]').click();
   assert.equal(a.document.querySelector('#appHeader .hdr-page-title').textContent, 'Инфо');
-  assert.deepEqual([...a.document.querySelectorAll('.nav button')].map((b) => b.dataset.tab), ['exchange', 'history', 'reviews', 'refs', 'info']);
+  assert.deepEqual([...a.document.querySelectorAll('.nav button')].map((b) => b.dataset.tab), ['exchange', 'prlx', 'history', 'reviews', 'refs', 'info']);
   a.document.querySelector('#headerBack').click();
   assert.ok(!a.document.querySelector('#view-profile').classList.contains('hidden'));
   a.document.querySelector('#view-profile [data-go="support"]').click();
@@ -221,7 +221,7 @@ test('reference stylesheet is applied after the legacy component sheet', () => {
   // Палитра референса IMG_1217: графитовая база и шампанский акцент.
   assert.match(css, /--bg-1:\s*#080d11/i);
   assert.match(css, /--sand-3:\s*#c9a87e/i);
-  assert.match(css, /grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/);
+  assert.match(css, /grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\)/);
   // iOS-слой подключается последним: системный шрифт, плоские поверхности, бронзовый tint.
   const ios = html.indexOf('href="/ios.css"');
   assert.ok(ios > reference);
@@ -434,7 +434,7 @@ test('info tab carries the founder speech word for word and never mentions a fee
     'Мы отвечаем за качество репутацией и гарантийным депозитом — и просим вас держать свои ключи при себе. Как именно это устроено — в блоке «Безопасность» ниже.',
     'PRICELEX. Private crypto brokerage.',
   ]);
-  assert.equal(a.document.querySelector('#speech .sp-sign').textContent.trim(), 'since 2025', 'речь подписана годом');
+  assert.equal(a.document.querySelector('#speech .sp-sign').textContent.trim(), 'since 2026', 'речь подписана годом');
   assert.ok(!/тихие деньги/i.test(a.document.querySelector('#view-info').textContent), 'прежний девиз из продукта убран');
   assert.ok(!/комисси/i.test(a.document.querySelector('#view-info').textContent));
   const contacts = [...a.document.querySelectorAll('#view-info .contact')];

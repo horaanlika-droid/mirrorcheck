@@ -722,7 +722,7 @@ button:focus:not(:focus-visible) { outline: none; }
 .nav {
   position: fixed; z-index: 50; left: 0; right: 0; bottom: 0;
   width: 100%; max-width: none; margin: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
-  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px;
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px;
   border: 0; border-top: 1px solid var(--hair); border-radius: 0;
   background: rgba(var(--bg-rgb), .94);
   box-shadow: none; backdrop-filter: blur(16px);
