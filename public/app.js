@@ -429,16 +429,12 @@
     BTC: '/img/coin-btc.png',
     GRAM: '/img/coin-gram.png',
     RUB: '/img/coin-rub.png',
-    PRLX: '/img/coin-prlx.png',
-    PRLX_QR: '/img/coin-prlx-back.png',
-    PRLX_BACK: '/img/coin-prlx-back.png',
   };
   function coinHtml(cur, size = 24) {
     const src = COIN_ART[cur] || COIN_ART.BTC;
-    const srcBack = cur === 'PRLX' ? COIN_ART.PRLX_QR : src;
     const face = (cls, s) => `<img class="${cls}" src="${s}" alt="" width="${size}" height="${size}" draggable="false">`;
     return `<span class="coin3d" style="--coin:${size}px" aria-hidden="true"><span class="coin3d-spin">`
-      + `${face('coin3d-face', src)}${face('coin3d-face coin3d-back', srcBack)}<span class="coin3d-edge"></span></span></span>`;
+      + `${face('coin3d-face', src)}${face('coin3d-face coin3d-back', src)}<span class="coin3d-edge"></span></span></span>`;
   }
 
   /* ---------- график (реальная история курса и сумм) ---------- */
@@ -790,7 +786,6 @@
     if (tab === 'broker') { renderBroker(); loadBrokerStatus(); }
     if (tab === 'desk') renderDesk();
     if (tab === 'info') renderInfo();
-    if (tab === 'prlx') renderPRLX();
     if (tab === 'support') renderSupport();
     if (tab === 'reviews') { renderReviews(); loadReviews(); }
     // Возвращаясь на обмен, сразу обновляем живые числа (курс, депозит, брокеры),
@@ -850,7 +845,7 @@
 
   function renderNav() {
     const nav = $('#nav');
-    const visible = ['exchange', 'history', 'reviews', 'refs', 'info', 'prlx'].includes(S.tab) && !isOrderPage();
+    const visible = ['exchange', 'history', 'reviews', 'refs', 'info'].includes(S.tab) && !isOrderPage();
     nav.classList.toggle('hidden', !visible);
     $('.app').classList.toggle('subpage', isSubpage());
     if (!visible) { nav.innerHTML = ''; return; }
@@ -861,7 +856,6 @@
       : ['profile', 'Профиль', '/img/tab-profile.png'];
     const items = [
       ['exchange', 'Обмен', '/img/tab-exchange.png'],
-      ['prlx', 'PRLX', '/img/coin-prlx.png'],
       ['history', 'История', '/img/tab-history.png'],
       ['reviews', 'Отзывы', '/img/tab-reviews.png'],
       ['refs', 'Рефералы', '/img/tab-refs.png'],
@@ -2099,145 +2093,6 @@
       rules.open = Boolean(S.rulesOpen);
       rules.addEventListener('toggle', () => { S.rulesOpen = rules.open; });
     }
-  }
-
-  /* ---------- PRLX meme coin — countdown 90 days in hours ---------- */
-  const PRLX_DROP_KEY = 'prlx_drop_at';
-  const PRLX_HOURS_TOTAL = 90 * 24; // 2160 hours
-  function getPrlxDropAt() {
-    try {
-      const saved = localStorage.getItem(PRLX_DROP_KEY);
-      if (saved) {
-        const ts = Number(saved);
-        if (Number.isFinite(ts) && ts > Date.now()) return ts;
-      }
-    } catch {}
-    // Фиксируем дроп через 90 дней от первого открытия, сохраняем
-    const at = Date.now() + PRLX_HOURS_TOTAL * 3600 * 1000;
-    try { localStorage.setItem(PRLX_DROP_KEY, String(at)); } catch {}
-    return at;
-  }
-  function formatHoursCountdown(msLeft) {
-    if (msLeft <= 0) return { h: 0, m: 0, s: 0, totalH: 0, done: true };
-    const totalSec = Math.floor(msLeft / 1000);
-    const totalH = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = totalSec % 60;
-    return { h: totalH, m, s, totalH, done: false };
-  }
-  let prlxTimer = null;
-  function renderPRLX() {
-    const v = $('#view-prlx');
-    if (!v) return;
-    const dropAt = getPrlxDropAt();
-    const now = Date.now();
-    const left = dropAt - now;
-    const cd = formatHoursCountdown(left);
-    const total = PRLX_HOURS_TOTAL;
-    const progress = Math.max(0, Math.min(100, ((total - cd.totalH) / total) * 100));
-    const days = Math.floor(cd.totalH / 24);
-    const hours = cd.totalH % 24;
-
-    v.innerHTML = `
-      <section class="card editorial prlx-hero" style="position:relative;overflow:hidden">
-        <div class="ed-art" style="background-image:url('/img/coin-prlx.png');background-size:420px;background-position:center 20%;opacity:0.18;filter:brightness(1.2)" aria-hidden="true"></div>
-        <div class="ed-body" style="position:relative;z-index:1">
-          <div class="kicker gold">since 2026 · private crypto brokerage</div>
-          <div class="display" style="line-height:0.9">PRLX<br><em style="font-size:0.55em;opacity:0.8">meme coin</em></div>
-          <p class="sp-line big" style="margin-top:12px">Наш мем-коин в стиле PRICELEX — бронза, чекан, без лишнего шума. <em>Только для своих.</em></p>
-        </div>
-      </section>
-
-      <div class="card" style="text-align:center">
-        <div class="card-title" style="justify-content:center">До дропа</div>
-        <div style="display:flex;justify-content:center;align-items:center;gap:18px;margin:18px 0">
-          <div class="coin-ic coin-art prlx coin-swap" style="width:92px;height:92px">${coinHtml('PRLX', 92)}</div>
-          <div>
-            <div style="font-size:38px;font-weight:800;letter-spacing:-0.02em;line-height:1">${cd.done ? '0' : cd.totalH}<span style="font-size:18px;opacity:0.6;margin-left:4px">часов</span></div>
-            <div style="font-size:14px;opacity:0.7;margin-top:4px">${days}д ${hours}ч · ${cd.m}м ${cd.s}с · всего ${total}ч</div>
-            <div style="font-size:12px;opacity:0.5;margin-top:2px">90 дней = 2160 часов · обратный отсчёт по часам</div>
-          </div>
-        </div>
-        <div class="progress" style="height:8px;border-radius:99px;overflow:hidden;background:rgba(255,255,255,0.08)"><span style="display:block;height:100%;width:${progress.toFixed(2)}%;background:linear-gradient(90deg,#d6b87a,#8a6a3a);transition:width 0.5s"></span></div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;opacity:0.5;margin-top:6px"><span>старт</span><span>${progress.toFixed(1)}% прошло</span><span>дроп</span></div>
-        <div class="note" style="margin-top:12px">Дроп через ${PRLX_HOURS_TOTAL} часов. Таймер живёт в этом браузере и тикает по часам. Дизайн монеты — в нашем стиле: бронзовый чекан PRICELEX, монограмма PRLX, тёмный фон, шампанское золото.</div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Как будет выглядеть PRLX — европейский чекан</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-          <div style="background:rgba(255,255,255,0.04);border-radius:16px;padding:14px;text-align:center">
-            <div style="width:84px;height:84px;margin:0 auto 10px">${coinHtml('PRLX', 84)}</div>
-            <div style="font-weight:700">Лицевая — рыцарь спешит на свидание</div>
-            <div style="font-size:12px;opacity:0.6;margin-top:4px">Без копья и QR, без точек по кругу. Рыцарь с букетом цветами вниз как меч, спешит на свидание. Сверху PRICELEX аркой, снизу PRLX и 2026. Ровная как у ЦБ, затертая слегка, один материал на обе стороны.</div>
-          </div>
-          <div style="background:rgba(255,255,255,0.04);border-radius:16px;padding:14px;text-align:center">
-            <div style="width:84px;height:84px;margin:0 auto 10px"><img src="/img/coin-prlx-back.png" alt="PRLX IPO 2026" width="84" height="84" style="border-radius:50%"></div>
-            <div style="font-weight:700">Оборотная — дата и IPO</div>
-            <div style="font-size:12px;opacity:0.6;margin-top:4px">Решка литая: сверху IPO, внизу 2026, в центре букет цветов сверху. Без льва, без короны, просто цветы. Один материал с лицевой, ровная как у ЦБ, затертая слегка, без точек.</div>
-          </div>
-        </div>
-        <div class="feat" style="margin-top:16px">
-          <div class="f"><span class="i">◆</span><span class="f-copy"><b>Название:</b> PRLX · <b>Тикер:</b> PRLX · <b>Сеть:</b> TBD · <b>Стиль:</b> европейские монеты, бронзовый чекан</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy"><b>Гравировка:</b> рыцарь спешит на свидание с букетом (без копья, без QR), точечный кант, замок. Чуть менее потёртая.</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy"><b>Номинал:</b> на обороте 21 — выдаётся за 21 PRLX. Каждая монета привязана к коину.</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy"><b>Вайб:</b> private crypto brokerage · since 2026 · шампанское золото, графит, бронза</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy"><b>Дроп:</b> через ${total} часов. Сначала часы, потом детали.</span></div>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:14px">
-          <button class="btn btn-primary" id="prlxNotify" type="button">${ICONS.bell}<span>Напомнить о дропе</span></button>
-          <button class="btn btn-ghost" id="prlxShare" type="button"><span>Поделиться</span></button>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Токеномика (драфт, в стиле PRICELEX)</div>
-        <div class="f-meta" style="margin-top:8px">
-          <div class="row"><span>Общий саплай</span><b>1 000 000 000 PRLX</b></div>
-          <div class="row"><span>Комьюнити / дроп</span><b>60% · по часам, честно</b></div>
-          <div class="row"><span>Команда / брокеры</span><b>20% · вестинг 90 дней</b></div>
-          <div class="row"><span>Ликвидность</span><b>15% · locked</b></div>
-          <div class="row"><span>Мемы / резерв</span><b>5% · для угара</b></div>
-        </div>
-        <p class="disclaimer" style="margin-top:10px">Это мем-коин. Не является инвестиционной рекомендацией. Дизайн и механика — в стиле PRICELEX: без обещаний доходности, только культура и комьюнити.</p>
-      </div>
-
-      <div class="signature">PRICELEX<span>PRLX · meme coin · since 2026 · drop in ${cd.totalH}h</span></div>
-    `;
-
-    const btnNotify = $('#prlxNotify');
-    if (btnNotify) btnNotify.addEventListener('click', () => {
-      haptic('light');
-      toast('🔔 Напомню за 24 часа до дропа (пока в этом браузере). PRLX — скоро.');
-      try { localStorage.setItem('prlx_notify', '1'); } catch {}
-    });
-    const btnShare = $('#prlxShare');
-    if (btnShare) btnShare.addEventListener('click', async () => {
-      haptic('light');
-      const text = `PRLX — мем-коин от PRICELEX. Дроп через ${cd.totalH} часов. Бронзовый чекан, since 2026.`;
-      if (navigator.share) {
-        try { await navigator.share({ title: 'PRLX', text }); } catch {}
-      } else {
-        copyText(text, 'Скопировано — поделись PRLX');
-      }
-    });
-
-    if (prlxTimer) clearInterval(prlxTimer);
-    prlxTimer = setInterval(() => {
-      const left2 = getPrlxDropAt() - Date.now();
-      const cd2 = formatHoursCountdown(left2);
-      const el = document.querySelector('#view-prlx .card');
-      if (!el) { clearInterval(prlxTimer); return; }
-      // Обновляем только цифры, не перерисовывая всю страницу
-      const hourEl = document.querySelector('#view-prlx [style*=\"font-size:38px\"]');
-      if (hourEl) hourEl.innerHTML = `${cd2.done ? '0' : cd2.totalH}<span style=\"font-size:18px;opacity:0.6;margin-left:4px\">часов</span>`;
-      const sub = document.querySelector('#view-prlx [style*=\"font-size:14px;opacity:0.7\"]');
-      if (sub) sub.textContent = `${Math.floor(cd2.totalH/24)}д ${cd2.totalH%24}ч · ${cd2.m}м ${cd2.s}с · всего ${total}ч`;
-      if (cd2.done) {
-        clearInterval(prlxTimer);
-        toast('🚀 PRLX дроп! Время пришло.');
-      }
-    }, 1000);
   }
 
   /* ---------- отзывы ---------- */

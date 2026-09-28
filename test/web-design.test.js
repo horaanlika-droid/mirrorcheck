@@ -195,7 +195,7 @@ test('empty history keeps a friendly state and does not render a chart', async (
 test('five-tab navigation opens profile, info and support as secondary screens', async (t) => {
   const a = await app(t);
   const tabs = [...a.document.querySelectorAll('.nav button')].map((b) => b.dataset.tab);
-  assert.deepEqual(tabs, ['exchange', 'prlx', 'history', 'reviews', 'refs', 'profile']);
+  assert.deepEqual(tabs, ['exchange', 'history', 'reviews', 'refs', 'profile']);
   assert.equal(a.document.querySelector('#appHeader .hdr-logo').textContent, 'PRICELEX');
 
   a.document.querySelector('.nav button[data-tab="profile"]').click();
@@ -203,7 +203,7 @@ test('five-tab navigation opens profile, info and support as secondary screens',
   assert.ok(a.document.querySelector('.nav').classList.contains('hidden'));
   a.document.querySelector('#view-profile [data-go="info"]').click();
   assert.equal(a.document.querySelector('#appHeader .hdr-page-title').textContent, 'Инфо');
-  assert.deepEqual([...a.document.querySelectorAll('.nav button')].map((b) => b.dataset.tab), ['exchange', 'prlx', 'history', 'reviews', 'refs', 'info']);
+  assert.deepEqual([...a.document.querySelectorAll('.nav button')].map((b) => b.dataset.tab), ['exchange', 'history', 'reviews', 'refs', 'info']);
   a.document.querySelector('#headerBack').click();
   assert.ok(!a.document.querySelector('#view-profile').classList.contains('hidden'));
   a.document.querySelector('#view-profile [data-go="support"]').click();
