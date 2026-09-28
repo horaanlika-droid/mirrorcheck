@@ -12,8 +12,9 @@ const settings = {
   announcement: 'PRICELEX', refPercent: 1, operator: '@test', channel: 'https://t.me/test', chat: 'https://t.me/test',
 };
 const initial = {
-  id: 1, status: 'new', currency: 'BTC', rub: 5000, crypto: 0.0005,
+  id: 1, status: 'collecting', currency: 'BTC', rub: 5000, crypto: 0.0005, rate: 10000000,
   wallet: 'bc1' + 'a'.repeat(30), createdAt: 1, updatedAt: 1, requisites: null, payRub: null, receipt: null,
+  broker: null, bidUntil: Date.now() + 120000, acceptedBidId: null, bids: 0,
 };
 const details = { ...initial, status: 'details', requisites: 'СБП: +7 900 000-00-00\nТестовый банк', payRub: 5000, updatedAt: 2, receipt: { name: 'check.pdf', size: 2048, at: 2 } };
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -42,6 +43,7 @@ async function app(t, order = initial) {
     if (pathname === '/api/me') return json({ orders: [order], me: { id: 999 } });
     if (pathname === '/api/settings') return json(settings);
     if (pathname === '/api/order/1') return json({ order });
+    if (pathname === '/api/order/1/bids') return json({ bids: [], offerWindowSec: 120, marketRate: 10000000, order });
     if (pathname === '/api/captcha') return json({ id: 'cap1', question: '3 + 4 = ?' });
     if (pathname === '/api/broker/status') return json({ application: null });
     throw new Error('Unexpected request: ' + pathname);
@@ -54,7 +56,9 @@ async function app(t, order = initial) {
 
 test('renders requisites on poll even when settings request fails; fetch bypasses cache', async (t) => {
   const a = await app(t);
-  assert.match(a.document.querySelector('#exOrder').textContent, /Заявку ведёт брокер/);
+  // Офер ждёт откликов брокеров — клиент видит таймер приёма и рыночный курс
+  assert.match(a.document.querySelector('#exOrder').textContent, /Офер/);
+  assert.match(a.document.querySelector('#exOrder').textContent, /Рыночный курс/);
   a.handle((url) => {
     if (url === '/api/settings') return Promise.reject(new Error('offline'));
     if (url === '/api/order/1') return a.json({ order: details });

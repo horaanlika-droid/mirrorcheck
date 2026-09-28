@@ -29,11 +29,17 @@ const defaults = () => ({
   claimSeq: 1,
   auditSeq: 1,
   settings: {
-    rateBTC: 10250000, // ₽ за 1 BTC (итоговый, с комиссией)
-    rateGRAM: 125, // ₽ за 1 GRAM (стартовый курс, итоговый с комиссией)
-    baseRateBTC: null, // официальный курс BTC без комиссии (авто)
-    baseRateGRAM: null, // официальный курс GRAM без комиссии (авто)
-    feePercent: 2, // комиссия обменника, % поверх официального курса
+    rateBTC: 10250000, // ₽ за 1 BTC — реальный рыночный курс, без наценки площадки
+    rateGRAM: 125, // ₽ за 1 GRAM — реальный рыночный курс, без наценки площадки
+    baseRateBTC: null, // рыночный курс BTC из автообновления
+    baseRateGRAM: null, // рыночный курс GRAM из автообновления
+    offerWindowSec: 120, // окно откликов на офер клиента, секунды
+    // Доступ: первые trialDays суток — бесплатно, дальше нужна подписка.
+    // Ссылку на Tribute задаёт хост в переменной окружения (можно поменять в боте).
+    accessRequired: process.env.ACCESS_REQUIRED !== '0',
+    trialDays: Number(process.env.TRIAL_DAYS) || 3,
+    subscriptionAmountRub: Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 5000,
+    tributeUrl: String(process.env.TRIBUTE_URL || process.env.TRIBUTE_SUBSCRIPTION_URL || process.env.SUBSCRIPTION_URL || '').trim(),
     rateUpdatedAt: null,
     rateSource: 'manual',
     usdRub: null, // последний курс доллара для пересчёта в рубли (ЦБ РФ или резервный)
@@ -84,6 +90,10 @@ const defaults = () => ({
   },
   admins: [], // дополнительные операторы; владельцы задаются через окружение
   users: {},
+  // Подписки пользователей (клиент и брокер — с любой стороны):
+  // { [userId]: { provider, status, amount, currency, currentPeriodEnd, lastPaymentAt, externalId, requestedAt, createdAt, updatedAt } }
+  // status: 'pending' (сказал «оплатил», ждём подтверждения) | 'active' | 'cancelled'
+  userSubs: {},
   orders: [],
   flags: {},
   support: [], // чат поддержки: { id, userId, from: 'user'|'admin', text, at }
@@ -102,6 +112,15 @@ const defaults = () => ({
   brokerAccounts: [],
   // Профиль брокера по логину: { name, username, depositBtc, depositAt, internUntil }
   brokerProfiles: {},
+  // Офер клиента собирает отклики брокеров — как заказ в такси.
+  // Отклик: { id, orderId, login, name, rate, marketRate, note, status, createdAt, updatedAt }
+  // status: 'active' (ждёт решения клиента) | 'accepted' (выбран) | 'declined' (проиграл)
+  bids: [],
+  bidSeq: 1,
+  // Рабочая цена брокера: { [login]: { BTC, GRAM, updatedAt } } — по ней он откликается.
+  brokerPrices: {},
+  // История предложенной цены: { [login]: [ { at, currency, rate, market } ] } — основа графика в ЛК.
+  brokerPriceHistory: {},
   // Леджер брокера: { id, login, orderId, rub, btc, at, type: 'earn' }
   brokerLedger: [],
   // Заявки на ввод депозита стажёра: { id, login, tgId, btc, status, createdAt, updatedAt, adminMsgIds }
@@ -209,6 +228,25 @@ function load() {
       if (bs.walletMainnetEnabled === undefined) bs.walletMainnetEnabled = false;
       if (bs.walletConfirmations === undefined) bs.walletConfirmations = Number(process.env.WALLET_CONFIRMATIONS) || 3;
       if (!db.brokerProfiles || typeof db.brokerProfiles !== 'object') db.brokerProfiles = {};
+      if (!db.userSubs || typeof db.userSubs !== 'object') db.userSubs = {};
+      if (bs.accessRequired === undefined) bs.accessRequired = process.env.ACCESS_REQUIRED !== '0';
+      if (bs.trialDays === undefined) bs.trialDays = Number(process.env.TRIAL_DAYS) || 3;
+      if (bs.subscriptionAmountRub === undefined) bs.subscriptionAmountRub = Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 5000;
+      if (bs.tributeUrl === undefined) bs.tributeUrl = String(process.env.TRIBUTE_URL || process.env.TRIBUTE_SUBSCRIPTION_URL || process.env.SUBSCRIPTION_URL || '').trim();
+      for (const u of Object.values(db.users || {})) {
+        // Бесплатные сутки считаются от первого захода в приложение.
+        if (!Number.isFinite(u.trialStartedAt)) u.trialStartedAt = Number(u.createdAt) || Date.now();
+      }
+      if (!Array.isArray(db.bids)) db.bids = [];
+      if (!Number.isFinite(db.bidSeq)) db.bidSeq = db.bids.reduce((m, b) => Math.max(m, b.id || 0), 0) + 1;
+      if (!db.brokerPrices || typeof db.brokerPrices !== 'object') db.brokerPrices = {};
+      if (!db.brokerPriceHistory || typeof db.brokerPriceHistory !== 'object') db.brokerPriceHistory = {};
+      if (bs.offerWindowSec === undefined) bs.offerWindowSec = 120;
+      for (const o of db.orders || []) {
+        // Заявки, созданные до модели оферов: офер уже закрыт — откликов не ждём.
+        if (o.bidUntil === undefined) o.bidUntil = null;
+        if (o.byCrypto === undefined) o.byCrypto = false;
+      }
       if (!Array.isArray(db.brokerDeposits)) db.brokerDeposits = [];
       for (const dep of db.brokerDeposits) {
         // Заявки, созданные до появления сбора, шли ровно на сумму депозита.
@@ -304,11 +342,12 @@ try {
 
 function publicSettings() {
   const s = db.settings;
-  // Клиенту отдаём только итоговые курсы (комиссия уже зашита внутрь).
-  // feePercent и базовые курсы не светим — это видит только оператор в боте.
+  // Клиенту отдаём реальный рыночный курс — без наценки. Базовые курсы и
+  // служебные настройки не светим: их видит только оператор в боте.
   return {
     rateBTC: s.rateBTC,
     rateGRAM: s.rateGRAM,
+    offerWindowSec: offerWindowSec(),
     rateUpdatedAt: s.rateUpdatedAt,
     rateSource: s.rateSource || 'manual',
     minRub: s.minRub,
@@ -366,6 +405,7 @@ function touchUser(u, refParam) {
         referredCount: 0,
         referredIds: [],
         createdAt: Date.now(),
+        trialStartedAt: Date.now(), // с этого момента идут бесплатные сутки
       };
     }
     user.lastSeen = Date.now();
@@ -400,6 +440,8 @@ const getUser = (id) => db.users[String(id)] || null;
 
 function createOrder(o) {
   return mutate((d) => {
+    const windowMs = Math.round(((Number(d.settings.offerWindowSec) > 0 ? Number(d.settings.offerWindowSec) : 120)) * 1000);
+    const now = Date.now();
     const order = {
       id: d.seq++,
       userId: o.userId,
@@ -413,14 +455,17 @@ function createOrder(o) {
       broker: null, // логин брокера, взявшего заявку
       exchangerId: o.exchangerId || null, // франшиза/обменник
       crypto: o.crypto,
-      status: 'new',
+      status: 'collecting', // офер опубликован: брокеры присылают свою цену
       requisites: null,
       payRub: null,
       receipt: null, // { name, size, at } — чек PDF от клиента
       txUrl: null, // ссылка на блокчейн транзакцию (опционально после подтверждения)
       referrer: o.referrer || null,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      byCrypto: Boolean(o.byCrypto), // клиент вводил сумму в монете — курс может изменить только цену к оплате
+      bidUntil: now + windowMs, // до этого времени офер ждёт отклики брокеров
+      acceptedBidId: null,
+      createdAt: now,
+      updatedAt: now,
       adminMsgIds: {},
       version: 0,
     };
@@ -454,7 +499,7 @@ function updateOrder(id, patch) {
 const userOrders = (userId) =>
   db.orders.filter((o) => o.userId === String(userId)).sort((a, b) => b.createdAt - a.createdAt);
 
-const activeOrders = () => db.orders.filter((o) => ['new', 'details', 'paid'].includes(o.status));
+const activeOrders = () => db.orders.filter((o) => ['collecting', 'new', 'details', 'paid'].includes(o.status));
 
 // Среднее время обмена: по 30 последним завершённым сделкам (от создания до завершения).
 function avgExchangeMinutesComputed() {
@@ -896,15 +941,15 @@ function dropBrokerAccount(tgId) {
   });
 }
 
-// Начисление брокеру за завершённую сделку: разница между клиентским и
-// официальным курсом (спред) минус операционные расходы площадки делится
-// 70/30 — бо́льшая часть брокеру (доля настраивается). Идемпотентно по orderId.
+// Начисление брокеру за завершённую сделку: разница между ценой его отклика
+// (курс, который клиент принял) и рыночным курсом на момент сделки — спред
+// минус операционные расходы площадки. Доля настраивается, идемпотентно по orderId.
 function accrueBroker(order) {
   if (!order || !order.broker || order.status !== 'completed') return null;
   return mutate((d) => {
     if (d.brokerLedger.some((e) => e.orderId === order.id)) return null;
     const s = d.settings;
-    const official = Number(order.officialRate) || (order.rate / (1 + (Number(s.feePercent) || 0) / 100));
+    const official = Number(order.officialRate) || order.rate;
     const payRub = Number(order.payRub) || Number(order.rub) || 0;
     const grossSpread = Math.max(0, Math.round(payRub - (Number(order.crypto) || 0) * official));
     const ops = Math.min(grossSpread, Math.max(0, Number(s.opsExpensesRub) || 0));
@@ -920,7 +965,7 @@ function accrueBroker(order) {
       rub: rubShare,
       btc,
       type: 'earn',
-      spread: grossSpread, // гросс-спред сделки (наценка над официальным курсом)
+      spread: grossSpread, // гросс-спред сделки (цена брокера выше рыночной)
       ops,                 // вычет операционных расходов площадки
       sharePct,
       at: Date.now(),
@@ -968,6 +1013,341 @@ const payoutsByLogin = (login) =>
   db.payouts.filter((p) => p.login === String(login)).sort((a, b) => b.createdAt - a.createdAt);
 const payoutsByStatus = (status) =>
   db.payouts.filter((p) => !status || p.status === status).sort((a, b) => b.createdAt - a.createdAt);
+
+/* ---------- доступ: 3 бесплатных дня, дальше подписка ---------- */
+// Бесплатный доступ даётся один раз и считается от первого захода в приложение.
+// Дальше нужна подписка: минимальный месячный донат на Tribute (ссылка задаётся
+// хостом). Подписка одна на человека — она открывает и обмены клиенту, и кабинет
+// брокера, поэтому оформляется «с любой из сторон».
+
+const DAY_MS = 24 * 3600 * 1000;
+
+const accessSettings = () => {
+  const s = db.settings;
+  const trialDays = Number(s.trialDays);
+  const amount = Number(s.subscriptionAmountRub);
+  return {
+    required: s.accessRequired !== false,
+    trialDays: Number.isFinite(trialDays) && trialDays >= 0 ? Math.min(90, Math.round(trialDays)) : 3,
+    amountRub: Number.isFinite(amount) && amount > 0 ? Math.round(amount) : 5000,
+    tributeUrl: String(s.tributeUrl || '').trim(),
+  };
+};
+
+const userSub = (userId) => (userId == null ? null : db.userSubs[String(userId)] || null);
+
+const subActive = (sub, now = Date.now()) =>
+  Boolean(sub && sub.status === 'active' && Number(sub.currentPeriodEnd) > now);
+
+function activateUserSub(userId, { days = 30, amount, externalId, by } = {}) {
+  const id = String(userId);
+  const period = Math.max(1, Math.min(365, Math.round(Number(days) || 30))) * DAY_MS;
+  return mutate((d) => {
+    const now = Date.now();
+    const prev = d.userSubs[id] || null;
+    const base = prev && Number(prev.currentPeriodEnd) > now ? Number(prev.currentPeriodEnd) : now;
+    const sub = Object.assign({
+      provider: 'tribute',
+      status: 'active',
+      currency: 'RUB',
+      amount: Number(d.settings.subscriptionAmountRub) || 5000,
+    }, prev || {}, {
+      status: 'active',
+      amount: amount != null ? Number(amount) : (prev && prev.amount) || Number(d.settings.subscriptionAmountRub) || 5000,
+      externalId: externalId != null ? String(externalId) : (prev && prev.externalId) || null,
+      currentPeriodStart: now,
+      currentPeriodEnd: base + period,
+      lastPaymentAt: now,
+      lastEventAt: now,
+      updatedAt: now,
+      createdAt: (prev && prev.createdAt) || now,
+      confirmedBy: by != null ? String(by) : (prev && prev.confirmedBy) || null,
+      requestedAt: null,
+    });
+    d.userSubs[id] = sub;
+    return sub;
+  });
+}
+
+// Пользователь нажал «Я оплатил» — включаем не сразу, а после подтверждения оператором.
+function requestUserSubPayment(userId, { amount, method } = {}) {
+  const id = String(userId);
+  return mutate((d) => {
+    const now = Date.now();
+    const prev = d.userSubs[id] || null;
+    const sub = Object.assign({
+      provider: 'tribute',
+      status: 'pending',
+      currency: 'RUB',
+      createdAt: now,
+    }, prev || {}, {
+      status: subActive(prev, now) ? prev.status : 'pending',
+      amount: amount != null ? Number(amount) : (prev && prev.amount) || Number(d.settings.subscriptionAmountRub) || 5000,
+      method: method ? String(method).slice(0, 40) : (prev && prev.method) || null,
+      requestedAt: now,
+      updatedAt: now,
+    });
+    d.userSubs[id] = sub;
+    return sub;
+  });
+}
+
+function setUserSubStatus(userId, status, patch = {}) {
+  const id = String(userId);
+  return mutate((d) => {
+    const now = Date.now();
+    const prev = d.userSubs[id];
+    if (!prev) return null;
+    Object.assign(prev, patch, { status: String(status), updatedAt: now });
+    return prev;
+  });
+}
+
+// Состояние доступа: сначала бесплатные сутки, потом подписка.
+function accessFor(user, now = Date.now()) {
+  const cfg = accessSettings();
+  const sub = userSub(user && user.id);
+  const start = Number(user && (user.trialStartedAt || user.createdAt)) || now;
+  const trialEndsAt = start + cfg.trialDays * DAY_MS;
+  const base = {
+    required: cfg.required,
+    trialDays: cfg.trialDays,
+    trialEndsAt,
+    amountRub: cfg.amountRub,
+    tributeUrl: cfg.tributeUrl,
+    status: (sub && sub.status) || null,
+    until: (sub && sub.currentPeriodEnd) || null,
+    requestedAt: (sub && sub.requestedAt) || null,
+  };
+  if (!cfg.required) return { ...base, ok: true, state: 'open' };
+  if (subActive(sub, now)) return { ...base, ok: true, state: 'active' };
+  if (now < trialEndsAt) {
+    const hoursLeft = Math.max(0, Math.ceil((trialEndsAt - now) / 3600_000));
+    return { ...base, ok: true, state: 'trial', hoursLeft, daysLeft: Math.ceil(hoursLeft / 24) };
+  }
+  if (sub && sub.status === 'pending' && sub.requestedAt) {
+    return { ...base, ok: false, state: 'pending' };
+  }
+  return { ...base, ok: false, state: 'expired' };
+}
+
+// Короткий текст состояния — бот и приложение говорят одно и то же.
+function accessSummary(access) {
+  if (!access || access.ok && access.state === 'open') return 'Доступ открыт без подписки';
+  if (access.state === 'trial') return `Бесплатный доступ: осталось ${access.hoursLeft} ч`;
+  if (access.state === 'active') return 'Подписка активна';
+  if (access.state === 'pending') return 'Ожидает подтверждения оплаты';
+  return `Бесплатные ${access.trialDays} дн. закончились — нужна подписка`;
+}
+
+/* ---------- офер клиента и отклики брокеров: работает как такси ---------- */
+// Клиент публикует офер: сумму и валюту, — брокер не назначен заранее.
+// Брокеры откликаются своей ценой (₽ за 1 монету), клиент видит рыночный курс
+// рядом и принимает любой отклик — сразу или дождавшись ещё предложений.
+
+// Окно откликов на офер: сколько секунд ждём предложения брокеров.
+function offerWindowSec() {
+  const v = Number(db.settings.offerWindowSec);
+  return Number.isFinite(v) && v >= 15 && v <= 3600 ? Math.round(v) : 120;
+}
+const offerWindowMs = () => offerWindowSec() * 1000;
+
+const roundRate = (v) => Math.max(1, Math.round(Number(v) || 0));
+const roundCrypto = (v) => Math.round((Number(v) || 0) * 1e8) / 1e8;
+
+const bidsForOrder = (orderId) =>
+  db.bids
+    .filter((b) => b.orderId === Number(orderId))
+    .sort((a, b) => (a.rate - b.rate) || (a.createdAt - b.createdAt));
+
+const activeBidsForOrder = (orderId) => bidsForOrder(orderId).filter((b) => b.status === 'active');
+const getBid = (id) => db.bids.find((b) => b.id === Number(id)) || null;
+const bidsByLogin = (login, limit = 50) =>
+  db.bids.filter((b) => b.login === String(login)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+
+// Отклик брокера. Повторный отклик от того же брокера не плодит записи —
+// это уточнение цены, пока клиент не выбрал.
+function placeBid({ orderId, login, name, rate, note, marketRate }) {
+  return mutate((d) => {
+    const o = d.orders.find((x) => x.id === Number(orderId));
+    if (!o) return { ok: false, reason: 'order' };
+    if (o.broker) return { ok: false, reason: 'taken' };
+    if (!['collecting', 'new'].includes(o.status)) return { ok: false, reason: 'closed' };
+    const value = Number(rate);
+    if (!Number.isFinite(value) || value <= 0) return { ok: false, reason: 'rate' };
+    const now = Date.now();
+    const existing = d.bids.find((b) => b.orderId === o.id && b.login === String(login) && b.status === 'active');
+    if (existing) {
+      existing.rate = roundRate(value);
+      existing.marketRate = Number(marketRate) || existing.marketRate || null;
+      existing.note = String(note || existing.note || '').slice(0, 160);
+      existing.updatedAt = now;
+      return { ok: true, bid: existing, updated: true };
+    }
+    const bid = {
+      id: d.bidSeq++,
+      orderId: o.id,
+      login: String(login),
+      name: String(name || login).slice(0, 60),
+      rate: roundRate(value),
+      marketRate: Number(marketRate) || null,
+      note: String(note || '').slice(0, 160),
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+    d.bids.push(bid);
+    return { ok: true, bid, updated: false };
+  });
+}
+
+// Клиент принял отклик: брокер закрепляется за заявкой, цена — из отклика,
+// остальные отклики закрываются. Сумма к оплате пересчитывается по этой цене.
+function acceptBid(orderId, bidId) {
+  return mutate((d) => {
+    const o = d.orders.find((x) => x.id === Number(orderId));
+    if (!o) return { ok: false, reason: 'order' };
+    if (o.broker) return { ok: false, reason: 'taken' };
+    if (!['collecting', 'new'].includes(o.status)) return { ok: false, reason: 'closed' };
+    const bid = d.bids.find((b) => b.id === Number(bidId) && b.orderId === o.id);
+    if (!bid || bid.status !== 'active') return { ok: false, reason: 'bid' };
+    const now = Date.now();
+    const rate = roundRate(bid.rate || o.rate);
+    const byCrypto = Boolean(o.byCrypto) && Number(o.crypto) > 0;
+    const crypto = byCrypto ? roundCrypto(o.crypto) : roundCrypto(Math.floor(((Number(o.rub) || 0) / rate) * 1e8 + 1e-6) / 1e8);
+    const payRub = byCrypto ? Math.ceil(crypto * rate - 1e-6) : Math.round(Number(o.rub) || 0);
+    const declined = [];
+    for (const b of d.bids) {
+      if (b.orderId !== o.id || b.id === bid.id) continue;
+      if (b.status === 'active') {
+        b.status = 'declined';
+        b.updatedAt = now;
+        declined.push(b.login);
+      }
+    }
+    bid.status = 'accepted';
+    bid.updatedAt = now;
+    Object.assign(o, {
+      broker: bid.login,
+      rate,
+      payRub,
+      crypto,
+      // Рыночный курс на момент отклика — база для расчёта спреда брокера.
+      officialRate: Number(bid.marketRate) || Number(o.officialRate) || rate,
+      acceptedBidId: bid.id,
+      status: 'new', // дальше брокер выдаёт реквизиты
+      bidUntil: null,
+      updatedAt: now,
+      version: (o.version || 0) + 1,
+    });
+    return { ok: true, order: o, bid, declined };
+  });
+}
+
+// Заявка снова в ленте: брокер отказался (реквизиты не выданы) — офер открывается.
+function reopenOrder(id) {
+  return mutate((d) => {
+    const o = d.orders.find((x) => x.id === Number(id));
+    if (!o) return null;
+    const now = Date.now();
+    for (const b of d.bids) {
+      if (b.orderId === o.id && b.status === 'accepted') {
+        b.status = 'declined';
+        b.updatedAt = now;
+      }
+    }
+    const windowMs = Math.round((Number(d.settings.offerWindowSec) > 0 ? Number(d.settings.offerWindowSec) : 120) * 1000);
+    Object.assign(o, {
+      broker: null,
+      acceptedBidId: null,
+      status: 'collecting',
+      bidUntil: now + windowMs,
+      updatedAt: now,
+      version: (o.version || 0) + 1,
+    });
+    return o;
+  });
+}
+
+/* ---------- рабочая цена брокера и её график ---------- */
+
+const brokerPrice = (login) => db.brokerPrices[String(login)] || null;
+
+function setBrokerPrice(login, { currency, rate }) {
+  const cur = currency === 'GRAM' ? 'GRAM' : 'BTC';
+  const value = roundRate(rate);
+  return mutate((d) => {
+    const key = String(login);
+    const prev = d.brokerPrices[key] || {};
+    const now = Date.now();
+    const market = cur === 'BTC' ? Number(d.settings.rateBTC) || null : Number(d.settings.rateGRAM) || null;
+    d.brokerPrices[key] = Object.assign({}, prev, { [cur]: value, updatedAt: now });
+    const hist = d.brokerPriceHistory[key] || (d.brokerPriceHistory[key] = []);
+    const last = hist[hist.length - 1];
+    // Пишем точку только когда цена реально изменилась — график без шума.
+    if (!last || last.currency !== cur || last.rate !== value) {
+      hist.push({ at: now, currency: cur, rate: value, market });
+      if (hist.length > 720) hist.splice(0, hist.length - 720);
+    }
+    return d.brokerPrices[key];
+  });
+}
+
+const brokerPricePoints = (login, limit = 240) =>
+  (db.brokerPriceHistory[String(login)] || []).slice(-limit);
+
+/* ---------- карточка брокера для клиента и статистика для ЛК ---------- */
+
+function brokerCard(login) {
+  const l = String(login);
+  const list = db.settings.adminBrokers || DEFAULT_ADMIN_BROKERS;
+  const admin = list.find((b) => String(b.login).toLowerCase() === l.toLowerCase()) || null;
+  const profile = brokerProfile(l) || {};
+  const reviews = reviewsForBroker(l);
+  const avg = reviews.length ? reviews.reduce((sum, r) => sum + (Number(r.rating) || 0), 0) / reviews.length : null;
+  const completed = db.orders.filter((o) => o.broker === l && o.status === 'completed').length;
+  return {
+    login: l,
+    name: (admin && admin.name) || profile.name || l,
+    online: !admin || admin.online !== false,
+    rating: avg != null ? Math.round(avg * 100) / 100 : (admin && Number(admin.rating)) || null,
+    reviews: reviews.length,
+    deals: completed || (admin && Number(admin.completed)) || 0,
+  };
+}
+
+// Отзывы о брокере — отзывы по сделкам, которые он вёл.
+function reviewsForBroker(login) {
+  const l = String(login);
+  const ids = new Set(db.orders.filter((o) => o.broker === l).map((o) => o.id));
+  return db.reviews
+    .filter((r) => r.status === 'approved' && ids.has(Number(r.orderId)))
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function brokerStats(login) {
+  const l = String(login);
+  const mine = db.bids.filter((b) => b.login === l);
+  const won = mine.filter((b) => b.status === 'accepted').length;
+  const orders = db.orders.filter((o) => o.broker === l);
+  const done = orders.filter((o) => o.status === 'completed');
+  const card = brokerCard(l);
+  const spentMs = done
+    .map((o) => Math.max(0, (o.updatedAt || o.createdAt) - o.createdAt))
+    .filter((ms) => ms > 0);
+  const avgMin = spentMs.length ? Math.max(1, Math.round(spentMs.reduce((a, b) => a + b, 0) / spentMs.length / 60000)) : null;
+  return {
+    bids: mine.length,
+    won,
+    active: orders.filter((o) => ['collecting', 'new', 'details', 'paid'].includes(o.status)).length,
+    completed: done.length,
+    avgMin,
+    earnedBtc: brokerEarnedBtc(l),
+    rating: card.rating,
+    reviews: card.reviews,
+    deals: card.deals,
+  };
+}
 
 /* ---------- брокер: профиль, депозит, стажировка ---------- */
 
@@ -1146,6 +1526,28 @@ module.exports = {
   updateBrokerApp,
   brokerAppFor,
   brokerAppsByStatus,
+  accessSettings,
+  userSub,
+  subActive,
+  activateUserSub,
+  requestUserSubPayment,
+  setUserSubStatus,
+  accessFor,
+  accessSummary,
+  userSubsAll: () => Object.entries(db.userSubs || {}).map(([userId, sub]) => ({ userId, ...sub })),
+  bidsForOrder,
+  activeBidsForOrder,
+  bidsByLogin,
+  getBid,
+  placeBid,
+  acceptBid,
+  reopenOrder,
+  brokerPrice,
+  setBrokerPrice,
+  brokerPricePoints,
+  brokerCard,
+  reviewsForBroker,
+  brokerStats,
   brokerCreds,
   brokerSession,
   setBrokerSession,

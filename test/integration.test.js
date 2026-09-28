@@ -16,7 +16,7 @@ process.env.ADMIN_IDS = '222,111; 333';
 fs.writeFileSync(path.join(dir, 'db.json'), JSON.stringify({ seq: 2, orders: [{
   id: 1, userId: '999', userName: 'Legacy', rub: 5000, currency: 'BTC',
   wallet: 'bc1' + 'a'.repeat(30), crypto: 0.0005, rate: 10000000,
-  status: 'new', createdAt: Date.now(), adminMsgId: 42,
+  status: 'collecting', createdAt: Date.now(), adminMsgId: 42,
 }] }));
 const config = require('../src/config');
 const store = require('../src/store');
@@ -138,7 +138,7 @@ test('new orders reach all admins; unchanged cards do not generate duplicate mes
 test('requisites publish atomically after one admin text, visible in authenticated API and Telegram', async () => {
   const o = await newOrder();
   await click(222, `o:${o.id}:req`);
-  assert.equal(store.getOrder(o.id).status, 'new');
+  assert.equal(store.getOrder(o.id).status, 'collecting'); // офер: ждём отклики брокеров
   const req = 'СБП: +7 900 000-00-00\nБанк: Тест\nПолучатель: <Иван & Co>';
   calls = [];
   await text(222, req);
@@ -162,7 +162,7 @@ test('custom amount is selected BEFORE publication; invalid amount and oversized
   const o = await newOrder();
   await click(111, `o:${o.id}:quote`);
   await text(111, '5000 мусор');
-  assert.equal(store.getOrder(o.id).status, 'new');
+  assert.equal(store.getOrder(o.id).status, 'collecting'); // офер: ждём отклики брокеров
   await text(111, '5 123');
   await text(111, 'x'.repeat(901));
   assert.equal(store.getOrder(o.id).requisites, null);
@@ -216,7 +216,7 @@ test('removed admin cannot finish an existing flow; unauthorized callbacks do no
   await text(111, '/addadmin 444');
   await text(444, 'Старый ввод тоже не должен сохраниться');
   await text(111, '/removeadmin 444');
-  assert.equal(store.getOrder(o.id).status, 'new');
+  assert.equal(store.getOrder(o.id).status, 'collecting'); // офер: ждём отклики брокеров
 });
 
 test('payment requires a PDF receipt; invalid files rejected, receipt reaches admins and owner', async () => {
@@ -283,7 +283,7 @@ test('paid notifications reach every admin; stale amount cannot undo payment; co
   assert.equal(order.status, 'completed');
 });
 
-test('reverse calculator: crypto amount converts to rubles to pay; fee stays hidden', async () => {
+test('reverse calculator: crypto amount converts to rubles to pay; no markup anywhere', async () => {
   const s = store.get().settings;
   const wallet = 'bc1' + 'a'.repeat(30);
   const r = await api('/api/orders', { method: 'POST', body: { cryptoAmount: 0.001, currency: 'BTC', wallet, ...(await captchaFields()) } });
@@ -292,7 +292,7 @@ test('reverse calculator: crypto amount converts to rubles to pay; fee stays hid
   assert.equal(order.crypto, 0.001);
   assert.equal(order.rub, Math.ceil(0.001 * s.rateBTC - 1e-6));
   assert.equal(order.rate, s.rateBTC);
-  // Клиенту нигде не светим комиссию и базовые курсы.
+  // Наценки нет: курс заявки — реальный рыночный, служебные поля клиенту не отдаём.
   assert.equal(order.feePercent, undefined);
   assert.equal(order.baseRateBTC, undefined);
   const pub = await (await fetch(`http://127.0.0.1:${server.address().port}/api/settings`)).json();
@@ -358,10 +358,9 @@ test('rate history endpoint serves real observations for the Web App chart', asy
   assert.ok(dense.points.length <= 181, `ожидалось <= 181 точек, получено ${dense.points.length}`);
   assert.equal(dense.points[dense.points.length - 1].btc, 9_000_399);
 
-  // Когда пользователь заходит с пустой историей — подгружается недельная история с процентом
+  // Когда пользователь заходит с пустой историей — подгружается недельная история по реальному курсу
   store.mutate((db) => {
     db.rateHistory = [];
-    db.settings.feePercent = 2;
   });
   const weekly = await (await fetch(`http://127.0.0.1:${port}/api/rates/history`)).json();
   assert.equal(weekly.hours, 168);

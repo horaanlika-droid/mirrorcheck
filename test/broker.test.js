@@ -154,14 +154,28 @@ test('broker cannot take big orders without deposit; deposit request → admin c
   assert.ok(calls.some((c) => /стажировк/i.test(c.text)));
   assert.equal(store.getOrder(order.id).broker, null);
 
-  // маленькую — можно
+  // маленькую — можно: брокер откликается своей ценой (+5% к рынку)
   const r2 = await api('/api/orders', { method: 'POST', body: { rub: 3000, currency: 'BTC', wallet: 'bc1' + 'b'.repeat(30), ...(await captcha()) } });
   const { order: small } = await r2.json();
+  store.setBrokerPrice('wolf', { currency: 'BTC', rate: Math.round(store.get().settings.rateBTC * 1.05) });
   calls = [];
   await click(777, `b:o:${small.id}:take`);
+  // отклик не закрепляет заявку: клиент выбирает предложение сам
+  assert.equal(store.getOrder(small.id).broker, null);
+  assert.equal(store.getOrder(small.id).status, 'collecting');
+  const bid = store.bidsForOrder(small.id).find((b) => b.status === 'active');
+  assert.ok(bid && bid.login === 'wolf' && bid.rate > store.get().settings.rateBTC);
+  assert.ok(calls.some((c) => /Отклик отправлен/i.test(c.text || '')));
+  // клиент принимает отклик — брокер закрепляется, цена берётся из отклика
+  const accepted = store.acceptBid(small.id, bid.id);
+  assert.equal(accepted.ok, true);
   assert.equal(store.getOrder(small.id).broker, 'wolf');
+  assert.equal(store.getOrder(small.id).rate, bid.rate);
+  assert.equal(store.getOrder(small.id).status, 'new');
+  // брокер выдаёт реквизиты (кнопка в уведомлении о принятом отклике)
+  calls = [];
+  await click(777, `b:o:${small.id}:req`);
   assert.ok(calls.some((c) => /реквизиты/i.test(c.text || '')));
-  // реквизиты
   await text(777, 'СБП +7 900 111-22-33 Тинькофф Иван И.');
   const upd = store.getOrder(small.id);
   assert.equal(upd.status, 'details');
@@ -178,10 +192,11 @@ test('broker cannot take big orders without deposit; deposit request → admin c
   assert.ok(earned > before, 'broker earned: ' + earned);
   const ledger = store.brokerLedgerFor('wolf');
   assert.equal(ledger.length, 1);
-  // спред: клиентский курс выше официального на feePercent; доля — 70% (gross−ops)
+  // спред: цена отклика брокера выше рыночной; доля — 70% (gross−ops)
   const est = ledger[0];
-  const official = Number(small.officialRate) || (small.rate / (1 + (store.get().settings.feePercent || 0) / 100));
-  const gross = Math.max(0, Math.round(3000 - small.crypto * official));
+  const done = store.getOrder(small.id); // после принятия отклика цена и сумма пересчитаны
+  const official = Number(done.officialRate) || done.rate;
+  const gross = Math.max(0, Math.round((done.payRub || 3000) - done.crypto * official));
   const expectedRub = Math.round((gross - Math.min(gross, 50)) * 0.7);
   assert.equal(est.rub, expectedRub);
   assert.equal(est.spread, gross);
@@ -274,7 +289,7 @@ test('new order events ping broker sessions; paid pings the owning broker only',
   const { order } = await r.json();
   calls = [];
   await bus.emit('order_event', { order: store.getOrder(order.id), type: 'new' });
-  assert.ok(calls.some((c) => String(c.chat_id) === '777' && /Новая заявка/.test(c.text)));
+  assert.ok(calls.some((c) => String(c.chat_id) === '777' && /Офер/.test(c.text)));
   // чужой «paid» брокера не будит
   calls = [];
   await bus.emit('order_event', { order: store.getOrder(order.id), type: 'paid' });

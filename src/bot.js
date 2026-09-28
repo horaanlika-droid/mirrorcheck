@@ -42,7 +42,8 @@ setInterval(clearExpiredFlows, 60_000).unref?.();
 const isAdmin = (ctx) => ctx.chat?.type === 'private' && admins.has(ctx.from?.id);
 
 const STATUS_LABEL = {
-  new: '🔍 Идёт подбор реквизитов',
+  collecting: '📣 Офер опубликован — ждём предложения брокеров',
+  new: '💳 Выдаём реквизиты',
   details: '💳 Ожидает оплаты клиентом',
   paid: '⏳ Клиент оплатил — нужно подтверждение',
   completed: '🟢 Завершена',
@@ -68,13 +69,23 @@ function orderText(o) {
       : ['details', 'paid'].includes(o.status) ? `🧾 Чек: ⏳ не прикреплён\n` : '') +
     (o.txUrl ? `🔗 Блокчейн: ${esc(o.txUrl)}\n` : '') +
     `🕒 ${fmtDate(o.createdAt)}\n` +
-    `Статус: ${STATUS_LABEL[o.status] || o.status}`
+    `Статус: ${STATUS_LABEL[o.status] || o.status}` +
+    (o.status === 'collecting' ? `\n${bidsLineForAdmin(o)}` : '')
   );
+}
+
+// Отклики брокеров в карточке оператора: кто, за сколько и сколько ждать.
+function bidsLineForAdmin(o) {
+  const bids = store.bidsForOrder(o.id).filter((b) => b.status === 'active');
+  if (!bids.length) return '💬 Откликов пока нет.';
+  const left = o.bidUntil ? Math.max(0, Math.round((o.bidUntil - Date.now()) / 60000)) : 0;
+  return `💬 Отклики (${bids.length}${left ? `, приём ещё ~${left} мин` : ''}):\n` +
+    bids.slice(0, 5).map((b) => `   · ${esc(b.name || b.login)} — ${fmtRub(b.rate)}`).join('\n');
 }
 
 function orderKb(o) {
   const kb = new InlineKeyboard();
-  if (o.status === 'new') {
+  if (o.status === 'new' || o.status === 'collecting') {
     kb.text('💳 Выдать реквизиты', `o:${o.id}:req`).text('❌ Отклонить', `o:${o.id}:reject`);
   } else if (o.status === 'details') {
     kb.text('✅ Оплачено (подтвердить)', `o:${o.id}:confirm`)
@@ -194,11 +205,23 @@ async function notifyClientTx(o) {
 
 /* ---------- события заказов из веб-части ---------- */
 
-async function onOrderEvent({ order, type }) {
+async function onOrderEvent({ order, type, bid, declined, payload = {}, user }) {
   await sendOrUpdateOrderAdmin(order);
   if (type === 'new') {
-    // параллельно уведомляем всех вошедших брокеров о свободной заявке
+    // параллельно уведомляем всех вошедших брокеров о новом офере
     await notifyBrokersNewOrder(order);
+  }
+  if (type === 'bid') {
+    // отклик брокера из ЛК: админам достаточно строки в карточке заявки
+    await broadcast(`💬 <b>Отклик по оферу #${order.id}</b>: ${esc(bid?.name || bid?.login || '—')} предлагает ${fmtRub(bid?.rate || 0)} за 1 ${order.currency}.`);
+  }
+  if (type === 'bid_accepted') {
+    await notifyBidAccepted(order, bid, declined);
+    await broadcast(
+      `🎯 <b>Клиент выбрал брокера по оферу #${order.id}</b>\n` +
+      `🤝 ${esc(order.broker)} · цена <b>${fmtRub(order.rate)}</b> за 1 ${order.currency}\n` +
+      `💵 К оплате: ${fmtRub(order.payRub || order.rub)}`
+    );
   }
   if (type === 'receipt') {
     await sendReceiptToAdmins(order);
@@ -781,7 +804,7 @@ async function mainMenu(ctx, edit = false) {
   const text =
     `🌌 <b>PRICELEX | Official</b> — пульт оператора\n` +
     `${s.online ? '🟢 Обменник <b>ОНЛАЙН</b>' : '🔴 Обменник <b>ОФФЛАЙН</b>'}\n` +
-    `₿ ${fmtRub(s.rateBTC)} · G ${fmtRub(s.rateGRAM)} (комиссия ${s.feePercent ?? 0}%)\n` +
+    `₿ ${fmtRub(s.rateBTC)} · G ${fmtRub(s.rateGRAM)} (реальный курс, без наценки)\n` +
     `Официальный курс ${s.rateUpdatedAt ? 'от ' + fmtDate(s.rateUpdatedAt) + ` (${esc(s.rateSource || '?')})` : 'ещё не подтянут — действуют стартовые курсы'}\n` +
     `Активных заявок: ${active} · 💬 Чатов: ${supportCount}` +
     (pendingReviews ? `\n⭐ Отзывов на модерации: <b>${pendingReviews}</b>` : '');
@@ -810,8 +833,9 @@ async function ordersMenu(ctx, edit = true) {
 
 function settingsKb(s) {
   return new InlineKeyboard()
-    .text(`💰 Комиссия ${s.feePercent ?? 0}%`, 's:fee')
     .text('🔄 Обновить курс', 's:refresh')
+    .row()
+    .text(`💳 Подписка ${Number(s.subscriptionAmountRub) || 5000} ₽/мес`, 's:sub')
     .row()
     .text('⬇️ Мин. сумма', 's:min')
     .text('⬆️ Макс. сумма', 's:max')
@@ -857,8 +881,8 @@ function settingsText(s) {
     (s.rateUpdatedAt ? `Обновлён: ${fmtDate(s.rateUpdatedAt)} (${esc(s.rateSource || '?')})\n` : '') +
     (s.usdRub ? `💱 Курс доллара: ${fmtUsdRub(s.usdRub)} (${esc(s.usdRubSource || '?')}${s.usdRubAt ? ', ' + fmtDate(s.usdRubAt) : ''})\n` : '') +
     ratesHealthLine() +
-    `💰 Комиссия: <b>${s.feePercent ?? 0}%</b> поверх официального\n` +
-    `💵 Курс для клиентов: <b>₿ ${fmtRub(s.rateBTC)} · G ${fmtRub(s.rateGRAM)}</b>\n` +
+    `💵 Курс для клиентов: <b>₿ ${fmtRub(s.rateBTC)} · G ${fmtRub(s.rateGRAM)}</b> — реальный, без наценки\n` +
+    `💳 Доступ: ${Number(s.trialDays) || 0} дн. бесплатно, дальше <b>${fmtRub(s.subscriptionAmountRub)}</b>/мес (Tribute)${s.tributeUrl ? ' · ссылка задана' : ' · ссылка не задана'}\n` +
     `Лимиты: ${fmtRub(s.minRub)} — ${fmtRub(s.maxRub)}\n` +
     `🎁 Реферальный процент: <b>${s.refPercent}%</b>\n` +
     `⏱ Среднее время обмена: <b>${Number(s.avgExchangeMin) > 0 ? s.avgExchangeMin + ' мин (задано вручную)' : (store.avgExchangeMinutesComputed() ? store.avgExchangeMinutesComputed() + ' мин (авто)' : 'пока нет данных')}</b>\n` +
@@ -866,6 +890,33 @@ function settingsText(s) {
     `📢 ${esc(s.announcement)}\n` +
     `${s.operator ? `🛟 Поддержка: ${esc(s.operator)} · ` : '🛟 Поддержка: чат в приложении · '}📣 ${esc(s.channel)}\n💬 ${esc(s.chat)}`
   );
+}
+
+// Подписка: сколько дней бесплатно, минимальный донат и ссылка на Tribute.
+async function subscriptionMenu(ctx, edit = true) {
+  const s = store.get().settings;
+  const subs = store.userSubsAll ? store.userSubsAll() : [];
+  const active = subs.filter((x) => x.status === 'active' && Number(x.currentPeriodEnd) > Date.now()).length;
+  const pending = subs.filter((x) => x.status === 'pending').length;
+  const kb = new InlineKeyboard()
+    .text('✏️ Ссылка на Tribute', 's:suburl')
+    .text(`⏱ Бесплатно: ${Number(s.trialDays) || 0} дн.`, 's:trial')
+    .row()
+    .text(`💰 Донат: ${fmtRub(s.subscriptionAmountRub)}/мес`, 's:subamt')
+    .row()
+    .text('↩️ Назад', 'm:settings');
+  const text =
+    `💳 <b>Подписка на доступ</b>\n\n` +
+    `Первые <b>${Number(s.trialDays) || 0} дн.</b> — бесплатно (считаются от первого захода в приложение).\n` +
+    `Дальше доступ открывает подписка: минимальный месячный донат <b>${fmtRub(s.subscriptionAmountRub)}</b>. ` +
+    `Никаких процентов и разовых сборов со сделок.\n` +
+    `Одна подписка на человека — платить может и клиент, и брокер, доступ открывается с любой стороны.\n\n` +
+    `🔗 Ссылка на оплату: ${s.tributeUrl ? `<code>${esc(s.tributeUrl)}</code>` : '<b>не задана</b> — впишите кнопкой ниже или переменной TRIBUTE_URL'}\n` +
+    `📊 Подписок активно: <b>${active}</b>${pending ? ` · ждут подтверждения: <b>${pending}</b>` : ''}\n\n` +
+    `Оплата приходит в Tribute: заявка «я оплатил» падает сюда карточкой, после проверки нажмите «✅ Подтвердить доступ» — подписка включится на 30 дней.`;
+  const opts = { parse_mode: 'HTML', reply_markup: kb };
+  if (edit) return ctx.editMessageText(text, opts).catch(() => {});
+  return ctx.reply(text, opts);
 }
 
 async function settingsMenu(ctx, edit = true) {
@@ -903,11 +954,13 @@ async function linksMenu(ctx, edit = true) {
 /* ---------- FSM ввода от админа ---------- */
 
 const SET_FIELDS = {
-  fee: { label: 'комиссию в % поверх официального курса (0–50, например 2)', num: true, key: 'feePercent' },
   min: { label: 'минимальную сумму обмена (₽)', num: true, key: 'minRub' },
   max: { label: 'максимальную сумму обмена (₽)', num: true, key: 'maxRub' },
   ref: { label: 'реферальный процент (например 1)', num: true, key: 'refPercent' },
   avgm: { label: 'среднее время обмена в минутах (0 — считать автоматически по сделкам, например 12)', num: true, key: 'avgExchangeMin' },
+  subamt: { label: 'минимальный месячный донат за доступ (₽, например 5000)', num: true, key: 'subscriptionAmountRub' },
+  trial: { label: 'сколько дней доступа давать бесплатно (0–90, сейчас 3)', num: true, key: 'trialDays' },
+  suburl: { label: 'ссылку на подписку Tribute (её же можно вписать переменной TRIBUTE_URL на хосте)', key: 'tributeUrl' },
   ann: { label: 'текст объявления для сайта', key: 'announcement' },
   op: { label: 'юзернейм поддержки в Telegram (пусто — только чат в приложении)', key: 'operator' },
   ch: { label: 'ссылку на канал', key: 'channel' },
@@ -1049,8 +1102,10 @@ async function handleAdminText(ctx) {
       await Promise.all([sendOrUpdateOrderAdmin(upd), notifyClientTx(upd)]);
       return ctx.reply(`✅ Ссылка на блокчейн сохранена для заявки #${o.id}:\n${text}\n\nКлиент увидит её в приложении.`, { reply_markup: homeKb() });
     }
-    const expectedStatus = f.type === 'amt' ? 'details' : f.type === 'quote' || f.type === 'req' ? 'new' : null;
-    if (expectedStatus && (!o || o.status !== expectedStatus || (o.version || 0) !== f.version)) {
+    const expected = f.type === 'amt'
+      ? ['details']
+      : f.type === 'quote' || f.type === 'req' ? ['new', 'collecting'] : null;
+    if (expected && (!o || !expected.includes(o.status) || (o.version || 0) !== f.version)) {
       flows.delete(ctx.from.id);
       return ctx.reply('Заявка уже изменена другим оператором или клиентом. Откройте её заново через /menu.', { reply_markup: homeKb() });
     }
@@ -1104,6 +1159,10 @@ async function handleAdminText(ctx) {
           if (!isFinite(n) || n < 0 || n > 100) return ctx.reply('Сбор — от 0 до 100% от депозита. Пример: 10');
         } else if (key === 'bdepfeemax') {
           if (!isFinite(n) || n < 0) return ctx.reply('Предел сбора — неотрицательное число в BTC. Пример: 0.0005 (0 — без предела)');
+        } else if (key === 'subamt') {
+          if (!isFinite(n) || n < 1 || n > 1_000_000) return ctx.reply('Донат — от 1 до 1 000 000 ₽. Пример: 5000');
+        } else if (key === 'trial') {
+          if (!isFinite(n) || n < 0 || n > 90) return ctx.reply('Бесплатный доступ — от 0 до 90 дней. Пример: 3');
         } else if (key === 'avgm') {
           if (!isFinite(n) || n < 0 || n > 480) return ctx.reply('Среднее время обмена — целое от 0 (авто) до 480 минут. Пример: 12');
         } else if (!isFinite(n) || n <= 0) {
@@ -1112,7 +1171,6 @@ async function handleAdminText(ctx) {
         store.mutate((db) => {
           db.settings[field.key || key] = n;
         });
-        if (f.type === 'set:fee') rates.recomputeWithFee();
       } else {
         store.mutate((db) => {
           db.settings[field.key || key] = text.slice(0, 500);
@@ -1182,6 +1240,17 @@ function brokerCtx(ctx) {
   if (!creds.active) return null; // креды отключены
   if (creds.login !== login && !(store.isAdminBroker && store.isAdminBroker(login))) return null; // креды сменили — перелогин
   return login;
+}
+
+// Кнопка «ЛК в приложении»: кабинет брокера живёт в Web App — там график цены,
+// отклики на оферы и отзывы. Показываем, только когда адрес приложения известен.
+function brokerAppKb(kb) {
+  const url = store.get().settings.publicUrl;
+  const row = new InlineKeyboard();
+  if (url && /^https:\/\//.test(url)) {
+    row.webApp('📊 ЛК: цена и отклики', url);
+  }
+  return row.append(kb);
 }
 
 function brokerHomeText(login) {
@@ -1284,19 +1353,20 @@ async function brokerOrdersMenu(ctx, edit = true) {
   if (!login) return brokerAuthStart(ctx);
   const all = store.activeOrders().sort((a, b) => b.createdAt - a.createdAt);
   const mine = all.filter((o) => o.broker === login);
-  const free = all.filter((o) => !o.broker && o.status === 'new');
+  const free = all.filter((o) => !o.broker && ['collecting', 'new'].includes(o.status));
   const kb = new InlineKeyboard();
   for (const o of mine) {
     kb.text(`#${o.id} · ${o.currency} · ${fmtRub(o.rub)} · моя`, `b:o:${o.id}`).row();
   }
   for (const o of free.slice(0, 8 - mine.length)) {
-    kb.text(`#${o.id} · ${o.currency} · ${fmtRub(o.rub)} · взять`, `b:o:${o.id}`).row();
+    const own = store.bidsForOrder(o.id).find((b) => b.login === login && b.status === 'active');
+    kb.text(`#${o.id} · ${o.currency} · ${fmtRub(o.rub)} · ${own ? 'отклик ✓' : 'откликнуться'}`, `b:o:${o.id}`).row();
   }
   kb.text('🔄 Обновить', 'b:orders').text(' Кабинет', 'b:home');
   const text = mine.length + free.length
-    ? '📥 <b>Заявки</b> — откройте, чтобы взять в работу:'
-    : '📥 Свободных заявок нет. Новые приходят сюда мгновенно и в личных уведомлениях.';
-  const opts = { parse_mode: 'HTML', reply_markup: kb };
+    ? '📥 <b>Оферы клиентов</b> — откройте и откликнитесь своей ценой:'
+    : '📥 Свободных оферов нет. Новые приходят сюда мгновенно и в личных уведомлениях.';
+  const opts = { parse_mode: 'HTML', reply_markup: brokerAppKb(kb) };
   if (edit) return ctx.editMessageText(text, opts).catch(() => {});
   return ctx.reply(text, opts);
 }
@@ -1319,7 +1389,7 @@ function brokerOrderText(o, login) {
 // Оценка дохода брокера по заявке: спред за вычетом расходов площадки на его долю.
 function brokerEarnEstimate(o) {
   const s = store.get().settings;
-  const official = Number(o.officialRate) || (o.rate / (1 + (Number(s.feePercent) || 0) / 100));
+  const official = Number(o.officialRate) || o.rate;
   const payRub = Number(o.payRub) || Number(o.rub) || 0;
   const gross = Math.max(0, Math.round(payRub - (Number(o.crypto) || 0) * official));
   const ops = Math.min(gross, Math.max(0, Number(s.opsExpensesRub) || 0));
@@ -1331,11 +1401,12 @@ function brokerEarnEstimate(o) {
 
 function brokerOrderKb(o, login) {
   const kb = new InlineKeyboard();
-  if (o.status === 'new') {
+  if (['collecting', 'new'].includes(o.status)) {
     if (o.broker === login) {
       kb.text('💳 Выдать реквизиты', `b:o:${o.id}:req`).text('↩️ Отказаться', `b:o:${o.id}:release`);
     } else if (!o.broker) {
-      kb.text('🙋 Взять заявку', `b:o:${o.id}:take`);
+      const own = store.bidsForOrder(o.id).find((b) => b.login === login && b.status === 'active');
+      kb.text(own ? `💬 Отклик: ${fmtRub(own.rate)} — изменить` : '💬 Откликнуться своей ценой', `b:o:${o.id}:take`);
     } else {
       kb.text(`В работе у другого брокера`, `b:noop`);
     }
@@ -1463,9 +1534,13 @@ async function notifyAdminsPayout(payout) {
   );
 }
 
+// Каждый офер уходит брокерам как заказ в такси: они откликаются своей ценой,
+// клиент выбирает отклик в приложении. Цену брокер задаёт в ЛК Web App.
 async function notifyBrokersNewOrder(o) {
   const s = store.get().settings;
-  const est = brokerEarnEstimate(o);
+  const market = o.currency === 'GRAM' ? Number(s.rateGRAM) || 0 : Number(s.rateBTC) || 0;
+  const crypto = Number(o.crypto) || 0;
+  const spreadRub = Math.max(0, Math.round(crypto * market * 0.01));
   const creds = store.brokerCreds();
   // Рассылка идёт и когда работают мастер-креды, и когда брокеры назначены
   // по user ID: вход в кабинет больше не обязан зависеть от логина/пароля.
@@ -1473,15 +1548,94 @@ async function notifyBrokersNewOrder(o) {
   const intern = Number(o.rub) <= (Number(s.internMaxRub) || 5000);
   await Promise.all(store.allBrokerSessions().map(async ({ tgId, login }) => {
     const can = store.brokerCanTake(login, o.rub);
-    if (!can.ok && can.reason === 'limit') return; // не спамим стажёров крупными заявками
+    if (!can.ok && can.reason === 'limit') return; // не спамим стажёров крупными оферами
     if (!can.ok && can.reason === 'deposit') return;
     try {
+      const kb = new InlineKeyboard()
+        .text('💬 Откликнуться', `b:o:${o.id}:take`)
+        .text('📥 Оферы', 'b:orders');
       await bot.api.sendMessage(tgId,
-        `🔔 <b>Новая заявка #${o.id}</b>${intern ? ' · подходит стажёру' : ''}\n` +
-        `💵 ${fmtRub(o.rub)} · 🪙 ${o.currency} ≈ ${fmtCrypto(o.crypto, o.currency)}\n` +
-        `📈 Доход: ≈ <b>${fmtRub(est.rub)}</b> (${fmtBtc(est.btc)})`,
-        { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🙋 Взять', `b:o:${o.id}:take`).text('📥 Заявки', 'b:orders') });
+        `🆕 <b>Офер #${o.id}</b>${intern ? ' · подходит стажёру' : ''}\n` +
+        `💵 ${fmtRub(o.rub)} · 🪙 ${o.currency} ≈ ${fmtCrypto(crypto, o.currency)}\n` +
+        `📊 Рыночный курс: <b>${fmtRub(market)}</b> за 1 ${o.currency} — площадка ничего не наценивает\n` +
+        `⏱ Отклики принимаются ${Math.round((Number(s.offerWindowSec) || 120) / 60) || 2} мин\n\n` +
+        `Откликнитесь — заявка уйдёт с вашей ценой, а +1% к курсу даст ≈ ${fmtRub(spreadRub)}. Цену меняйте в ЛК.`,
+        { parse_mode: 'HTML', reply_markup: brokerAppKb(kb) });
     } catch (e) { console.error(`[bot] broker ${tgId}:`, e.message); }
+  }));
+}
+
+// Отклик принят клиентом: брокер выдаёт реквизиты; остальным — короткое «не выбрали».
+// Подписка: первые trialDays суток бесплатно, дальше минимальный месячный донат
+// на Tribute. Одна подписка открывает обе стороны — обмен и кабинет брокера.
+function subscriptionPromptText(access, who = 'клиент') {
+  const link = access.tributeUrl
+    ? 'Ссылка на оплату — кнопка ниже.'
+    : 'Ссылку на Tribute осталось вписать хосту: переменная TRIBUTE_URL.';
+  return (
+    `💳 <b>Доступ${who === 'брокер' ? ' брокера' : ''}</b>\n\n` +
+    `Бесплатные ${access.trialDays} дн. закончились. Дальше — подписка: минимальный месячный донат ` +
+    `<b>${fmtRub(access.amountRub)}</b> вместо разовых сборов и комиссий. Одна подписка открывает ` +
+    `и обмен, и кабинет брокера — платить можно с любой стороны.\n\n` +
+    link
+  );
+}
+
+function subscriptionKb(access, extra = null) {
+  const kb = new InlineKeyboard();
+  if (access.tributeUrl) kb.url('💳 Оформить подписку', access.tributeUrl).row();
+  const withExtra = extra ? kb.append(extra) : kb;
+  return withExtra;
+}
+
+async function notifyUserSubscription(userId, access) {
+  const user = store.getUser(userId);
+  const opts = { parse_mode: 'HTML', reply_markup: subscriptionKb(access) };
+  const text =
+    `✅ <b>Подписка PRICELEX активна</b> до ${fmtDate(access.until)}\n` +
+    `Спасибо — обмен и кабинет брокера открыты.\n\n` +
+    `Приложение: Меню → PRICELEX`;
+  try {
+    await bot.api.sendMessage(String(userId), text, opts);
+  } catch (e) {
+    console.error(`[bot] subscription ${user ? user.name : userId}:`, e.message);
+  }
+}
+
+async function notifyAdminsSubscription(user, sub, type) {
+  const when = type === 'request' ? '💳 <b>Заявка на подписку</b>' : '💳 <b>Оплата подписки подтверждена</b>';
+  const kb = type === 'request'
+    ? new InlineKeyboard().text('✅ Подтвердить доступ', `sub:${user.id}:ok`).text('❌ Отклонить', `sub:${user.id}:no`)
+    : null;
+  await broadcast(
+    `${when}\n` +
+    `👤 ${esc(user.name || 'Клиент')}${user.username ? ' (@' + esc(user.username) + ')' : ''} · <code>${esc(user.id)}</code>\n` +
+    `💰 Минимальный месячный донат: <b>${fmtRub((sub && sub.amount) || store.get().settings.subscriptionAmountRub)}</b>\n` +
+    (sub && sub.until ? `📅 Оплачено до: ${fmtDate(sub.until)}\n` : '') +
+    `\nПроверьте платёж на Tribute и подтвердите доступ — он включится на 30 дней.`,
+    kb ? { parse_mode: 'HTML', reply_markup: kb } : { parse_mode: 'HTML' }
+  );
+}
+
+async function notifyBidAccepted(order, bid, declined = []) {
+  if (!order || !bid) return;
+  const kb = new InlineKeyboard().text('💳 Выдать реквизиты', `b:o:${order.id}:req`).text('📥 Заявки', 'b:orders');
+  await Promise.all(store.brokerSessionsByLogin(bid.login).map(async (tgId) => {
+    try {
+      await bot.api.sendMessage(tgId,
+        `🎯 <b>Ваш отклик принят: офер #${order.id}</b>\n` +
+        `💵 К оплате: <b>${fmtRub(order.payRub || order.rub)}</b> · 🪙 ${fmtCrypto(order.crypto, order.currency)}\n` +
+        `📈 Ваша цена: ${fmtRub(bid.rate)} за 1 ${order.currency}\n\n` +
+        `Выдайте реквизиты клиенту — он ждёт в приложении.`,
+        { parse_mode: 'HTML', reply_markup: brokerAppKb(kb) });
+    } catch (e) { console.error(`[bot] broker ${tgId}:`, e.message); }
+  }));
+  await Promise.all((declined || []).map(async (login) => {
+    for (const tgId of store.brokerSessionsByLogin(login)) {
+      try {
+        await bot.api.sendMessage(tgId, `🤷 По оферу #${order.id} клиент выбрал другое предложение. Следующий офер придёт сюда же.`);
+      } catch (e) { console.error(`[bot] broker ${tgId}:`, e.message); }
+    }
   }));
 }
 
@@ -1717,6 +1871,14 @@ async function handleBrokerCallback(ctx, d) {
       { parse_mode: 'HTML' }
     );
   }
+  if (d === 'b:subpaid') {
+    const sub = store.requestUserSubPayment(ctx.from.id, { amount: store.accessSettings().amountRub, method: 'broker' });
+    bus.emit('subscription_event', { user: store.getUser(ctx.from.id) || { id: ctx.from.id, name: ctx.from.first_name }, sub, type: 'request' });
+    return ctx.reply(
+      '✅ Спасибо! Проверим платёж на Tribute и включим доступ — без повторных уведомлений, доступ откроется сам.',
+      { parse_mode: 'HTML' }
+    );
+  }
   if (d === 'b:dep:refund') {
     const r = store.brokerDepositRefundable(login);
     if (!r.ok) {
@@ -1734,8 +1896,21 @@ async function handleBrokerCallback(ctx, d) {
   if (!act) return ctx.editMessageText(brokerOrderText(o, login), opts).catch(() => {});
 
   if (act === 'take') {
-    if (o.status !== 'new' || o.broker) {
+    // Отклик на офер: клиент увидит предложение и сам решит, чьё принять.
+    if (o.broker || !['collecting', 'new'].includes(o.status)) {
       return ctx.editMessageText(brokerOrderText(o, login), opts).catch(() => {});
+    }
+    const access = store.accessFor(store.getUser(ctx.from.id) || { id: ctx.from.id, trialStartedAt: Date.now() });
+    if (!access.ok) {
+      // Подписка одна на человека: брокер оформляет её так же, как клиент.
+      const st = store.getUser(ctx.from.id);
+      const req = store.requestUserSubPayment(ctx.from.id, { amount: access.amountRub, method: 'broker' });
+      await ctx.reply(subscriptionPromptText(access, 'брокер'), {
+        parse_mode: 'HTML',
+        reply_markup: subscriptionKb(access, new InlineKeyboard().text('✅ Я оплатил', `b:subpaid`)),
+      }).catch(() => {});
+      bus.emit('subscription_event', { user: st || { id: ctx.from.id, name: ctx.from.first_name }, sub: req, type: 'request' });
+      return;
     }
     const can = store.brokerCanTake(login, o.rub);
     if (!can.ok) {
@@ -1743,10 +1918,28 @@ async function handleBrokerCallback(ctx, d) {
       if (can.reason === 'deposit') return brokerDepositMenu(ctx, false);
       return;
     }
-    const upd = store.updateOrder(o.id, { broker: login });
+    const s2 = store.get().settings;
+    const market = o.currency === 'GRAM' ? Number(s2.rateGRAM) || 0 : Number(s2.rateBTC) || 0;
+    const price = store.brokerPrice(login) || {};
+    const rate = Number(price[o.currency]) || market;
+    const r = store.placeBid({
+      orderId: o.id, login, name: store.brokerCard(login).name, rate, marketRate: market,
+    });
+    if (!r.ok) {
+      return ctx.reply('Офер уже закрыт — клиент выбрал другого брокера.');
+    }
+    const upd = store.getOrder(o.id);
     await sendOrUpdateOrderAdmin(upd);
-    await ctx.editMessageText(brokerOrderText(upd, login), { parse_mode: 'HTML', reply_markup: brokerOrderKb(upd, login) }).catch(() => {});
-    return requisitesPromptBroker(ctx, upd);
+    const own = r.bid.rate === market ? 'по рыночному курсу' : `по вашей цене ${fmtRub(r.bid.rate)}`;
+    return ctx.editMessageText(
+      `✅ <b>Отклик отправлен</b> — офер #${o.id}, ${own} за 1 ${o.currency}.\n` +
+      `💵 К оплате: ${fmtRub(o.rub)} · 🪙 ${o.currency} ≈ ${fmtCrypto(o.crypto, o.currency)}\n\n` +
+      (r.updated ? 'Цену в отклике обновили.' : 'Клиент увидит ваше предложение в приложении.') +
+      (r.bid.rate === market
+        ? '\n\nХотите заработать больше — поднимите цену в ЛК: клиент видит рыночный курс и сравнивает предложения.'
+        : ''),
+      { parse_mode: 'HTML', reply_markup: brokerAppKb(new InlineKeyboard().text('📥 Оферы', 'b:orders').text('📊 ЛК', 'b:home')) }
+    ).catch(() => {});
   }
   if (o.broker !== login) {
     return ctx.editMessageText(brokerOrderText(o, login), opts).catch(() => {});
@@ -1804,6 +1997,35 @@ async function handleBrokerCallback(ctx, d) {
 }
 
 /* ---------- админские карточки заявок/депозитов/выплат брокеров ---------- */
+
+// Подтверждение подписки: включаем доступ на 30 дней и пишем пользователю.
+async function handleSubscriptionAdminCallback(ctx, d) {
+  const [, userId, act] = d.split(':');
+  const user = store.getUser(userId) || { id: userId, name: 'Клиент' };
+  if (act === 'ok') {
+    const sub = store.activateUserSub(userId, { days: 30, by: ctx.from.id });
+    await ctx.editMessageText(
+      `💳 <b>Подписка подтверждена</b>\n👤 ${esc(user.name || 'Клиент')} · <code>${esc(userId)}</code>\n` +
+      `📅 Доступ открыт до ${fmtDate(sub.currentPeriodEnd)}`,
+      { parse_mode: 'HTML' }
+    ).catch(() => {});
+    await notifyUserSubscription(userId, store.accessFor(store.getUser(userId) || user));
+    return;
+  }
+  const sub = store.setUserSubStatus(userId, 'cancelled');
+  await ctx.editMessageText(
+    `💳 <b>Подписка отклонена</b>\n👤 ${esc(user.name || 'Клиент')} · <code>${esc(userId)}</code>\n` +
+    `Доступ останется закрытым до оплаты.`,
+    { parse_mode: 'HTML' }
+  ).catch(() => {});
+  try {
+    const access = store.accessFor(store.getUser(userId) || user);
+    await bot.api.sendMessage(String(userId),
+      '💳 Оплату подписки не подтвердили. Проверьте платёж на Tribute и напишите в поддержку — доступ включим сразу после проверки.',
+      { parse_mode: 'HTML', reply_markup: subscriptionKb(access) });
+  } catch (e) { console.error('[bot] subscription no:', e.message); }
+  return sub;
+}
 
 async function handleBrokerAdminCallback(ctx, d) {
   // d: bd:<id>:ok|no (депозит), bp:<id>:paid|no (выплата)
@@ -2192,12 +2414,15 @@ function register() {
   bot.command('start', async (ctx) => {
     if (!isAdmin(ctx)) {
       const url = store.get().settings.publicUrl;
+      const trialDays = Number(store.get().settings.trialDays) || 3;
+      const hello = `🌌 PRICELEX — агентство криптоброкеров: BTC и GRAM.\n\n` +
+        `🎁 Первые ${trialDays} дн. доступа — бесплатно: оферы, отклики брокеров и кабинет.`;
       if (url) {
-        return ctx.reply('🌌 PRICELEX — агентство криптоброкеров. Проверенная и быстрая команда профессионалов: BTC и GRAM.', {
+        return ctx.reply(hello, {
           reply_markup: new InlineKeyboard().webApp('Открыть PRICELEX', url),
         });
       }
-      return ctx.reply('🌌 PRICELEX — агентство криптоброкеров. Приложение откроется кнопкой меню, как только будет готово.');
+      return ctx.reply(`${hello}\n\nПриложение откроется кнопкой меню, как только будет готово.`);
     }
     flows.delete(ctx.from.id);
     await mainMenu(ctx, false);
@@ -2236,6 +2461,7 @@ function register() {
 
     // Админские карточки брокеров: депозиты, выплаты, заявки «стать брокером».
     if (d.startsWith('bd:') || d.startsWith('bp:')) return handleBrokerAdminCallback(ctx, d);
+    if (d.startsWith('sub:')) return handleSubscriptionAdminCallback(ctx, d);
     // Чат брокера: bchat:<userId>:<login> — открыть, bchre:<userId>:<login> — ответить.
     if (d.startsWith('bchat:')) {
       const [, userId, login] = d.split(':');
@@ -2274,6 +2500,7 @@ function register() {
     if (d === 'm:home') return mainMenu(ctx, true);
     if (d === 'm:orders') return ordersMenu(ctx, true);
     if (d === 'm:settings') return settingsMenu(ctx, true);
+    if (d === 's:sub') return subscriptionMenu(ctx, true);
     if (d === 'm:stats') return statsMenu(ctx, true);
     if (d === 'm:admins') return adminsMenu(ctx);
     if (d === 'm:links') return linksMenu(ctx, true);
@@ -2400,7 +2627,7 @@ function register() {
           `✅ Официальный курс обновлён: ₿ ${fmtRub(official.btc)} · G ${fmtRub(official.gram)}\n` +
             `Медиана по ${official.sources.length} ист.: ${official.sources.join(', ')}\n` +
             `Курс доллара: ${fmtUsdRub(official.usdRub)} (${official.usdRubSource})\n` +
-            `Курсы для клиентов пересчитаны с комиссией.${down}`,
+            `Для клиентов действует этот же реальный курс — без наценки.${down}`,
           { reply_markup: homeKb() }
         );
       } catch (e) {
@@ -2438,7 +2665,7 @@ function register() {
         }
         return txPrompt(ctx, o);
       }
-      const allowed = { req: ['new'], quote: ['new'], amt: ['details'], reject: ['new', 'details'], unpaid: ['paid'], confirm: ['details', 'paid'] };
+      const allowed = { req: ['new', 'collecting'], quote: ['new', 'collecting'], amt: ['details'], reject: ['new', 'collecting', 'details'], unpaid: ['paid'], confirm: ['details', 'paid'] };
       if (!allowed[act]?.includes(o.status)) {
         return ctx.reply('Действие недоступно: статус заявки уже изменился. Откройте заявку заново.', { reply_markup: homeKb() });
       }
@@ -2506,6 +2733,16 @@ function createBot(options = {}) {
   bot = new Bot(config.botToken, { client: { timeoutSeconds: 15 }, ...options });
   register();
   bus.on('order_event', onOrderEvent);
+  bus.on('subscription_event', async ({ user, sub, type }) => {
+    try {
+      store.touchUser(user || {});
+      if (type === 'request') await notifyAdminsSubscription(user || {}, sub || null, type);
+      if (type === 'activated' && user && user.id) {
+        const u = store.getUser(user.id);
+        await notifyUserSubscription(user.id, store.accessFor(u || user));
+      }
+    } catch (e) { console.error('[bot] subscription:', e.message); }
+  });
   bus.on('support_message', onSupportMessage);
   bus.on('review_event', onReviewEvent);
   bus.on('broker_event', onBrokerEvent);
