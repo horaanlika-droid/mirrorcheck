@@ -214,6 +214,18 @@ function startWeb() {
       if (initData && validateInitData(initData, config.botToken)) {
         return { user: parseUser(initData), demo: false };
       }
+      // Домен без Telegram: гость заходит из браузера и работает под своим
+      // идентификатором. Префикс guest- исключает выдачу себя за реального
+      // пользователя бота, а флаг demo остаётся ложным — демо-админка не включается.
+      const d = body.demo || q.demo;
+      if (d && d.id) {
+        const gid = String(d.id).replace(/\D/g, '').slice(-12) || String(Date.now());
+        return {
+          user: { id: `guest-${gid}`, first_name: d.name || 'Гость', username: '' },
+          demo: false,
+          guest: true,
+        };
+      }
       return null;
     }
     const d = body.demo || q.demo;
@@ -648,6 +660,19 @@ function startWeb() {
     });
     bus.emit('subscription_event', { user, sub, type: 'request' });
     res.json({ access: store.accessFor(user), subscription: publicSubscription(sub) });
+  });
+
+  // Что предлагают брокеры: живые цены их кабинетов. Клиент видит список до
+  // создания заявки — вместе с состоянием «пока не предлагают».
+  app.get('/api/offers', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const s = store.get().settings;
+    res.json({
+      offers: store.brokerOffers(),
+      market: { BTC: s.rateBTC || null, GRAM: s.rateGRAM || null },
+      checkedAt: Date.now(),
+    });
   });
 
   /* ---------- ЛК брокера в Web App ---------- */

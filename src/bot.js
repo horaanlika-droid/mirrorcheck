@@ -835,7 +835,7 @@ function settingsKb(s) {
   return new InlineKeyboard()
     .text('🔄 Обновить курс', 's:refresh')
     .row()
-    .text(`💳 Подписка ${Number(s.subscriptionAmountRub) || 5000} ₽/мес`, 's:sub')
+    .text(`💳 Подписка ${Number(s.subscriptionAmountRub) || 200} ₽/мес`, 's:sub')
     .row()
     .text('⬇️ Мин. сумма', 's:min')
     .text('⬆️ Макс. сумма', 's:max')
@@ -908,7 +908,7 @@ async function subscriptionMenu(ctx, edit = true) {
   const text =
     `💳 <b>Подписка на доступ</b>\n\n` +
     `Первые <b>${Number(s.trialDays) || 0} дн.</b> — бесплатно (считаются от первого захода в приложение).\n` +
-    `Дальше доступ открывает подписка: минимальный месячный донат <b>${fmtRub(s.subscriptionAmountRub)}</b>. ` +
+    `Дальше доступ открывает подписка «Минимальный донат» — <b>${fmtRub(s.subscriptionAmountRub)}</b>/мес. ` +
     `Никаких процентов и разовых сборов со сделок.\n` +
     `Одна подписка на человека — платить может и клиент, и брокер, доступ открывается с любой стороны.\n\n` +
     `🔗 Ссылка на оплату: ${s.tributeUrl ? `<code>${esc(s.tributeUrl)}</code>` : '<b>не задана</b> — впишите кнопкой ниже или переменной TRIBUTE_URL'}\n` +
@@ -958,7 +958,7 @@ const SET_FIELDS = {
   max: { label: 'максимальную сумму обмена (₽)', num: true, key: 'maxRub' },
   ref: { label: 'реферальный процент (например 1)', num: true, key: 'refPercent' },
   avgm: { label: 'среднее время обмена в минутах (0 — считать автоматически по сделкам, например 12)', num: true, key: 'avgExchangeMin' },
-  subamt: { label: 'минимальный месячный донат за доступ (₽, например 5000)', num: true, key: 'subscriptionAmountRub' },
+  subamt: { label: 'минимальный донат за доступ (₽, например 200)', num: true, key: 'subscriptionAmountRub' },
   trial: { label: 'сколько дней доступа давать бесплатно (0–90, сейчас 3)', num: true, key: 'trialDays' },
   suburl: { label: 'ссылку на подписку Tribute (её же можно вписать переменной TRIBUTE_URL на хосте)', key: 'tributeUrl' },
   ann: { label: 'текст объявления для сайта', key: 'announcement' },
@@ -1160,7 +1160,7 @@ async function handleAdminText(ctx) {
         } else if (key === 'bdepfeemax') {
           if (!isFinite(n) || n < 0) return ctx.reply('Предел сбора — неотрицательное число в BTC. Пример: 0.0005 (0 — без предела)');
         } else if (key === 'subamt') {
-          if (!isFinite(n) || n < 1 || n > 1_000_000) return ctx.reply('Донат — от 1 до 1 000 000 ₽. Пример: 5000');
+          if (!isFinite(n) || n < 1 || n > 1_000_000) return ctx.reply('Донат — от 1 до 1 000 000 ₽. Пример: 200');
         } else if (key === 'trial') {
           if (!isFinite(n) || n < 0 || n > 90) return ctx.reply('Бесплатный доступ — от 0 до 90 дней. Пример: 3');
         } else if (key === 'avgm') {
@@ -1574,7 +1574,7 @@ function subscriptionPromptText(access, who = 'клиент') {
     : 'Ссылку на Tribute осталось вписать хосту: переменная TRIBUTE_URL.';
   return (
     `💳 <b>Доступ${who === 'брокер' ? ' брокера' : ''}</b>\n\n` +
-    `Бесплатные ${access.trialDays} дн. закончились. Дальше — подписка: минимальный месячный донат ` +
+    `Бесплатные ${access.trialDays} дн. закончились. Дальше — подписка «Минимальный донат» ` +
     `<b>${fmtRub(access.amountRub)}</b> вместо разовых сборов и комиссий. Одна подписка открывает ` +
     `и обмен, и кабинет брокера — платить можно с любой стороны.\n\n` +
     link
@@ -1610,7 +1610,7 @@ async function notifyAdminsSubscription(user, sub, type) {
   await broadcast(
     `${when}\n` +
     `👤 ${esc(user.name || 'Клиент')}${user.username ? ' (@' + esc(user.username) + ')' : ''} · <code>${esc(user.id)}</code>\n` +
-    `💰 Минимальный месячный донат: <b>${fmtRub((sub && sub.amount) || store.get().settings.subscriptionAmountRub)}</b>\n` +
+    `💰 «Минимальный донат»: <b>${fmtRub((sub && sub.amount) || store.get().settings.subscriptionAmountRub)}</b>\n` +
     (sub && sub.until ? `📅 Оплачено до: ${fmtDate(sub.until)}\n` : '') +
     `\nПроверьте платёж на Tribute и подтвердите доступ — он включится на 30 дней.`,
     kb ? { parse_mode: 'HTML', reply_markup: kb } : { parse_mode: 'HTML' }
