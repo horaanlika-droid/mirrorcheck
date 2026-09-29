@@ -130,8 +130,9 @@ test('«Как это устроено»: пункт — одна строка �
   assert.ok(dep, 'сумма внутри текста пункта');
   assert.match(dep.textContent, /^0\.0143\d{4} BTC$/, 'сумма и тикер — одна связка');
   assert.match(glass, /\.dep-inline, \.nw \{ white-space: nowrap; \}/);
-  const deposit = items.find((f) => /Депозит и подключение/.test(f.textContent));
-  assert.deepEqual([...deposit.querySelectorAll('.nw')].map((x) => x.textContent), ['0.0002 BTC', '0.0005 BTC']);
+  const deposit = items.find((f) => /Свой депозит/.test(f.textContent));
+  assert.ok(deposit, 'пункт про собственный депозит брокера');
+  assert.doesNotMatch(deposit.textContent, /сбор за подключение —|возвращается после стажировки/);
 });
 
 test('«Ваша заявка»: подпись и значение разведены, а не склеены в «Контакт035869504»', async (t) => {

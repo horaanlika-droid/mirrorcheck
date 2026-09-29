@@ -64,19 +64,12 @@ const defaults = () => ({
     brokerSharePercent: 70, // брокеру 70% спреда сделки, площадке 30%
     opsExpensesRub: 50, // операционные расходы площадки со сделки, ₽
     brokerMinPayoutBtc: 0.0002, // минимальная сумма выплаты брокеру
-    brokerDepositUsd: 20, // возвратный депозит стажёра, в $ (для текстов)
-    brokerDepositBtc: 0.0002, // эквивалент депозита в BTC
+    // Депозит брокера: сумму выбирает сам брокер, пополняет через бот,
+    // админ подтверждает зачисление. Торгует брокер в пределах своего депозита.
     brokerDepositAddress: '', // куда брокер вносит депозит (задаёт админ)
-    // Разовый сбор за подключение брокера: процент от суммы депозита, но не больше
-    // лимита. Сбор считается сверх депозита и не возвращается — он не входит
-    // в возвратную сумму и всегда показывается брокеру отдельной строкой.
-    brokerDepositFeePercent: 10,
-    brokerDepositFeeMaxBtc: 0.0005,
     // Общий гарантийный депозит всех брокеров площадки — именно его клиент видит
     // в приложении как страховку сделки. Последние знаки на витрине живут по рынку.
     guaranteeFundBtc: 0.02,
-    internMaxRub: 5000, // стажёр работает только с заявками до этой суммы, ₽
-    internDays: 7, // длительность стажировки в днях
     adminBrokers: DEFAULT_ADMIN_BROKERS,
     // Ежемесячный платёж за доступ к платформе (Tribute) — «Минимальный донат»
     subscriptionRequired: process.env.SUBSCRIPTION_REQUIRED === '1',
@@ -110,7 +103,7 @@ const defaults = () => ({
   // { tgId, login, name, username, active, createdAt } — login совпадает с tgId,
   // поэтому заявки, чаты, профили и выплаты продолжают жить по логину.
   brokerAccounts: [],
-  // Профиль брокера по логину: { name, username, depositBtc, depositAt, internUntil }
+  // Профиль брокера по логину: { name, username, depositBtc, depositAt }
   brokerProfiles: {},
   // Офер клиента собирает отклики брокеров — как заказ в такси.
   // Отклик: { id, orderId, login, name, rate, marketRate, note, status, createdAt, updatedAt }
@@ -123,7 +116,7 @@ const defaults = () => ({
   brokerPriceHistory: {},
   // Леджер брокера: { id, login, orderId, rub, btc, at, type: 'earn' }
   brokerLedger: [],
-  // Заявки на ввод депозита стажёра: { id, login, tgId, btc, status, createdAt, updatedAt, adminMsgIds }
+  // Заявки брокеров на пополнение депозита: { id, login, tgId, btc, status, createdAt, updatedAt, adminMsgIds }
   // status: 'pending' | 'confirmed' | 'declined'
   brokerDeposits: [],
   depositSeq: 1,
@@ -211,14 +204,10 @@ function load() {
       if (bs.opsExpensesRub === undefined) bs.opsExpensesRub = 50; // операционные расходы со сделки, ₽
       if (bs.brokerMinPayoutBtc === undefined) bs.brokerMinPayoutBtc = 0.0002;
       if (bs.avgExchangeMin === undefined) bs.avgExchangeMin = 0;
-      if (bs.brokerDepositUsd === undefined) bs.brokerDepositUsd = 20;
-      if (bs.brokerDepositBtc === undefined) bs.brokerDepositBtc = 0.0002;
       if (bs.brokerDepositAddress === undefined) bs.brokerDepositAddress = '';
-      if (bs.brokerDepositFeePercent === undefined) bs.brokerDepositFeePercent = 10;
-      if (bs.brokerDepositFeeMaxBtc === undefined) bs.brokerDepositFeeMaxBtc = 0.0005;
       if (bs.guaranteeFundBtc === undefined) bs.guaranteeFundBtc = 0.02;
-      if (bs.internMaxRub === undefined) bs.internMaxRub = 5000;
-      if (bs.internDays === undefined) bs.internDays = 7;
+      // Стажировка, фиксированный депозит $20 и сбор за подключение упразднены.
+      for (const k of ['brokerDepositUsd', 'brokerDepositBtc', 'brokerDepositFeePercent', 'brokerDepositFeeMaxBtc', 'internMaxRub', 'internDays']) delete bs[k];
       if (!Array.isArray(bs.adminBrokers) || bs.adminBrokers.length === 0) bs.adminBrokers = DEFAULT_ADMIN_BROKERS;
       if (bs.subscriptionRequired === undefined) bs.subscriptionRequired = process.env.SUBSCRIPTION_REQUIRED === '1';
       if (bs.subscriptionAmountRub === undefined) bs.subscriptionAmountRub = Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 200;
@@ -372,14 +361,8 @@ function publicSettings() {
     botUsername: s.botUsername,
     brokerMinPayoutBtc: s.brokerMinPayoutBtc,
     brokerSharePercent: s.brokerSharePercent,
-    brokerDepositUsd: s.brokerDepositUsd,
-    brokerDepositBtc: s.brokerDepositBtc,
-    brokerDepositFeePercent: s.brokerDepositFeePercent,
-    brokerDepositFeeMaxBtc: s.brokerDepositFeeMaxBtc,
     // Общий депозит брокеров площадки — клиент видит его как гарантию сделки.
     guaranteeFundBtc: Number(s.guaranteeFundBtc) > 0 ? Number(s.guaranteeFundBtc) : 0.02,
-    internDays: s.internDays,
-    internMaxRub: s.internMaxRub,
     adminBrokers: (s.adminBrokers || DEFAULT_ADMIN_BROKERS).map((b) => ({
       login: b.login,
       name: b.name || b.login,
@@ -1355,13 +1338,26 @@ const brokerPricePoints = (login, limit = 240) =>
 // Что брокеры предлагают прямо сейчас: живые цены из их кабинетов. Клиент видит
 // список до создания заявки — «пока не предлагают», если цен ещё нет.
 function brokerOffers() {
-  return Object.keys(db.brokerPrices || {})
+  const s = db.settings;
+  const market = { BTC: Number(s.rateBTC) || null, GRAM: Number(s.rateGRAM) || null };
+  // Кто может откликнуться прямо сейчас: брокеры с живой ценой в кабинете и
+  // назначенные админом активные брокеры с подтверждённым депозитом. Последние,
+  // пока не задали свою цену, откликаются по рыночному курсу — так и показываем.
+  const logins = new Set(Object.keys(db.brokerPrices || {}));
+  for (const acc of db.brokerAccounts || []) {
+    if (acc && acc.active !== false && brokerDepositNetBtc(acc.login) > 0) logins.add(String(acc.login));
+  }
+  const suspended = new Set((db.brokerAccounts || []).filter((a) => a && a.active === false).map((a) => String(a.login)));
+  return [...logins]
+    .filter((login) => !suspended.has(login))
     .map((login) => {
-      const p = db.brokerPrices[login] || {};
+      const p = (db.brokerPrices || {})[login] || {};
+      const own = Boolean(Number(p.BTC) || Number(p.GRAM));
       return Object.assign(brokerCard(login), {
-        BTC: Number(p.BTC) || null,
-        GRAM: Number(p.GRAM) || null,
-        updatedAt: p.updatedAt || null,
+        BTC: Number(p.BTC) || market.BTC,
+        GRAM: Number(p.GRAM) || market.GRAM,
+        marketPrice: !own,
+        updatedAt: p.updatedAt || s.rateUpdatedAt || null,
       });
     })
     .filter((o) => o.BTC || o.GRAM);
@@ -1420,7 +1416,7 @@ function brokerStats(login) {
   };
 }
 
-/* ---------- брокер: профиль, депозит, стажировка ---------- */
+/* ---------- брокер: профиль и депозит ---------- */
 
 const brokerProfile = (login) => db.brokerProfiles[String(login)] || null;
 
@@ -1428,7 +1424,7 @@ function upsertBrokerProfile(login, patch) {
   return mutate((d) => {
     const key = String(login);
     d.brokerProfiles[key] = Object.assign(
-      { name: '', username: null, depositBtc: 0, depositAt: 0, internUntil: 0 },
+      { name: '', username: null, depositBtc: 0, depositAt: 0 },
       d.brokerProfiles[key] || {},
       patch
     );
@@ -1436,68 +1432,62 @@ function upsertBrokerProfile(login, patch) {
   });
 }
 
-// Стажировка идёт от даты подтверждения депозита internDays дней.
-const brokerIsIntern = (login) => {
-  const p = brokerProfile(login);
-  if (!p || !p.internUntil) return true; // без депозита — стажёр по умолчанию
-  return Date.now() < p.internUntil;
-};
-const brokerInternLeft = (login) => {
-  const p = brokerProfile(login);
-  if (!p || !p.internUntil) return null;
-  return Math.max(0, Math.ceil((p.internUntil - Date.now()) / 86400000));
-};
+const roundBtc = (v) => Math.round((Number(v) || 0) * 1e8) / 1e8;
+const BROKER_BUSY = ['new', 'details', 'paid'];
 
-// Лимит заявки: каждый брокер торгует ровно на ту сумму, какой депозит он положил.
-// Например, положил 100$ — может торговать любой суммой до 100$.
-// Депозит страхует клиентов: если выплата не пришла, площадка компенсирует клиенту.
-function brokerCanTake(login, rub) {
-  const s = db.settings;
-  if (!brokerIsIntern(login)) return { ok: true };
+// Депозит брокера за вычетом выводов, которые уже запрошены и ждут админа.
+function brokerDepositNetBtc(login) {
   const p = brokerProfile(login);
-  if (!p || !p.depositBtc) {
+  const dep = Number(p && p.depositBtc) || 0;
+  const pendingOut = db.payouts
+    .filter((x) => x.login === String(login) && x.kind === 'deposit' && x.status === 'pending')
+    .reduce((sum, x) => sum + (Number(x.btc) || 0), 0);
+  return Math.max(0, roundBtc(dep - pendingOut));
+}
+
+// Сколько ₽ сейчас занято сделками брокера (клиент выбрал его, сделка не закрыта).
+const brokerLockedRub = (login) =>
+  db.orders
+    .filter((o) => o.broker === String(login) && BROKER_BUSY.includes(o.status))
+    .reduce((sum, o) => sum + (Number(o.payRub || o.rub) || 0), 0);
+
+// Лимит брокера: депозит в ₽ по текущему курсу минус открытые сделки.
+function brokerLimit(login) {
+  const rateBTC = Number(db.settings.rateBTC) || 0;
+  const depositBtc = brokerDepositNetBtc(login);
+  const depositRub = Math.round(depositBtc * rateBTC);
+  const lockedRub = brokerLockedRub(login);
+  const freeRub = Math.max(0, depositRub - lockedRub);
+  const lockedBtc = rateBTC > 0 ? roundBtc(lockedRub / rateBTC) : 0;
+  const freeBtc = Math.max(0, roundBtc(depositBtc - lockedBtc));
+  return { depositBtc, depositRub, lockedRub, lockedBtc, freeRub, freeBtc };
+}
+
+// Брокер торгует только в рамках своего депозита: без депозита заявок нет,
+// сумма заявки не может превышать свободную часть депозита.
+function brokerCanTake(login, rub) {
+  const lim = brokerLimit(login);
+  if (!(lim.depositBtc > 0)) {
     return {
       ok: false,
       reason: 'deposit',
-      text: `Каждый может стать брокером, но торгует ровно на сумму своего депозита (например, положил $100 — торгуешь любой суммой до $100). Сначала внесите возвратный депозит $${s.brokerDepositUsd} (${s.brokerDepositBtc} BTC) плюс разовый сбор за подключение: он страхует клиентов — если выплата не пришла, мы компенсируем клиенту из депозита.`
+      text: 'Чтобы откликаться на заявки, пополните депозит в боте: /broker → «🏦 Депозит». Вы торгуете в пределах своего депозита после подтверждения администратором.',
     };
   }
-  const rateBTC = Number(s.rateBTC) || 10000000;
-  const depositRub = Math.round((Number(p.depositBtc) || 0) * rateBTC);
-  const internLimit = Number(s.internMaxRub) || 5000;
-  const maxAllowedRub = Math.max(internLimit, depositRub);
-  if (Number(rub) > maxAllowedRub) {
+  if (Number(rub) > lim.freeRub) {
     return {
       ok: false,
       reason: 'limit',
-      text: `Сумма заявки (${Number(rub).toLocaleString('ru-RU')} ₽) превышает лимит стажировки и размер вашего депозита (${maxAllowedRub.toLocaleString('ru-RU')} ₽). Брокер торгует ровно на ту сумму, какой депозит он положил (на стажировке до ${brokerInternLeft(login) || s.internDays} дн.), чтобы страховать клиентов: если выплата не пришла, мы компенсируем средства клиенту.`
+      text: `Сумма заявки (${Number(rub).toLocaleString('ru-RU')} ₽) больше свободной части вашего депозита (${lim.freeRub.toLocaleString('ru-RU')} ₽). Пополните депозит или завершите текущие сделки.`,
     };
   }
   return { ok: true };
 }
 
-/* ---------- сбор за подключение брокера ---------- */
-
-const roundBtc = (v) => Math.round((Number(v) || 0) * 1e8) / 1e8;
-
-// Сбор: percent от депозита, но не больше max. Считается от суммы депозита,
-// поэтому при базовом депозите 0.0002 BTC это 0.00002 BTC (10%).
-function brokerDepositFeeFor(btc) {
-  const s = db.settings;
-  const sum = roundBtc(btc);
-  const percent = Math.max(0, Number(s.brokerDepositFeePercent) || 0);
-  const cap = Math.max(0, Number(s.brokerDepositFeeMaxBtc) || 0);
-  if (!(sum > 0)) return 0;
-  const raw = (sum * percent) / 100;
-  return roundBtc(cap > 0 ? Math.min(raw, cap) : raw);
-}
-
-// Сколько брокер переводит «одним платежом»: депозит + сбор.
-const brokerDepositTotalBtc = (btc) => roundBtc(roundBtc(btc) + brokerDepositFeeFor(btc));
+/* ---------- пополнения депозита брокера ---------- */
 
 function createBrokerDeposit(dep) {
   const btc = roundBtc(dep.btc);
-  const feeBtc = dep.feeBtc != null ? roundBtc(dep.feeBtc) : brokerDepositFeeFor(btc);
   return mutate((d) => {
     const now = Date.now();
     const row = {
@@ -1505,12 +1495,7 @@ function createBrokerDeposit(dep) {
       login: String(dep.login),
       tgId: String(dep.tgId),
       btc,
-      // Сбор фиксируем в записи: ставку в настройках можно поменять позже,
-      // а у брокера уже названная сумма меняться не должна.
-      feeBtc,
-      feePercent: dep.feePercent != null ? dep.feePercent : Math.max(0, Number(d.settings.brokerDepositFeePercent) || 0),
-      feeMaxBtc: dep.feeMaxBtc != null ? dep.feeMaxBtc : Math.max(0, Number(d.settings.brokerDepositFeeMaxBtc) || 0),
-      totalBtc: roundBtc(btc + feeBtc),
+      totalBtc: btc,
       status: 'pending',
       createdAt: now,
       updatedAt: now,
@@ -1535,16 +1520,30 @@ function updateBrokerDeposit(id, patch) {
 const brokerDepositsByStatus = (status) =>
   db.brokerDeposits.filter((x) => !status || x.status === status).sort((a, b) => b.createdAt - a.createdAt);
 
-// Депозит можно забрать после стажировки (и когда он ещё не выведен).
+// Админ подтвердил пополнение: сумма прибавляется к депозиту брокера.
+function creditBrokerDeposit(login, btc) {
+  const p = brokerProfile(login) || {};
+  return upsertBrokerProfile(login, {
+    depositBtc: roundBtc((Number(p.depositBtc) || 0) + roundBtc(btc)),
+    depositAt: Date.now(),
+  });
+}
+
+// Вывод депозита исполнен: сумма списывается.
+function debitBrokerDeposit(login, btc) {
+  const p = brokerProfile(login) || {};
+  return upsertBrokerProfile(login, {
+    depositBtc: Math.max(0, roundBtc((Number(p.depositBtc) || 0) - roundBtc(btc))),
+  });
+}
+
+// Вывести можно свободную часть депозита (не занятую открытыми сделками).
 function brokerDepositRefundable(login) {
   const p = brokerProfile(login);
-  if (!p || !p.depositBtc) return { ok: false, reason: 'none' };
-  if (brokerIsIntern(login)) {
-    return { ok: false, reason: 'intern', left: brokerInternLeft(login) };
-  }
-  const dup = db.payouts.find((x) => x.login === String(login) && x.kind === 'deposit' && ['pending', 'paid'].includes(x.status));
-  if (dup) return { ok: false, reason: 'dup', status: dup.status };
-  return { ok: true, btc: p.depositBtc };
+  if (!p || !(Number(p.depositBtc) > 0)) return { ok: false, reason: 'none' };
+  const lim = brokerLimit(login);
+  if (!(lim.freeBtc > 0)) return { ok: false, reason: 'locked' };
+  return { ok: true, btc: lim.freeBtc };
 }
 
 // Доступный остаток: начисленное минус выплаты дохода (запрошенные и исполненные).
@@ -1634,15 +1633,16 @@ module.exports = {
   dropBrokerAccount,
   brokerProfile,
   upsertBrokerProfile,
-  brokerIsIntern,
-  brokerInternLeft,
+  brokerLimit,
+  brokerLockedRub,
+  brokerDepositNetBtc,
+  creditBrokerDeposit,
+  debitBrokerDeposit,
   brokerCanTake,
   createBrokerDeposit,
   getBrokerDeposit,
   updateBrokerDeposit,
   brokerDepositsByStatus,
-  brokerDepositFeeFor,
-  brokerDepositTotalBtc,
   brokerDepositRefundable,
   accrueBroker,
   brokerLedgerFor,

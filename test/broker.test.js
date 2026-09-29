@@ -99,13 +99,13 @@ test('broker login flow: wrong creds rejected, correct creds open cabinet', asyn
   assert.ok(/Вход выполнен/.test(calls[calls.length - 2].text));
   const home = calls[calls.length - 1];
   assert.ok(/Кабинет брокера/.test(home.text));
-  assert.ok(/стажировк/i.test(home.text)); // стажёр по умолчанию
+  assert.ok(/Депозит не внесён/.test(home.text)); // без депозита — подсказка пополнить
+  assert.ok(!/стажировк/i.test(home.text));
 });
 
-test('broker cannot take big orders without deposit; deposit request → admin confirms → intern limits', async () => {
+test('broker cannot take orders without deposit; top-up → admin confirms → limit = own deposit', async () => {
   // создаём большую заявку через Web API
-  const s = store.get().settings;
-  store.mutate((db) => { db.settings.minRub = 100; });
+  store.mutate((db) => { db.settings.minRub = 100; db.settings.brokerDepositAddress = 'bc1qplatformdepositaddr0000000000000000'; });
   const r = await api('/api/orders', { method: 'POST', body: { rub: 20000, currency: 'BTC', wallet: 'bc1' + 'a'.repeat(30), ...(await captcha()) } });
   assert.equal(r.status, 200);
   const { order } = await r.json();
@@ -115,43 +115,42 @@ test('broker cannot take big orders without deposit; deposit request → admin c
   assert.ok(calls.some((c) => /депозит/i.test(c.text)));
   assert.equal(store.getOrder(order.id).broker, null);
 
-  // экран депозита сразу показывает сбор и сумму к переводу
+  // экран депозита: без $20, без сбора и без стажировки
   calls = [];
   await click(777, 'b:deposit');
   const menu = calls[calls.length - 1].text;
-  assert.match(menu, /Сбор за подключение/);
-  assert.match(menu, /0\.00022 BTC/); // депозит 0.0002 + сбор 0.00002
-  assert.match(menu, /Возвращается <b>0\.0002 BTC<\/b>/); // сбор не возвращается
+  assert.match(menu, /Ваш депозит/);
+  assert.doesNotMatch(menu, /Сбор|стажир|\$20/i);
 
-  // брокер заявляет депозит → админ подтверждает → стажёр, лимит малых сумм
+  // брокер пополняет депозит на выбранную сумму ≈ 10 000 ₽
+  const rate = store.get().settings.rateBTC;
+  const amount = Math.round((10000 / rate) * 1e8) / 1e8;
   calls = [];
-  await click(777, 'b:dep:made');
+  await click(777, 'b:dep:add');
+  assert.ok(calls.some((c) => /Пришлите сумму в BTC/.test(c.text || '')));
+  await text(777, String(amount));
   const dep = store.brokerDepositsByStatus('pending')[0];
   assert.ok(dep && dep.login === 'wolf');
-  // сбор 10% от депозита фиксируется в заявке, к переводу — депозит + сбор
-  assert.equal(dep.btc, 0.0002);
-  assert.equal(dep.feeBtc, 0.00002);
-  assert.equal(dep.totalBtc, 0.00022);
-  assert.equal(dep.feePercent, 10);
-  assert.ok(calls.some((c) => String(c.chat_id) === '777' && /депозит 0\.0002 BTC \+ сбор 0\.00002 BTC/.test(c.text)));
-  const adminMsg = calls.find((c) => c.chat_id === '111' && /Депозит стажёра/.test(c.text));
+  assert.equal(dep.btc, amount);
+  const adminMsg = calls.find((c) => c.chat_id === '111' && /Пополнение депозита брокера/.test(c.text));
   assert.ok(adminMsg);
-  assert.match(adminMsg.text, /Сбор за подключение/);
-  assert.match(adminMsg.text, /К зачислению всего: <b>0\.00022 BTC<\/b>/);
+  assert.doesNotMatch(adminMsg.text, /Сбор|стажёр/i);
   calls = [];
   await click(111, `bd:${dep.id}:ok`);
   assert.equal(store.getBrokerDeposit(dep.id).status, 'confirmed');
-  const p = store.brokerProfile('wolf');
-  assert.ok(p.depositBtc > 0 && p.internUntil > Date.now());
-  assert.equal(store.brokerIsIntern('wolf'), true);
-  // возврату подлежит ровно депозит, без сбора
-  assert.equal(p.depositBtc, dep.btc);
-  assert.ok(calls.some((c) => String(c.chat_id) === '777' && /Депозит.*подтверждён/.test(c.text)));
+  assert.equal(store.brokerProfile('wolf').depositBtc, amount);
+  assert.ok(calls.some((c) => String(c.chat_id) === '777' && /подтверждено/.test(c.text)));
 
-  // всё ещё нельзя брать крупные заявки (лимит стажёра)
+  // повторное пополнение суммируется
+  const extra = store.createBrokerDeposit({ login: 'wolf', tgId: 777, btc: 0.00001 });
+  await click(111, `bd:${extra.id}:ok`);
+  assert.equal(store.brokerProfile('wolf').depositBtc, Math.round((amount + 0.00001) * 1e8) / 1e8);
+  store.debitBrokerDeposit('wolf', 0.00001);
+
+  // заявка больше депозита — нельзя
   calls = [];
   await click(777, `b:o:${order.id}:take`);
-  assert.ok(calls.some((c) => /стажировк/i.test(c.text)));
+  assert.ok(calls.some((c) => /больше свободной части/i.test(c.text)));
   assert.equal(store.getOrder(order.id).broker, null);
 
   // маленькую — можно: брокер откликается своей ценой (+5% к рынку)
@@ -166,12 +165,16 @@ test('broker cannot take big orders without deposit; deposit request → admin c
   const bid = store.bidsForOrder(small.id).find((b) => b.status === 'active');
   assert.ok(bid && bid.login === 'wolf' && bid.rate > store.get().settings.rateBTC);
   assert.ok(calls.some((c) => /Отклик отправлен/i.test(c.text || '')));
+  // клиент получает уведомление о предложении
+  assert.ok(calls.some((c) => String(c.chat_id) === '777' && /Новое предложение/.test(c.text || '')));
   // клиент принимает отклик — брокер закрепляется, цена берётся из отклика
   const accepted = store.acceptBid(small.id, bid.id);
   assert.equal(accepted.ok, true);
   assert.equal(store.getOrder(small.id).broker, 'wolf');
   assert.equal(store.getOrder(small.id).rate, bid.rate);
   assert.equal(store.getOrder(small.id).status, 'new');
+  // открытая сделка занимает часть депозита
+  assert.equal(store.brokerLimit('wolf').lockedRub, 3000);
   // брокер выдаёт реквизиты (кнопка в уведомлении о принятом отклике)
   calls = [];
   await click(777, `b:o:${small.id}:req`);
@@ -230,23 +233,21 @@ test('payout below minimum refused; above → admin marks paid; broker notified'
   assert.equal(store.brokerAvailableBtc('wolf'), 0);
 });
 
-test('deposit refund only after internship ends', async () => {
+test('deposit withdrawal: free part any time, debited after admin pays', async () => {
+  const before = store.brokerProfile('wolf').depositBtc;
+  assert.ok(before > 0);
   calls = [];
-  await click(777, 'b:dep:refund');
-  assert.ok(/вернётся через/i.test(calls[calls.length - 1].text));
-  // искусственно завершим стажировку
-  store.upsertBrokerProfile('wolf', { internUntil: Date.now() - 1000 });
   await click(777, 'b:dep:refund');
   assert.ok(/Пришлите BTC-адрес/.test(calls[calls.length - 1].text));
   await text(777, 'bc1qrefundwalletaddress00000000000000000');
   const payout = store.payoutsByLogin('wolf').find((x) => x.kind === 'deposit');
   assert.ok(payout && payout.status === 'pending');
+  // пока вывод в работе, лимит его уже не учитывает
+  assert.ok(store.brokerLimit('wolf').depositBtc < before + 1e-12);
   await click(111, `bp:${payout.id}:paid`);
-  // депозит списан из профиля
-  assert.equal(store.brokerProfile('wolf').depositBtc, 0);
-  // повторный возврат не предлагается
-  const r = store.brokerDepositRefundable('wolf');
-  assert.equal(r.ok, false);
+  assert.equal(store.brokerProfile('wolf').depositBtc, Math.max(0, Math.round((before - payout.btc) * 1e8) / 1e8));
+  store.upsertBrokerProfile('wolf', { depositBtc: 0 });
+  assert.equal(store.brokerDepositRefundable('wolf').ok, false);
 });
 
 test('broker apply via web: captcha required, duplicate 409, admin approves → user notified', async () => {
@@ -287,9 +288,20 @@ test('new order events ping broker sessions; paid pings the owning broker only',
   store.mutate((db) => { db.settings.minRub = 100; });
   const r = await api('/api/orders', { method: 'POST', body: { rub: 2000, currency: 'BTC', wallet: 'bc1' + 'c'.repeat(30), ...(await captcha()) } });
   const { order } = await r.json();
+  // без депозита брокеру оферы не шлём
+  store.upsertBrokerProfile('wolf', { depositBtc: 0 });
+  calls = [];
+  await bus.emit('order_event', { order: store.getOrder(order.id), type: 'new' });
+  assert.ok(!calls.some((c) => String(c.chat_id) === '777' && /Офер/.test(c.text)));
+  // с депозитом — шлём; и назначенному по ID брокеру без открытой сессии тоже
+  store.upsertBrokerProfile('wolf', { depositBtc: 1 });
+  store.upsertBrokerAccount('4242', { name: 'Новый' });
+  store.upsertBrokerProfile('4242', { depositBtc: 1 });
   calls = [];
   await bus.emit('order_event', { order: store.getOrder(order.id), type: 'new' });
   assert.ok(calls.some((c) => String(c.chat_id) === '777' && /Офер/.test(c.text)));
+  assert.ok(calls.some((c) => String(c.chat_id) === '4242' && /Офер/.test(c.text)), 'назначенный брокер без сессии тоже получает офер');
+  store.dropBrokerAccount('4242');
   // чужой «paid» брокера не будит
   calls = [];
   await bus.emit('order_event', { order: store.getOrder(order.id), type: 'paid' });
@@ -396,18 +408,13 @@ test('client calls admin on problem: admin notified and support messages created
   assert.ok(msgs.some((m) => /Администратор PRICELEX подключается/.test(m.text)));
 });
 
-test('broker chat: interview first step, admin replies into broker chat', async () => {
+test('broker chat: broker writes, admin replies into broker chat', async () => {
   // Входим брокером и открываем «💬 Чат»: первый шаг — собеседование, а не реквизиты.
   calls = [];
   await text(777, '/broker');
   await text(777, 'wolf');
   await text(777, 's3cret');
   await click(777, 'b:chat');
-  const intro = calls[calls.length - 1].text;
-  assert.match(intro, /собеседован/i, 'первый шаг кабинета — собеседование');
-  assert.match(intro, /депозит/);
-  assert.match(intro, /заявк/i, 'объяснено, что заявки приходят в рамках суммы депозита');
-  assert.match(intro, /доверие/i, 'доверие растёт — площадка закрывает часть депозита');
 
   // Брокер пишет площадке: сообщение ложится в его персональную ветку и видно админу.
   calls = [];
@@ -437,30 +444,10 @@ test('broker chat: interview first step, admin replies into broker chat', async 
   assert.match(calls[calls.length - 1].text, /Реквизиты на депозит/);
 });
 
-test('connection fee: 10% of deposit, capped at 0.0005 BTC', () => {
-  const saved = {
-    percent: store.get().settings.brokerDepositFeePercent,
-    max: store.get().settings.brokerDepositFeeMaxBtc,
-  };
-  store.mutate((db) => { db.settings.brokerDepositFeePercent = 10; db.settings.brokerDepositFeeMaxBtc = 0.0005; });
-  // 10% от базового депозита — ниже потолка
-  assert.equal(store.brokerDepositFeeFor(0.0002), 0.00002);
-  assert.equal(store.brokerDepositTotalBtc(0.0002), 0.00022);
-  // крупный депозит упирается в потолок 0.0005
-  assert.equal(store.brokerDepositFeeFor(0.01), 0.0005);
-  assert.equal(store.brokerDepositTotalBtc(0.01), 0.0105);
-  // 0 в настройке предела = без предела
-  store.mutate((db) => { db.settings.brokerDepositFeeMaxBtc = 0; });
-  assert.equal(store.brokerDepositFeeFor(0.01), 0.001);
-  // 0% = сбора нет, к переводу ровно депозит
-  store.mutate((db) => { db.settings.brokerDepositFeePercent = 0; db.settings.brokerDepositFeeMaxBtc = 0.0005; });
-  assert.equal(store.brokerDepositFeeFor(0.0002), 0);
-  assert.equal(store.brokerDepositTotalBtc(0.0002), 0.0002);
-  // настройки публичные — Web App знает условия до подачи анкеты
+test('no internship, fixed $20 deposit or connection fee in settings', () => {
   const pub = store.publicSettings();
-  assert.equal(pub.brokerDepositFeePercent, 0);
-  store.mutate((db) => {
-    db.settings.brokerDepositFeePercent = saved.percent;
-    db.settings.brokerDepositFeeMaxBtc = saved.max;
-  });
+  for (const k of ['brokerDepositUsd', 'brokerDepositBtc', 'brokerDepositFeePercent', 'brokerDepositFeeMaxBtc', 'internDays', 'internMaxRub']) {
+    assert.equal(pub[k], undefined, k);
+  }
+  assert.equal(typeof store.brokerIsIntern, 'undefined');
 });
