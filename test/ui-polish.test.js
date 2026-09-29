@@ -2,8 +2,8 @@
 // плашка чата в правом нижнем углу; строки не рвутся на колонки (текст
 // растягивает карточку, а не ломается); медные монеты BTC/GRAM и рубль из
 // монограммы логотипа — сгенерированный арт, монета выбранной валюты
-// вращается; бронзовая CTA; виброотклик на нажатия и ошибки; переключатели
-// отклика в профиле.
+// вращается; бронзовая CTA; виброотклик на нажатия и ошибки (всегда включён —
+// переключателей отклика в профиле нет); шаги формы обмена у левого края.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -292,26 +292,48 @@ test('ошибка в форме обмена отзывается вибрац�
   assert.deepEqual(a.impacts, ['error'], 'ошибка проверки — notificationOccurred(error), без лишнего толчка');
 });
 
-test('профиль: «Звук кассы» и «Виброотклик» переключаются и запоминаются', async (t) => {
+test('профиль: пунктов «Звук кассы» и «Виброотклик» нет, нажатия по-прежнему отзываются', async (t) => {
   const a = await app(t);
   await a.open();
-  const sound = a.doc.querySelector('#profileSound');
-  const vibe = a.doc.querySelector('#profileHaptics');
-  assert.equal(sound.getAttribute('role'), 'switch');
-  assert.equal(sound.getAttribute('aria-checked'), 'true', 'по умолчанию звук включён');
-  assert.equal(vibe.getAttribute('aria-checked'), 'true', 'и вибрация включена');
-  sound.click();
-  assert.equal(a.window.localStorage.getItem('pricelex_sound'), 'off');
-  assert.equal(sound.getAttribute('aria-checked'), 'false');
-  assert.ok(sound.querySelector('.profile-toggle').classList.contains('off'));
-
-  await new Promise((r) => setTimeout(r, 120));
-  vibe.click();
-  assert.equal(a.window.localStorage.getItem('pricelex_haptics'), 'off');
+  const view = a.doc.querySelector('#view-profile');
+  assert.equal(a.doc.querySelector('#profileSound'), null, 'строки «Звук кассы» нет');
+  assert.equal(a.doc.querySelector('#profileHaptics'), null, 'строки «Виброотклик» нет');
+  assert.doesNotMatch(view.textContent, /Звук кассы|Виброотклик/);
+  assert.equal(view.querySelectorAll('.profile-settings [role="switch"]').length, 0, 'переключателей отклика не осталось');
   a.impacts.length = 0;
   await new Promise((r) => setTimeout(r, 120));
   a.doc.querySelector('#profileLogout').click();
-  assert.deepEqual(a.impacts, [], 'вибрация выключена — нажатия молчат');
-  vibe.click();
-  assert.deepEqual(a.impacts, ['medium'], 'включили — сразу пробный отклик');
+  assert.deepEqual(a.impacts, ['light'], 'виброотклик на нажатия всегда включён');
+});
+
+// Правила листа по селектору: блок «селекторы { объявления }», где среди
+// селекторов через запятую есть нужный.
+const rulesFor = (css, selector) => [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+  .filter(([, sel]) => sel.split(',').map((x) => x.trim().replace(/\s+/g, ' ')).includes(selector))
+  .map(([, , body]) => body);
+
+test('шаги «1 Сколько меняем?» и «2 Куда отправить?» — у левого края, как шаг 3 и подписи формы', async (t) => {
+  const a = await app(t);
+  const step1 = a.doc.querySelector('.exchange-journey .exchange-form-card > .card-title');
+  const step2 = a.doc.querySelector('.exchange-journey .wallet-card > .card-title');
+  assert.match(step1.textContent, /1\s*Сколько меняем\?/);
+  assert.match(step2.textContent, /2\s*Куда отправить\?/);
+
+  // fix.css центрирует любой .card-title с !important — последний лист
+  // (mobility.css) перебивает это для шагов формы более точным селектором.
+  const sheets = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
+  assert.equal(sheets.at(-1), '/mobility.css', 'mobility.css подключается последним');
+  assert.match(pub('fix.css'), /\.card-title,[\s\S]*?justify-content: center !important;/, 'общее правило центрирует заголовки карточек');
+  const mobility = pub('mobility.css');
+  for (const sel of ['.exchange-journey .exchange-form-card > .card-title', '.exchange-journey .wallet-card > .card-title']) {
+    const body = rulesFor(mobility, sel).join(';');
+    assert.match(body, /justify-content: flex-start !important/, `${sel}: номер и текст прижаты влево`);
+    assert.match(body, /text-align: left !important/, `${sel}: текст по левому краю`);
+    assert.match(body, /text-align-last: left !important/, `${sel}: и последняя строка тоже`);
+  }
+  // Заголовок экрана над формой тоже целиком слева: последняя строка не
+  // уезжает в центр под левой первой («Куда отправим / крипту?»).
+  for (const sel of ['.exchange-heading h1', '.exchange-heading p']) {
+    assert.match(rulesFor(mobility, sel).join(';'), /text-align-last: left !important/, `${sel}: последняя строка слева`);
+  }
 });

@@ -37,6 +37,14 @@ const FX_STALE_MS = 3 * 24 * 3600 * 1000; // совсем старый курс 
 // Если официальный курс не обновлялся дольше, точки графика за этот период
 // (стартовые или устаревшие курсы) не отражают рынок и убираются.
 const HISTORY_GAP_MS = 30 * 60 * 1000;
+// Провалы в истории курса — дни, когда бот не работал (простой хостинга,
+// перезапуски): автообновлений нет, и график соединял края провала длинной
+// прямой. Провал длиннее HISTORY_FILL_GAP_MS в окне графика закрывается
+// часовыми свечами бирж за те же часы.
+const HISTORY_WINDOW_MS = 168 * 3600 * 1000; // окно графика в приложении — неделя
+const HISTORY_FILL_GAP_MS = 2 * 3600 * 1000;
+const HISTORY_FILL_EDGE_MS = 20 * 60 * 1000; // свеча не встаёт вплотную к живой точке
+const HISTORY_FILL_RETRY_MS = 10 * 60 * 1000; // повторная попытка после сбоя — не чаще
 
 // Рамки правдоподобия в долларах: отсекают мусор и чужие токены.
 const BOUNDS_USD = { btc: [1000, 10_000_000], gram: [0.05, 1000] };
@@ -481,6 +489,83 @@ function generateFallbackHistory({ hours = 168, now = Date.now() } = {}) {
   return points;
 }
 
+/* ---------- провалы истории: поиск и заполнение свечами ---------- */
+
+// Провалы окна [from; ∞): соседние точки дальше gapMs друг от друга, а также
+// начало окна, если первая точка в нём заметно позже. Хвост после последней
+// точки провалом не считается: его закрывает первое же автообновление, а
+// точки новее rateUpdatedAt applyRates() счёл бы устаревшими и стёр.
+function findHistoryGaps(points, { from = -Infinity, gapMs = HISTORY_FILL_GAP_MS } = {}) {
+  const list = (Array.isArray(points) ? points : [])
+    .filter((p) => p && Number.isFinite(p.at))
+    .sort((a, b) => a.at - b.at);
+  const gaps = [];
+  let left = null;
+  for (const p of list) {
+    if (p.at < from) { left = p; continue; }
+    const start = left ? left.at : from;
+    if (p.at - start > gapMs) gaps.push({ from: start, to: p.at, left, right: p });
+    left = p;
+  }
+  return gaps;
+}
+
+// Точки из свечей для провалов истории. Свечи — фактические цены бирж за те
+// самые часы (как при первом заполнении недели), не выдуманная кривая. Уровень
+// свечей подгоняется к живым точкам на краях провала: медиана двенадцати
+// источников и свеча одной биржи расходятся на доли процента, а доллар в
+// свечах — сегодняшний. Множитель плавно переходит от левого края к правому,
+// поэтому на стыках нет ступенек.
+function historyGapFill(history, candles, { from = -Infinity, gapMs = HISTORY_FILL_GAP_MS, edgeMs = HISTORY_FILL_EDGE_MS } = {}) {
+  const bars = (Array.isArray(candles) ? candles : [])
+    .filter((c) => c && Number.isFinite(c.at) && c.baseBtc > 0 && c.baseGram > 0)
+    .sort((a, b) => a.at - b.at);
+  if (!bars.length) return [];
+  const gaps = findHistoryGaps((history || []).filter((p) => p && p.btc > 0 && p.gram > 0), { from, gapMs });
+  if (!gaps.length) return [];
+
+  // Цена свечей в момент t — между соседними свечами; вне ряда свечей — нет.
+  const candleAt = (t, key) => {
+    let lo = null;
+    let hi = null;
+    for (const c of bars) {
+      if (c.at <= t) lo = c;
+      else { hi = c; break; }
+    }
+    if (lo && hi && hi.at - lo.at <= 3 * 3600 * 1000) return lo[key] + (hi[key] - lo[key]) * ((t - lo.at) / (hi.at - lo.at));
+    const near = [lo, hi].filter((c) => c && Math.abs(c.at - t) <= 90 * 60 * 1000);
+    return near.length ? near[0][key] : null;
+  };
+  // Поправка к свечам по живой точке края; явно чужой уровень (>10%) не берём.
+  const ratio = (point, key, candleKey) => {
+    if (!point) return null;
+    const c = candleAt(point.at, candleKey);
+    const r = c ? point[key] / c : null;
+    return r && r > 0.9 && r < 1.1 ? r : null;
+  };
+
+  const out = [];
+  for (const gap of gaps) {
+    const inside = bars.filter((c) => c.at > gap.from + edgeMs && c.at < gap.to - edgeMs && c.at >= from);
+    if (!inside.length) continue;
+    const factor = (key, candleKey) => {
+      const l = ratio(gap.left, key, candleKey);
+      const r = ratio(gap.right, key, candleKey);
+      const a = l ?? r ?? 1;
+      const b = r ?? l ?? 1;
+      return (t) => a + (b - a) * ((t - gap.from) / (gap.to - gap.from));
+    };
+    const fBtc = factor('btc', 'baseBtc');
+    const fGram = factor('gram', 'baseGram');
+    for (const c of inside) {
+      const btc = Math.round(c.baseBtc * fBtc(c.at));
+      const gram = Math.round(c.baseGram * fGram(c.at));
+      out.push({ at: c.at, btc, gram, baseBtc: btc, baseGram: gram });
+    }
+  }
+  return out;
+}
+
 /* ---------- движок: опрос, паузы, медиана ---------- */
 
 function createRateEngine({
@@ -762,6 +847,11 @@ function applyRates(official) {
     baseBtc: settings.baseRateBTC,
     baseGram: settings.baseRateGRAM,
   });
+  // Курс вернулся после простоя: между прошлым обновлением и этим — провал.
+  // Закрываем его свечами в фоне, сам курс этого не ждёт.
+  if (prev && at - prev > HISTORY_FILL_GAP_MS) {
+    setImmediate(() => { fillRateHistoryGaps({ force: true }).catch(() => {}); });
+  }
   return settings;
 }
 
@@ -775,6 +865,8 @@ async function ensureRateHistory({ force = false, hours = 168 } = {}) {
   const coversWeek = current.length >= minRequired && (nowTs - oldest) >= 3 * 24 * 3600 * 1000;
 
   if (!force && coversWeek) {
+    // Неделя уже есть, но в ней могут остаться дни простоя — закрываем их в фоне.
+    fillRateHistoryGaps().catch(() => {});
     return current;
   }
 
@@ -809,6 +901,45 @@ async function ensureRateHistory({ force = false, hours = 168 } = {}) {
   });
 
   return ensureHistoryInflight;
+}
+
+// Закрывает провалы недельной истории свечами бирж. Сеть трогается, только
+// если есть провал, который ещё не пробовали закрыть; после неудачного запроса
+// повтор не раньше HISTORY_FILL_RETRY_MS (force — сразу: провал только что
+// закрылся живой точкой).
+const gapFillState = { at: 0, inflight: null, tried: new Set() };
+const gapKey = (g) => `${g.left ? g.left.at : 'start'}:${g.right.at}`;
+function openHistoryGaps() {
+  const gaps = findHistoryGaps(store.get().rateHistory, { from: Date.now() - HISTORY_WINDOW_MS });
+  const keys = new Set(gaps.map(gapKey));
+  for (const k of gapFillState.tried) if (!keys.has(k)) gapFillState.tried.delete(k);
+  return gaps.filter((g) => !gapFillState.tried.has(gapKey(g)));
+}
+async function fillRateHistoryGaps({ force = false } = {}) {
+  if (gapFillState.inflight) return gapFillState.inflight;
+  if (!openHistoryGaps().length) return 0;
+  const startedAt = Date.now();
+  if (!force && startedAt - gapFillState.at < HISTORY_FILL_RETRY_MS) return 0;
+  gapFillState.at = startedAt;
+  gapFillState.inflight = (async () => {
+    try {
+      const res = await engine.fetchHistory({ hours: HISTORY_WINDOW_MS / 3600000 });
+      // Провалы считаются заново: пока шёл запрос, могли прийти живые точки.
+      const from = Date.now() - HISTORY_WINDOW_MS;
+      const added = store.insertRatePoints(historyGapFill(store.get().rateHistory, res.points, { from }));
+      if (added) console.log(`[rates] провалы истории курса закрыты свечами ${res.source}: +${added} точек`);
+      // Что свечи не закрыли (у биржи нет этих часов или в провал чуть длиннее
+      // двух часов не попала ни одна свеча), повторно не запрашиваем.
+      for (const g of findHistoryGaps(store.get().rateHistory, { from })) gapFillState.tried.add(gapKey(g));
+      return added;
+    } catch (e) {
+      console.warn(`[rates] провалы истории курса пока не закрыты: ${e.message}`);
+      return 0;
+    }
+  })().finally(() => {
+    gapFillState.inflight = null;
+  });
+  return gapFillState.inflight;
 }
 
 // Авто-цикл и ручное обновление не пересекаются: второй ждёт первый.
@@ -894,6 +1025,9 @@ function startRates() {
   tick();
   const timer = setInterval(tick, INTERVAL_MS);
   timer.unref?.();
+  // Если свечи не пришли сразу (сеть, лимиты бирж), провалы добираются позже.
+  const gapTimer = setInterval(() => { fillRateHistoryGaps().catch(() => {}); }, 15 * 60 * 1000);
+  gapTimer.unref?.();
   return timer;
 }
 
@@ -902,6 +1036,9 @@ module.exports = {
   refreshRates,
   fetchOfficial,
   ensureRateHistory,
+  fillRateHistoryGaps,
+  findHistoryGaps,
+  historyGapFill,
   generateFallbackHistory,
   mergeHistoryPoints,
   organicMinuteAt,

@@ -212,13 +212,17 @@ test('«дзынь» без жеста запрещён браузером — �
   assert.deepEqual(late.plays, [], 'прелоадер ушёл — отложенный звук снят');
 });
 
-test('звук выключается в профиле, запрет движения на него не влияет', async (t) => {
-  const muted = boot({ browser: true, storage: { pricelex_sound: 'off' } });
-  t.after(() => muted.dom.window.close());
-  runUpTo(muted, 1200);
+test('звук и отклик всегда включены: старые переключатели профиля не глушат их, запрет движения убирает только вибрацию', async (t) => {
+  // Переключатели «Звук кассы» и «Виброотклик» из профиля убраны; выбор,
+  // сохранённый ими раньше, не должен оставить человека без звука навсегда.
+  const legacy = boot({ browser: true, storage: { pricelex_sound: 'off', pricelex_haptics: 'off' } });
+  t.after(() => legacy.dom.window.close());
+  runUpTo(legacy, 1200);
   await tick();
-  assert.deepEqual(muted.plays, [], '«Звук кассы» выключен — тишина');
-  assert.deepEqual(muted.impacts, ['soft', 'rigid'], 'вибрация при этом на месте');
+  assert.deepEqual(legacy.plays, ['/sfx/kaching.mp3'], 'старое «выключено» не глушит «дзынь»');
+  assert.deepEqual(legacy.impacts, ['soft', 'rigid'], 'и не отключает вибрацию');
+  assert.equal(legacy.window.localStorage.getItem('pricelex_sound'), null, 'устаревший ключ звука стёрт');
+  assert.equal(legacy.window.localStorage.getItem('pricelex_haptics'), null, 'устаревший ключ вибрации стёрт');
 
   const still = boot({ browser: true, reduced: true });
   t.after(() => still.dom.window.close());
@@ -226,12 +230,6 @@ test('звук выключается в профиле, запрет движе
   await tick();
   assert.deepEqual(still.plays, ['/sfx/kaching.mp3'], 'prefers-reduced-motion — про движение, звук остаётся');
   assert.deepEqual(still.impacts, [], 'а вибрации нет');
-
-  const quietTouch = boot({ storage: { pricelex_haptics: 'off' } });
-  t.after(() => quietTouch.dom.window.close());
-  runUpTo(quietTouch, 1200);
-  await tick(); await tick();
-  assert.deepEqual(quietTouch.impacts, [], '«Виброотклик» выключен — ни толчка, ни ответа на готовности');
 });
 
 test('кадр держится дольше и не ждёт дольше страховочного таймаута', () => {

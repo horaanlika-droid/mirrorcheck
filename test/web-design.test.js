@@ -72,13 +72,14 @@ const reviewsFixture = [
   { id: 2, name: 'Марина', rating: 4, text: 'Спокойно и честно', createdAt: now - 48 * HOUR },
 ];
 
-async function app(t, { orders = completed, points: historyPoints = points, reviews = reviewsFixture, clock = null } = {}) {
+async function app(t, { orders = completed, points: historyPoints = points, reviews = reviewsFixture, clock = null, telegram = null } = {}) {
   const posted = [];
   const timers = [];
   const dom = new JSDOM(html, { url: 'https://pricelex.example', runScripts: 'outside-only', pretendToBeVisual: true });
   t.after(() => dom.window.close());
   const { window } = dom;
   if (clock) window.Date.now = () => clock.t; // тест двигает время сам
+  if (telegram) window.Telegram = { WebApp: telegram };
   window.console.warn = () => {};
   window.setInterval = () => 1;
   // Таймеры копим, а не исполняем: тест сам решает, когда «прошли 20 секунд».
@@ -211,6 +212,105 @@ test('five-tab navigation opens profile, info and support as secondary screens',
   assert.ok(a.document.querySelector('.nav').classList.contains('hidden'));
   a.document.querySelector('#headerBack').click();
   assert.ok(!a.document.querySelector('#view-profile').classList.contains('hidden'));
+  a.document.querySelector('#headerBack').click();
+  assert.equal(a.document.querySelector('#appHeader .hdr-logo').textContent, 'PRICELEX', 'из профиля «назад» выводит на обмен');
+});
+
+// Экран в шапке: заголовок подстраницы или логотип главного экрана.
+const screenTitle = (doc) => {
+  const page = doc.querySelector('#appHeader .hdr-page-title');
+  return page ? page.textContent : doc.querySelector('#appHeader .hdr-logo').textContent;
+};
+
+test('«назад» из Профиля и Помощи выводит на обмен — пара экранов не зацикливается', async (t) => {
+  const a = await app(t);
+  const doc = a.document;
+  const back = () => doc.querySelector('#headerBack').click();
+
+  doc.querySelector('#profileMenu').click();
+  doc.querySelector('#view-profile [data-go="support"]').click();
+  assert.equal(screenTitle(doc), 'Помощь');
+  back();
+  assert.equal(screenTitle(doc), 'Профиль', 'из Помощи — в Профиль, откуда пришли');
+  back();
+  assert.equal(screenTitle(doc), 'PRICELEX', 'из Профиля — на обмен, а не снова в Помощь');
+  assert.ok(!doc.querySelector('#view-exchange').classList.contains('hidden'), 'виден экран обмена');
+  assert.ok(doc.querySelector('#view-profile').classList.contains('hidden'));
+  assert.ok(doc.querySelector('#view-support').classList.contains('hidden'));
+  assert.ok(!doc.querySelector('.nav').classList.contains('hidden'), 'нижнее меню вернулось');
+  assert.ok(!doc.querySelector('#headerBack'), 'на главном экране стрелки «назад» нет');
+
+  // Длинная цепочка возвращается по своим следам и заканчивается на обмене.
+  doc.querySelector('#profileMenu').click();
+  doc.querySelector('#view-profile [data-go="info"]').click();
+  doc.querySelector('.nav button[data-tab="history"]').click();
+  doc.querySelector('.nav button[data-tab="reviews"]').click();
+  // Вернулись на уже пройденный экран через меню, а не стрелкой: всё, что было
+  // после него, из стека выбрасывается — повторов и петель нет.
+  doc.querySelector('.nav button[data-tab="history"]').click();
+  assert.equal(screenTitle(doc), 'История');
+  const trail = [];
+  for (let i = 0; i < 6 && doc.querySelector('#headerBack'); i += 1) {
+    back();
+    trail.push(screenTitle(doc));
+  }
+  assert.deepEqual(trail, ['Инфо', 'Профиль', 'PRICELEX']);
+
+  // Плавающая кнопка чата с главного экрана: «назад» — сразу на обмен.
+  a.fire(20000);
+  await tick();
+  doc.querySelector('#supportFab').click();
+  await tick();
+  assert.equal(screenTitle(doc), 'Помощь');
+  back();
+  assert.equal(screenTitle(doc), 'PRICELEX');
+});
+
+test('профиль: строка «Доступ» без подписки уводит на обмен, и «назад» потом не молчит', async (t) => {
+  const a = await app(t);
+  const doc = a.document;
+  doc.querySelector('#profileMenu').click();
+  const row = doc.querySelector('#profileAccess');
+  assert.ok(row, 'строка доступа в профиле');
+  row.click();
+  // Без данных о доступе (нет пробного периода и подписки) — ведём на обмен,
+  // где висит оплата. Раньше экран профиля оставался на месте.
+  assert.equal(screenTitle(doc), 'PRICELEX');
+  assert.ok(!doc.querySelector('#view-exchange').classList.contains('hidden'));
+  assert.ok(doc.querySelector('#view-profile').classList.contains('hidden'));
+});
+
+test('профиль: «Активная заявка» открывает саму заявку, а не форму обмена', async (t) => {
+  const active = order(99, 'collecting', 'BTC', 5000, 0, 0.0005);
+  const a = await app(t, { orders: [active] });
+  const doc = a.document;
+  doc.querySelector('#headerBack').click(); // закрыли заявку — главный экран
+  doc.querySelector('#profileMenu').click();
+  doc.querySelector('#profileActiveOrder').click();
+  assert.equal(screenTitle(doc), 'Заявка');
+  assert.ok(doc.querySelector('#exForm').classList.contains('hidden'), 'форма обмена спрятана');
+  assert.ok(!doc.querySelector('#exOrder').classList.contains('hidden'), 'видна карточка заявки');
+  doc.querySelector('#headerBack').click();
+  assert.equal(screenTitle(doc), 'PRICELEX', 'из заявки «назад» — на обмен');
+});
+
+test('системная кнопка «назад» Telegram видна на подстраницах и ведёт туда же, что стрелка', async (t) => {
+  let onBack = null;
+  const back = { visible: false, show() { this.visible = true; }, hide() { this.visible = false; }, onClick(fn) { onBack = fn; } };
+  const telegram = { initData: '', ready() {}, expand() {}, isVersionAtLeast: () => true, BackButton: back };
+  const a = await app(t, { telegram });
+  const doc = a.document;
+  assert.equal(typeof onBack, 'function', 'обработчик подписан');
+  assert.equal(back.visible, false, 'на главном экране — обычное «Закрыть» Telegram');
+  doc.querySelector('#profileMenu').click();
+  assert.equal(back.visible, true, 'в профиле появилась системная «назад»');
+  doc.querySelector('#view-profile [data-go="support"]').click();
+  onBack();
+  assert.equal(screenTitle(doc), 'Профиль');
+  assert.equal(back.visible, true);
+  onBack();
+  assert.equal(screenTitle(doc), 'PRICELEX');
+  assert.equal(back.visible, false, 'на обмене кнопка снова спрятана');
 });
 
 test('reference stylesheet is applied after the legacy component sheet', () => {

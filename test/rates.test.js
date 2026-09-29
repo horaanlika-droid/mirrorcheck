@@ -561,3 +561,176 @@ test('organicMinuteAt: история приходит с живым време�
   const mapped = rates.organicMinuteAt(live);
   assert.ok(mapped >= Math.floor(live / 3600_000) * 3600_000 && mapped < Math.floor(live / 3600_000) * 3600_000 + 3600_000);
 });
+
+/* ---------- провалы истории: дни, когда бот не работал ---------- */
+
+const HOUR_MS = 3600_000;
+
+// Биржевые часовые свечи, привязанные к текущему времени: цена BTC плавно
+// «гуляет» (синус), чтобы было видно, что в провал легла форма рынка, а не прямая.
+function liveKlines({ btcUsd = 83_800, gramUsd = 1.4, wave = 0.02, omit = () => false } = {}) {
+  return (url) => {
+    if (!url.includes('/klines')) return undefined;
+    const q = new URL(url).searchParams;
+    const limit = Number(q.get('limit')) || 168;
+    const hourNow = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
+    const isBtc = q.get('symbol').startsWith('BTC');
+    return json(Array.from({ length: limit }, (_, i) => {
+      const open = hourNow - (limit - 1 - i) * HOUR_MS;
+      const k = 1 + wave * Math.sin(open / (9 * HOUR_MS));
+      const price = isBtc ? btcUsd * k : gramUsd * k;
+      return [open, String(price), String(price), String(price), String(price), '100', open + HOUR_MS - 1];
+    }).filter((row) => !omit(row[0])));
+  };
+}
+const minutePoints = (from, to, { btc = 7_120_000, gram = 119 } = {}) => {
+  const out = [];
+  for (let at = from; at <= to; at += 60_000) out.push({ at, btc, gram, baseBtc: btc, baseGram: gram });
+  return out;
+};
+const maxStep = (points) => points.reduce((m, p, i) => (i ? Math.max(m, p.at - points[i - 1].at) : m), 0);
+
+test('findHistoryGaps: провал между точками и незакрытое начало окна; хвост — не провал', () => {
+  const now = Date.now();
+  const from = now - 168 * HOUR_MS;
+  const pts = [
+    { at: now - 100 * HOUR_MS }, { at: now - 99 * HOUR_MS }, // начало окна пустое 68 ч
+    { at: now - 50 * HOUR_MS }, // провал 49 ч
+    { at: now - 49.5 * HOUR_MS }, { at: now - 48 * HOUR_MS }, // 1.5 ч — ещё не провал
+    { at: now - 30 * HOUR_MS }, // провал 18 ч; дальше до «сейчас» — хвост
+  ];
+  const gaps = rates.findHistoryGaps(pts, { from });
+  assert.deepEqual(gaps.map((g) => [(now - g.from) / HOUR_MS, (now - g.to) / HOUR_MS]), [[168, 100], [99, 50], [48, 30]]);
+  assert.equal(gaps[0].left, null, 'у начала окна нет живой точки слева');
+  assert.equal(gaps[1].left.at, now - 99 * HOUR_MS);
+  assert.deepEqual(rates.findHistoryGaps(minutePoints(now - 5 * HOUR_MS, now), { from }).length, 1,
+    'непрерывные минутные точки — провал только в начале окна');
+  assert.deepEqual(rates.findHistoryGaps([], { from }), []);
+});
+
+test('historyGapFill: провал закрывается часовыми свечами, стыки без ступенек, живые точки не тронуты', () => {
+  const now = Date.now();
+  const from = now - 168 * HOUR_MS;
+  const gapFrom = now - 72 * HOUR_MS;
+  const gapTo = now - 24 * HOUR_MS;
+  // Живой курс перед провалом и после — на 0.5% и 1% выше свечей биржи.
+  const before = minutePoints(from, gapFrom, { btc: 7_150_000, gram: 120 });
+  const after = minutePoints(gapTo, now, { btc: 7_200_000, gram: 121 });
+  const candles = Array.from({ length: 168 }, (_, i) => {
+    const at = rates.organicMinuteAt(now - (167 - i) * HOUR_MS);
+    return { at, baseBtc: 7_150_000 / 1.005, baseGram: 120 / 1.005 };
+  });
+  const fill = rates.historyGapFill([...before, ...after], candles, { from });
+  assert.ok(fill.length >= 46 && fill.length <= 48, `по свече на каждый час провала: ${fill.length}`);
+  assert.ok(fill.every((p) => p.at > gapFrom + 20 * 60_000 && p.at < gapTo - 20 * 60_000), 'свечи только внутри провала, не вплотную к живым точкам');
+  const all = [...before, ...fill, ...after].sort((a, b) => a.at - b.at);
+  assert.ok(maxStep(all) < 2 * HOUR_MS, `после заполнения нет разрывов длиннее двух часов: ${maxStep(all) / 60_000} мин`);
+  // Уровень свечей подогнан к краям: у левого края ≈ 7 150 000, у правого ≈ 7 200 000.
+  const firstFill = fill[0];
+  const lastFill = fill[fill.length - 1];
+  assert.ok(Math.abs(firstFill.btc - 7_150_000) < 7_150_000 * 0.001, `левый стык без ступеньки: ${firstFill.btc}`);
+  assert.ok(Math.abs(lastFill.btc - 7_200_000) < 7_200_000 * 0.001, `правый стык без ступеньки: ${lastFill.btc}`);
+  assert.ok(fill.every((p, i) => !i || p.btc >= fill[i - 1].btc), 'между краями уровень переходит плавно');
+  assert.ok(fill.every((p) => p.btc === p.baseBtc && p.gram === p.baseGram), 'без наценки, как и живые точки');
+  // Без провалов заполнять нечего.
+  assert.deepEqual(rates.historyGapFill(minutePoints(from, now), candles, { from }), []);
+});
+
+test('fillRateHistoryGaps: дни простоя бота закрываются свечами бирж, текущий курс не меняется', async (t) => {
+  const realFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = realFetch; });
+  const net = market({ override: { binance: liveKlines() } });
+  globalThis.fetch = net.fetchImpl;
+  const now = Date.now();
+  store.mutate((db) => {
+    db.rateHistory = [
+      ...minutePoints(now - 168 * HOUR_MS, now - 120 * HOUR_MS),
+      ...minutePoints(now - 60 * HOUR_MS, now - 2 * 60_000), // бот лежал 60 часов
+    ];
+    db.settings.rateBTC = 7_120_000;
+    db.settings.rateUpdatedAt = now - 2 * 60_000;
+  });
+  const before = store.get().rateHistory.length;
+  const added = await rates.fillRateHistoryGaps({ force: true });
+  assert.ok(added >= 58 && added <= 60, `в 60-часовой провал легли часовые свечи: +${added}`);
+  const history = store.get().rateHistory;
+  assert.equal(history.length, before + added);
+  assert.ok(history.every((p, i) => !i || p.at > history[i - 1].at), 'история отсортирована, дублей по времени нет');
+  assert.ok(maxStep(history) < 2 * HOUR_MS, 'провала больше нет');
+  assert.equal(store.get().settings.rateBTC, 7_120_000, 'свечи прошлого не меняют текущий курс');
+  assert.equal(store.get().settings.rateUpdatedAt, now - 2 * 60_000);
+
+  // Провалов нет — в сеть больше не ходим.
+  const calls = net.calls.length;
+  assert.equal(await rates.fillRateHistoryGaps({ force: true }), 0);
+  assert.equal(net.calls.length, calls, 'без провалов запросов к биржам нет');
+
+  // На графике заполненные дни — полноценная часть кривой, а не пара точек.
+  const served = store.rateHistorySince(now - 168 * HOUR_MS, 180);
+  const hole = served.filter((p) => p.at > now - 120 * HOUR_MS && p.at < now - 60 * HOUR_MS);
+  assert.ok(hole.length >= 50, `часы простоя представлены на графике: ${hole.length} точек`);
+});
+
+test('fillRateHistoryGaps: провал, который свечи не закрыли, повторно не запрашивается', async (t) => {
+  const realFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = realFetch; });
+  const now = Date.now();
+  const holeFrom = now - 50 * HOUR_MS;
+  const holeTo = now - 40 * HOUR_MS;
+  // Свечей за эти часы нет и у биржи (например, она сама стояла на обслуживании).
+  const net = market({ override: { binance: liveKlines({ omit: (open) => open > holeFrom - 2 * HOUR_MS && open < holeTo + HOUR_MS }) } });
+  globalThis.fetch = net.fetchImpl;
+  const history = [...minutePoints(now - 168 * HOUR_MS, holeFrom), ...minutePoints(holeTo, now - 2 * 60_000)];
+  store.mutate((db) => { db.rateHistory = history.map((p) => ({ ...p })); });
+  assert.equal(await rates.fillRateHistoryGaps({ force: true }), 0, 'закрыть нечем');
+  const calls = net.calls.length;
+  assert.ok(calls > 0, 'первая попытка сходила к бирже');
+  assert.equal(await rates.fillRateHistoryGaps({ force: true }), 0);
+  assert.equal(net.calls.length, calls, 'тот же провал второй раз не запрашивается');
+
+  // Новый провал (свечи за него есть) закрывается как обычно, старый не мешает.
+  store.mutate((db) => { db.rateHistory = db.rateHistory.filter((p) => p.at < now - 100 * HOUR_MS || p.at > now - 90 * HOUR_MS); });
+  const added = await rates.fillRateHistoryGaps({ force: true });
+  assert.ok(net.calls.length > calls, 'новый провал — новый запрос');
+  assert.ok(added >= 8 && added <= 10, `новый 10-часовой провал закрыт: +${added}`);
+  assert.equal(rates.findHistoryGaps(store.get().rateHistory, { from: now - 168 * HOUR_MS }).length, 1, 'остался только провал без свечей');
+});
+
+test('курс вернулся после простоя: провал с прошлого обновления закрывается сам', async (t) => {
+  const realFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = realFetch; });
+  globalThis.fetch = market({ override: { binance: liveKlines({ btcUsd: median(all('btc')) }) } }).fetchImpl;
+  const now = Date.now();
+  const lastSeen = now - 30 * HOUR_MS;
+  store.mutate((db) => {
+    db.rateHistory = minutePoints(now - 168 * HOUR_MS, lastSeen, { btc: 7_110_000 });
+    db.settings.rateUpdatedAt = lastSeen;
+  });
+  await rates.refreshRates(); // первое обновление после простоя
+  // Заполнение идёт в фоне и стартует само — ждём его, ничего не вызывая вручную.
+  const filled = () => store.get().rateHistory.some((p) => p.at > lastSeen + HOUR_MS && p.at < now - HOUR_MS);
+  for (const deadline = Date.now() + 5000; !filled() && Date.now() < deadline;) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const history = store.get().rateHistory;
+  const inHole = history.filter((p) => p.at > lastSeen && p.at < now);
+  assert.ok(inHole.length >= 28, `простой в 30 часов закрыт свечами: ${inHole.length} точек`);
+  assert.ok(maxStep(history) < 2 * HOUR_MS, 'прямой через провал на графике больше нет');
+});
+
+test('rateHistorySince: прореживание по времени — дни из свечей не теряются за минутными точками', () => {
+  const now = Date.now();
+  const hourly = Array.from({ length: 120 }, (_, i) => ({ at: now - (168 - i) * HOUR_MS, btc: 7_000_000 + i * 1000, gram: 118 }));
+  const live = minutePoints(now - 48 * HOUR_MS, now); // 2 дня живого курса — 2881 точка
+  store.mutate((db) => { db.rateHistory = [...hourly, ...live]; });
+  const served = store.rateHistorySince(now - 168 * HOUR_MS, 180);
+  assert.ok(served.length <= 180, `не больше лимита: ${served.length}`);
+  assert.equal(served[served.length - 1].at, live[live.length - 1].at, 'последняя точка — маркер «сейчас» — на месте');
+  assert.equal(served[0].at, hourly[0].at, 'первая точка окна тоже');
+  const old = served.filter((p) => p.at < now - 48 * HOUR_MS);
+  assert.ok(old.length >= 100, `пять дней из часовых свечей нарисованы подробно: ${old.length} точек (раньше — 7)`);
+  assert.ok(maxStep(served) <= 2 * HOUR_MS, `шаг графика ровный, без длинных прямых: ${maxStep(served) / 60_000} мин`);
+  // Точки остаются фактическими наблюдениями — ничего не усредняется.
+  const known = new Set([...hourly, ...live].map((p) => `${p.at}:${p.btc}`));
+  assert.ok(served.every((p) => known.has(`${p.at}:${p.btc}`)));
+});
