@@ -6,9 +6,9 @@
   let initData = '';
   let startParam = '';
   let demo = null;
-  // Единая светлая тема: хром Telegram красится в её цвет здесь же,
+  // Единственная тема — тёмная: хром Telegram красится в её цвет здесь же,
   // где Web App становится ready() (до ready() цвета не принимаются).
-  const CHROME_COLOR = '#f4f4f0';
+  const CHROME_COLOR = '#080d11';
   if (tg) {
     try {
       tg.ready();
@@ -669,18 +669,18 @@
     const s = S.settings || {};
     const home = S.tab === 'exchange' && !isOrderPage();
     const status = s.online
-      ? '<span class="pill"><span class="dot"></span>Работаем</span>'
-      : '<span class="pill off"><span class="dot"></span>Перерыв</span>';
+      ? '<span class="pill"><span class="dot"></span>Live</span>'
+      : '<span class="pill off"><span class="dot"></span>Offline</span>';
     const demoTag = S.isDemo ? '<span class="pill demo">ДЕМО</span>' : '';
 
     if (home) {
       header.innerHTML = `
         <div class="hdr-home">
           <div class="hdr-brand">
-            <span class="mobility-mark" aria-hidden="true">P<span>↗</span></span>
+            <img class="hdr-logo-img" src="/img/logo-mark.png" alt="PRICELEX" width="34" height="34" />
             <div class="hdr-brand-text">
               <span class="hdr-logo">PRICELEX</span>
-              <span class="hdr-sub">Понятный обмен криптовалюты</span>
+              <span class="hdr-sub">PRIVATE CRYPTO BROKERAGE</span>
             </div>
           </div>
           <div class="hdr-actions"><div class="hdr-status">${status}${demoTag}</div><button class="icon-button" id="profileMenu" type="button" aria-label="Открыть профиль">${ICONS.menu}</button></div>
@@ -861,19 +861,19 @@
     $('.app').classList.toggle('subpage', isSubpage());
     if (!visible) { nav.innerHTML = ''; return; }
 
-    // Понятные подписи и простые контурные иконки.
+    // Объёмные бронзовые иконки (ref IMG_1229): генерация + tools/png-key.js.
     const last = S.tab === 'info'
-      ? ['info', 'Инфо']
-      : ['profile', 'Профиль'];
+      ? ['info', 'Инфо', '/img/hero-shield.png']
+      : ['profile', 'Профиль', '/img/tab-profile.png'];
     const items = [
-      ['exchange', 'Обмен'],
-      ['history', 'История'],
-      ['reviews', 'Отзывы'],
-      ['refs', 'Друзья'],
+      ['exchange', 'Обмен', '/img/tab-exchange.png'],
+      ['history', 'История', '/img/tab-history.png'],
+      ['reviews', 'Отзывы', '/img/tab-reviews.png'],
+      ['refs', 'Рефералы', '/img/tab-refs.png'],
       last,
     ];
     nav.innerHTML = items
-      .map(([id, label]) => `<button type="button" data-tab="${id}" class="${S.tab === id ? 'on' : ''}">${({ exchange: ICONS.swap, history: ICONS.clock, reviews: ICONS.star, refs: ICONS.users, profile: ICONS.user, info: ICONS.info })[id]}<span>${label}</span></button>`)
+      .map(([id, label, art]) => `<button type="button" data-tab="${id}" class="${S.tab === id ? 'on' : ''}\"><img class=\"nav-art\" src=\"${art}\" alt=\"\" width=\"26\" height=\"26\" /><span>${label}</span></button>`)
       .join('');
     nav.querySelectorAll('button').forEach((button) =>
       button.addEventListener('click', () => {
