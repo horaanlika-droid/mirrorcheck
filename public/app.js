@@ -6,9 +6,9 @@
   let initData = '';
   let startParam = '';
   let demo = null;
-  // Единственная тема — тёмная: хром Telegram красится в её цвет здесь же,
+  // Единая светлая тема: хром Telegram красится в её цвет здесь же,
   // где Web App становится ready() (до ready() цвета не принимаются).
-  const CHROME_COLOR = '#080d11';
+  const CHROME_COLOR = '#f4f4f0';
   if (tg) {
     try {
       tg.ready();
@@ -62,7 +62,7 @@
     bids: [], offerWindowSec: 120, marketRate: null,
     reviews: { list: [], stats: { count: 0, avg: 0 }, loaded: false, hasMore: false, next: null },
     reviewDraft: { orderId: null, rating: 5, text: '' },
-    offers: [], offersMeta: null, claims: [],
+    offers: null, topBroker: null, offersMeta: null, claims: [],
     brokerApp: null, // последняя заявка «стать брокером»
     captcha: null, // { id, question } — активная математическая капча
     rulesOpen: false, // «Правила платформы» раскрыты — состояние живёт вне перерисовки
@@ -617,6 +617,7 @@
     const chart = document.getElementById('rateChart');
     const axis = document.getElementById('rateAxis');
     const signal = document.getElementById('rateSignal');
+    if (!chart) return;
     chart.innerHTML = '';
     if (axis) axis.innerHTML = '';
     if (signal) signal.innerHTML = '';
@@ -668,18 +669,18 @@
     const s = S.settings || {};
     const home = S.tab === 'exchange' && !isOrderPage();
     const status = s.online
-      ? '<span class="pill"><span class="dot"></span>Live</span>'
-      : '<span class="pill off"><span class="dot"></span>Offline</span>';
+      ? '<span class="pill"><span class="dot"></span>Работаем</span>'
+      : '<span class="pill off"><span class="dot"></span>Перерыв</span>';
     const demoTag = S.isDemo ? '<span class="pill demo">ДЕМО</span>' : '';
 
     if (home) {
       header.innerHTML = `
         <div class="hdr-home">
           <div class="hdr-brand">
-            <img class="hdr-logo-img" src="/img/logo-mark.png" alt="PRICELEX" width="34" height="34" />
+            <span class="mobility-mark" aria-hidden="true">P<span>↗</span></span>
             <div class="hdr-brand-text">
               <span class="hdr-logo">PRICELEX</span>
-              <span class="hdr-sub">PRIVATE CRYPTO BROKERAGE</span>
+              <span class="hdr-sub">Понятный обмен криптовалюты</span>
             </div>
           </div>
           <div class="hdr-actions"><div class="hdr-status">${status}${demoTag}</div><button class="icon-button" id="profileMenu" type="button" aria-label="Открыть профиль">${ICONS.menu}</button></div>
@@ -860,19 +861,19 @@
     $('.app').classList.toggle('subpage', isSubpage());
     if (!visible) { nav.innerHTML = ''; return; }
 
-    // Объёмные бронзовые иконки (ref IMG_1229): генерация + tools/png-key.js.
+    // Понятные подписи и простые контурные иконки.
     const last = S.tab === 'info'
-      ? ['info', 'Инфо', '/img/hero-shield.png']
-      : ['profile', 'Профиль', '/img/tab-profile.png'];
+      ? ['info', 'Инфо']
+      : ['profile', 'Профиль'];
     const items = [
-      ['exchange', 'Обмен', '/img/tab-exchange.png'],
-      ['history', 'История', '/img/tab-history.png'],
-      ['reviews', 'Отзывы', '/img/tab-reviews.png'],
-      ['refs', 'Рефералы', '/img/tab-refs.png'],
+      ['exchange', 'Обмен'],
+      ['history', 'История'],
+      ['reviews', 'Отзывы'],
+      ['refs', 'Друзья'],
       last,
     ];
     nav.innerHTML = items
-      .map(([id, label, art]) => `<button type="button" data-tab="${id}" class="${S.tab === id ? 'on' : ''}"><img class="nav-art" src="${art}" alt="" width="26" height="26" /><span>${label}</span></button>`)
+      .map(([id, label]) => `<button type="button" data-tab="${id}" class="${S.tab === id ? 'on' : ''}">${({ exchange: ICONS.swap, history: ICONS.clock, reviews: ICONS.star, refs: ICONS.users, profile: ICONS.user, info: ICONS.info })[id]}<span>${label}</span></button>`)
       .join('');
     nav.querySelectorAll('button').forEach((button) =>
       button.addEventListener('click', () => {
@@ -1054,7 +1055,7 @@
       <div class="exchange-heading">
         <div class="exchange-heading-left">
           ${exchangeBadgeHtml()}
-          <div><h1>Обмен</h1><p>RUB <span>→</span> BTC / GRAM</p></div>
+          <div><h1>Куда отправим крипту?</h1><p>Вы указываете сумму. Брокеры предлагают цену.</p></div>
         </div>
       </div>
       <section class="card card-hero lux-hero">
@@ -1078,12 +1079,9 @@
       <div class="exchange-heading ${S.order && S.orderOpen ? 'hidden' : ''}">
         <div class="exchange-heading-left">
           ${exchangeBadgeHtml()}
-          <div><h1>Обмен</h1><p>RUB <span>→</span> BTC / GRAM</p></div>
+          <div><h1>Куда отправим крипту?</h1><p>Вы указываете сумму. Брокеры предлагают цену.</p></div>
         </div>
-        <div class="brokers-online-chip" title="Брокеров PRICELEX в сети">
-          <span class="dot-online"></span>
-          <span>Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b></span>
-        </div>
+        <a class="brokers-online-chip compare-link" href="#topBrokers">Сравнить брокеров <span aria-hidden="true">↘</span></a>
       </div>
       ${hasOpenOrder && !S.orderOpen ? `
         <button class="active-order" id="activeOrder" type="button">
@@ -1093,13 +1091,53 @@
         </button>` : ''}
       <div id="exForm" class="${S.order && S.orderOpen ? 'hidden' : ''}">
         ${accessBarHtml()}
+        <div class="exchange-journey">
+        <div class="journey-intro"><h2>Начнём обмен</h2><span>3 простых шага</span></div>
+        <p class="currency-caption">Что хотите получить?</p>
         <div class="seg block currency-segment" id="segCur">
-          <button type="button" data-c="BTC" class="${S.currency === 'BTC' ? 'on' : ''}" aria-pressed="${S.currency === 'BTC'}">${coinHtml('BTC')}<span class="seg-label">BTC</span></button>
-          <button type="button" data-c="GRAM" class="${S.currency === 'GRAM' ? 'on' : ''}" aria-pressed="${S.currency === 'GRAM'}">${coinHtml('GRAM')}<span class="seg-label">GRAM</span></button>
+          <button type="button" data-c="BTC" class="${S.currency === 'BTC' ? 'on' : ''}" aria-pressed="${S.currency === 'BTC'}">${coinHtml('BTC')}<span class="seg-label">Биткоин <small>BTC</small></span></button>
+          <button type="button" data-c="GRAM" class="${S.currency === 'GRAM' ? 'on' : ''}" aria-pressed="${S.currency === 'GRAM'}">${coinHtml('GRAM')}<span class="seg-label">Грам <small>GRAM</small></span></button>
+        </div>
+        <div class="card exchange-form-card">
+          <div class="card-title"><span class="step-number">1</span> Сколько меняем?</div>
+          <div class="f-label"><label for="inRub">Вы отдаёте</label><span id="mmLabel"></span></div>
+          <div class="field">
+            <div class="coin-ic coin-art rub coin-swap">${coinHtml('RUB', 30)}</div>
+            <input id="inRub" type="number" inputmode="decimal" placeholder="5 000" min="0" step="any">
+            <span class="suffix">RUB</span>
+          </div>
+          <div class="swap-row"><div class="swap">${ICONS.down}</div></div>
+          <div class="f-label"><label for="inCrypto">Примерно получите</label><span id="cryptoLimits"></span></div>
+          <div class="field">
+            <div class="coin-ic coin-art ${S.currency.toLowerCase()}" id="getIc" data-cur="${S.currency}">${coinHtml(S.currency, 30)}</div>
+            <input id="inCrypto" type="number" inputmode="decimal" placeholder="0.0005" min="0" step="any">
+            <span class="suffix" id="curSuffix">BTC</span>
+          </div>
+          <div class="f-hint">Введите сумму в любом поле — второе посчитается автоматически</div>
+          <details class="calculation-details"><summary>Как рассчитана сумма?</summary>
+            <div class="f-meta" id="fMeta"></div>
+            ${depositNoteHtml()}
+          </details>
+        </div>
+
+        <div class="card wallet-card">
+          <div class="card-title"><span class="step-number">2</span> <label for="inWallet">Куда отправить?</label></div>
+          <p class="wallet-help" id="walletHelp">Вставьте адрес своего криптокошелька. Не номер карты.</p>
+          <div class="field">
+            <div class="coin-ic coin-art ${S.currency.toLowerCase()}" id="walIc" data-cur="${S.currency}">${coinHtml(S.currency, 30)}</div>
+            <input id="inWallet" aria-describedby="walletHelp fErr" placeholder="Адрес BTC-кошелька" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
+          </div>
+          ${captchaHtml('capOrder')}
+          <div class="f-err" id="fErr" role="alert"></div>
+        </div>
+
+        <div class="journey-finish"><div class="finish-copy"><span class="step-number">3</span><span>Получите предложения и выберите брокера</span></div>
+        <button class="btn btn-cta mt" id="btnGo">${ICONS.bolt}<span>Создать заявку</span>${ICONS.chevron}</button>
+        <p class="submit-help">Сейчас платить не нужно. Сначала вы увидите условия.</p></div>
         </div>
         <section class="card card-hero lux-hero">
           <div class="hero-art" aria-hidden="true"></div>
-          <div class="hero-top"><div class="kicker">Текущий курс</div></div>
+          <div class="hero-top"><div class="kicker">Курс и брокеры</div><span class="live-label">Сейчас</span></div>
           <div class="hero-amount">
             <div class="metric"><span id="heroRate">—</span><span class="cur">₽</span></div>
             <div id="heroDelta"></div>
@@ -1107,49 +1145,18 @@
           <div class="metric-sub" id="heroSub">за 1 <b>${S.currency}</b></div>
           <div class="chart" id="rateChart"></div>
           <div class="chart-axis" id="rateAxis"></div>
-          <div id="rateSignal"></div>
+          <details class="market-details"><summary>Подробнее о курсе</summary><div id="rateSignal"></div></details>
+          <section id="topBrokers" aria-label="Топ брокеров"></section>
           <div class="hero-foot">
             <div><div class="k">Курс обновлён</div><div class="v" id="heroUpdated">—</div></div>
             <button class="ghost-pill" id="howItWorks"><span class="q">?</span>Как это работает</button>
           </div>
         </section>
 
-        <div class="card exchange-form-card">
-          <div class="card-title">Сумма обмена</div>
-          <div class="f-label"><span>Вы отдаёте</span><span id="mmLabel"></span></div>
-          <div class="field">
-            <div class="coin-ic coin-art rub coin-swap">${coinHtml('RUB', 30)}</div>
-            <input id="inRub" type="number" inputmode="decimal" placeholder="5 000" min="0" step="any">
-            <span class="suffix">RUB</span>
-          </div>
-          <div class="swap-row"><div class="swap">${ICONS.down}</div></div>
-          <div class="f-label"><span>Вы получаете</span><span id="cryptoLimits"></span></div>
-          <div class="field">
-            <div class="coin-ic coin-art ${S.currency.toLowerCase()}" id="getIc" data-cur="${S.currency}">${coinHtml(S.currency, 30)}</div>
-            <input id="inCrypto" type="number" inputmode="decimal" placeholder="0.0005" min="0" step="any">
-            <span class="suffix" id="curSuffix">BTC</span>
-          </div>
-          <div class="f-hint">Введите сумму в любом поле — второе посчитается автоматически</div>
-          <div class="f-meta" id="fMeta"></div>
-          ${depositNoteHtml()}
-        </div>
-
-        <div class="card wallet-card">
-          <div class="card-title">Кошелёк получателя</div>
-          <div class="field">
-            <div class="coin-ic coin-art ${S.currency.toLowerCase()}" id="walIc" data-cur="${S.currency}">${coinHtml(S.currency, 30)}</div>
-            <input id="inWallet" placeholder="Адрес BTC-кошелька" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
-          </div>
-          ${captchaHtml('capOrder')}
-          <div class="f-err" id="fErr"></div>
-        </div>
-
-        <div class="card offers-card">
-          <div class="card-title">Что предлагают брокеры</div>
+        <details class="card offers-card">
+          <summary class="card-title">Все предложения брокеров</summary>
           <div class="offers-list" id="offersList"><div class="note">Загружаем предложения…</div></div>
-        </div>
-
-        <button class="btn btn-cta mt" id="btnGo">${ICONS.bolt}<span>Создать заявку</span></button>
+        </details>
       </div>
       <div id="exOrder" class="${S.order && S.orderOpen ? '' : 'hidden'}"></div>
     `;
@@ -1158,8 +1165,7 @@
         const changed = S.currency !== b.dataset.c;
         S.currency = b.dataset.c;
         haptic(changed ? 'selection' : 'light');
-        // Класс .on запускает вращение монеты (glass.css) — оборот начинается
-        // ровно в момент выбора, у второй монеты вращение останавливается.
+        // Обновляем выбранную валюту без сброса заполненных полей.
         $('#segCur').querySelectorAll('button').forEach((x) => {
           x.classList.toggle('on', x === b);
           x.setAttribute('aria-pressed', String(x === b));
@@ -1236,18 +1242,107 @@
   /* ---------- что предлагают брокеры до создания заявки ---------- */
   // Живые цены из кабинетов брокеров — механика inDrive: сначала смотришь
   // предложения, потом решаешь. Если цен нет — честно показываем «не предлагают».
+  let offersLoading = false;
   async function loadOffers() {
+    if (offersLoading) return;
+    offersLoading = true;
+    const previous = JSON.stringify([S.offers?.offers, S.offers?.market, S.offers?.failed]);
     try {
       S.offers = await api('/api/offers');
     } catch {
       S.offers = { offers: [], failed: true };
+    } finally {
+      offersLoading = false;
     }
-    renderOffers();
+    // checkedAt changes on every response; don't rebuild focused controls for it.
+    if (previous !== JSON.stringify([S.offers?.offers, S.offers?.market, S.offers?.failed])) renderOffers();
+  }
+
+  function topBrokerOffers() {
+    const seen = new Set();
+    return (Array.isArray(S.offers?.offers) ? S.offers.offers : [])
+      .filter((o) => o && o.login && o.online !== false && o.active !== false
+        && Number.isFinite(Number(o[S.currency])) && Number(o[S.currency]) > 0
+        && Number.isFinite(Number(o.rating)) && Number(o.rating) > 0 && Number(o.rating) <= 5)
+      .sort((a, b) => Number(b.rating) - Number(a.rating)
+        || (Number(b.deals) || 0) - (Number(a.deals) || 0)
+        || String(a.login).localeCompare(String(b.login)))
+      .filter((o) => {
+        const key = String(o.login).toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).slice(0, 5);
+  }
+
+  function renderTopBrokers() {
+    const box = $('#topBrokers');
+    if (!box) return;
+    const list = topBrokerOffers();
+    const heading = '<div class="top-heading"><h2>Топ-5 брокеров</h2><span>По рейтингу ★</span></div>';
+    if (!list.length) {
+      const message = !S.offers ? 'Загружаем цены брокеров…' : S.offers.failed
+        ? 'Не удалось загрузить цены. Попробуйте ещё раз.'
+        : 'Пока нет предложений с рейтингом по ' + S.currency + '. Создайте заявку — брокеры смогут ответить.';
+      box.innerHTML = heading + `<div class="top-empty">${ICONS.users}<p>${esc(message)}</p>${S.offers?.failed ? '<button type="button" class="ghost-pill" id="retryOffers">Попробовать снова</button>' : ''}</div>`;
+      const retry = $('#retryOffers');
+      if (retry) retry.onclick = () => { S.offers = null; renderOffers(); loadOffers(); };
+      return;
+    }
+    if (!list.some((o) => o.login === S.topBroker)) S.topBroker = list[0].login;
+    const market = Number(S.offers?.market?.[S.currency]) || Number(S.currency === 'BTC' ? S.settings?.rateBTC : S.settings?.rateGRAM);
+    const hasMarket = Number.isFinite(market) && market > 0;
+    const prices = list.map((o) => Number(o[S.currency]));
+    if (hasMarket) prices.push(market);
+    const min = Math.min(...prices), max = Math.max(...prices);
+    const pad = Math.max((max - min) * .15, max * .001);
+    const x = (price) => 24 + (price - min + pad) / (max - min + 2 * pad) * 252;
+    const height = list.length * 42 + 12;
+    box.innerHTML = heading + `<p class="top-explainer">Лучший рейтинг — выше. Цена левее — дешевле.</p>
+      <div class="broker-price-chart" role="group" aria-label="Текущие цены за 1 ${S.currency}, в рублях">
+        <div class="broker-price-axis"><span>${fmtRub(min)}</span><span>${fmtRub(max)}</span></div>
+        <svg viewBox="0 0 300 ${height}" role="group" aria-label="Цены топ-${list.length} брокеров. Номера соответствуют списку ниже.">
+          ${hasMarket ? `<line class="market-guide" x1="${x(market)}" y1="0" x2="${x(market)}" y2="${height}"/>` : ''}
+          ${list.map((o, i) => `<g class="broker-plot ${o.login === S.topBroker ? 'selected' : ''}" data-broker-plot="${i}" role="button" tabindex="0" aria-pressed="${o.login === S.topBroker}" aria-label="${esc(o.name || o.login)}: ${fmtRub(o[S.currency])}">
+            <title>${esc(o.name || o.login)}: ${fmtRub(o[S.currency])}, рейтинг ${Number(o.rating).toFixed(2)}</title>
+            <line class="broker-track" x1="10" y1="${26 + i * 42}" x2="290" y2="${26 + i * 42}"/>
+            <circle class="broker-pin" cx="${x(Number(o[S.currency]))}" cy="${26 + i * 42}" r="15"/>
+            <text x="${x(Number(o[S.currency]))}" y="${31 + i * 42}" text-anchor="middle">${i + 1}</text>
+          </g>`).join('')}
+        </svg>
+        ${hasMarket ? `<div class="market-key"><i></i> Рыночный курс: ${fmtRub(market)}</div>` : ''}
+      </div>
+      <div class="top-broker-list">${list.map((o, i) => `<button type="button" class="top-broker" data-top-broker="${i}" aria-pressed="${o.login === S.topBroker}">
+        <span class="broker-rank">${i + 1}</span><span class="top-broker-copy"><b>${esc(o.name || o.login)}</b><small>★ ${Number(o.rating).toFixed(2)} · ${Number(o.deals) || 0} сделок</small></span><strong>${fmtRub(o[S.currency])}</strong>
+      </button>`).join('')}</div>
+      <p class="top-selection" id="topSelection" role="status"></p>
+      <p class="top-footnote">${list.length < 5 ? `Доступно ${list.length} из 5 предложений. ` : ''}Среди брокеров с ценой по ${S.currency}. При равном рейтинге выше тот, у кого больше сделок. Это текущие цены, не сделки на графике истории.</p>`;
+    const select = (index) => {
+      S.topBroker = list[index].login;
+      box.querySelectorAll('[data-top-broker]').forEach((b, i) => b.setAttribute('aria-pressed', String(i === index)));
+      box.querySelectorAll('[data-broker-plot]').forEach((g, i) => {
+        g.classList.toggle('selected', i === index);
+        g.setAttribute('aria-pressed', String(i === index));
+      });
+      $('#topSelection').textContent = `${list[index].name || list[index].login}: ${fmtRub(list[index][S.currency])} за 1 ${S.currency}. Брокера можно выбрать после создания заявки.`;
+    };
+    box.querySelectorAll('[data-top-broker]').forEach((b) => b.addEventListener('click', () => select(Number(b.dataset.topBroker))));
+    box.querySelectorAll('[data-broker-plot]').forEach((g) => {
+      g.addEventListener('click', () => select(Number(g.dataset.brokerPlot)));
+      g.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          select(Number(g.dataset.brokerPlot));
+        }
+      });
+    });
+    select(list.findIndex((o) => o.login === S.topBroker));
   }
 
   function renderOffers() {
     const box = $('#offersList');
     if (!box) return;
+    renderTopBrokers();
     const cur = S.currency;
     if (!S.offers) {
       box.innerHTML = '<div class="note">Предложения брокеров загружаются…</div>';
@@ -2233,8 +2328,8 @@
       <div class="card">
         <div class="card-title">Моя цена</div>
         <div class="seg block currency-segment" id="lkCur">
-          <button type="button" data-c="BTC" class="${cur === 'BTC' ? 'on' : ''}">${coinHtml('BTC')}<span class="seg-label">BTC</span></button>
-          <button type="button" data-c="GRAM" class="${cur === 'GRAM' ? 'on' : ''}">${coinHtml('GRAM')}<span class="seg-label">GRAM</span></button>
+          <button type="button" data-c="BTC" class="${cur === 'BTC' ? 'on' : ''}">${coinHtml('BTC')}<span class="seg-label">Биткоин <small>BTC</small></span></button>
+          <button type="button" data-c="GRAM" class="${cur === 'GRAM' ? 'on' : ''}">${coinHtml('GRAM')}<span class="seg-label">Грам <small>GRAM</small></span></button>
         </div>
         <div class="field">
           <input id="lkPrice" type="number" inputmode="decimal" min="0" step="any" value="${price || ''}" placeholder="${market || ''}">
@@ -3193,7 +3288,8 @@
   function startPolling() {
     const running = new Set();
     const pollBroker = () => (S.tab === 'broker' && S.brokerApp && S.brokerApp.status === 'pending' ? loadBrokerStatus() : Promise.resolve());
-    const refresh = () => Promise.all([pollOrder, pollSettings, pollProfile, pollReviews, () => pollSupport(false), pollBroker].map(async (poll) => {
+    const pollOffers = () => (S.tab === 'exchange' && !isOrderPage() ? loadOffers() : Promise.resolve());
+    const refresh = () => Promise.all([pollOrder, pollSettings, pollProfile, pollReviews, () => pollSupport(false), pollBroker, pollOffers].map(async (poll) => {
       if (typeof poll !== 'function') return;
       if (running.has(poll)) return;
       running.add(poll);

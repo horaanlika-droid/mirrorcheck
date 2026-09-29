@@ -214,7 +214,7 @@ test('рубль — медная монета из монограммы лог�
   assert.ok(ic.querySelector('.coin3d-edge'), 'и ребро — монета объёмная');
 });
 
-test('монета вращается только у выбранной валюты — и начинает оборот в момент выбора', async (t) => {
+test('выбор валюты остаётся доступным и обновляет монеты в полях', async (t) => {
   const a = await app(t);
   const [btc, gram] = [...a.doc.querySelectorAll('#segCur button')];
   for (const b of [btc, gram]) {
@@ -226,18 +226,12 @@ test('монета вращается только у выбранной вал�
   }
   assert.match(btc.querySelector('img').getAttribute('src'), /\/img\/coin-btc\.png$/);
   assert.match(gram.querySelector('img').getAttribute('src'), /\/img\/coin-gram\.png$/);
-  assert.equal(btc.querySelector('.seg-label').textContent, 'BTC');
+  assert.equal(btc.querySelector('.seg-label').textContent, 'Биткоин BTC');
   assert.ok(btc.classList.contains('on') && !gram.classList.contains('on'));
   assert.equal(btc.getAttribute('aria-pressed'), 'true');
 
-  // Вращение привязано к выбранной кнопке: сменился .on — вращается другая монета.
-  assert.match(glass, /\.seg\.currency-segment button\.on \.coin3d-spin \{\n\s*animation: coin-turn 2\.6s cubic-bezier\(\.45, \.05, \.3, 1\) infinite;/);
-  assert.match(glass, /@keyframes coin-turn \{\n\s*from \{ transform: rotateY\(0deg\); \}\n\s*to \{ transform: rotateY\(360deg\); \}/);
-  assert.doesNotMatch(glass, /\.seg\.currency-segment button(:not\(\.on\))? \.coin3d-spin \{[^}]*animation/, 'невыбранная монета стоит');
-  assert.match(glass, /\.coin3d-back \{ transform: rotateY\(180deg\) translateZ\(1px\); \}/);
-  assert.match(glass, /backface-visibility: hidden;/);
-  assert.match(glass, /@media \(prefers-reduced-motion: reduce\) \{\n\s*\.seg\.currency-segment button\.on \.coin3d-spin,\n\s*\.coin-ic\.coin-swap \.coin3d-spin \{ animation: none; \}/,
-    'при запрете движения монеты стоят');
+  const mobility = fs.readFileSync(path.join(__dirname, '../public/mobility.css'), 'utf8');
+  assert.match(mobility, /\.coin3d-spin \{ animation: none !important;/, 'декоративное вращение отключено');
 
   gram.click();
   await tick();

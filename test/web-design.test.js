@@ -330,30 +330,10 @@ test('депозит брокеров вписан тихой строкой: 0.
     'выделенные блоки и цветной хвост суммы убраны из оформления');
 });
 
-test('«Брокеров в сети» подписано словами и меняется на ±1/±2 вокруг состава', async (t) => {
-  const clock = { t: now };
-  const a = await app(t, { clock });
-  const countOf = () => {
-    const chip = a.document.querySelector('.brokers-online-chip');
-    assert.match(chip.textContent, /Брокеров в сети:\s*\d+/, 'число подписано «Брокеров в сети»');
-    return Number(chip.querySelector('.broker-online-count').textContent);
-  };
-  const first = countOf();
-  assert.ok(first >= 4 && first <= 7, `число держится вокруг состава команды, получено ${first}`);
-
-  const seen = new Set([first]);
-  let prev = first;
-  for (let i = 1; i <= 30; i += 1) {
-    clock.t = now + i * 60000; // каждую минуту смотрим счётчик заново
-    await a.showTab('reviews');
-    await a.showTab('exchange');
-    const value = countOf();
-    assert.ok(Math.abs(value - prev) <= 2, `шаг ${prev} → ${value} не больше двух человек`);
-    assert.ok(value >= 4 && value <= 7, `значение ${value} не выходит за состав команды`);
-    seen.add(value);
-    prev = value;
-  }
-  assert.ok(seen.size >= 2, 'счётчик действительно живёт');
+test('главная не показывает искусственно меняющееся число брокеров', async (t) => {
+  const a = await app(t);
+  assert.match(a.document.querySelector('.brokers-online-chip').textContent, /Сравнить брокеров/);
+  assert.equal(a.document.querySelector('.brokers-online-chip .broker-online-count'), null);
 });
 
 test('метка просадки и лучшая цена показывают органичное время, а не ровный час', async (t) => {

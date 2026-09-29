@@ -133,16 +133,18 @@ async function app(t, orders = [], { order = null } = {}) {
   return d;
 }
 
-test('навигация собрана из объёмных иконок, инфо получает щит', async (t) => {
+test('навигация: простые контурные иконки с понятными подписями', async (t) => {
   const d = await app(t);
   const doc = d.window.document;
-  const srcs = () => [...doc.querySelectorAll('#nav button .nav-art')].map((i) => i.getAttribute('src'));
-  assert.deepEqual(srcs(), ['/img/tab-exchange.png', '/img/tab-history.png', '/img/tab-reviews.png', '/img/tab-refs.png', '/img/tab-profile.png']);
+  const labels = () => [...doc.querySelectorAll('#nav button span')].map((i) => i.textContent);
+  assert.deepEqual(labels(), ['Обмен', 'История', 'Отзывы', 'Друзья', 'Профиль']);
+  assert.equal(doc.querySelectorAll('#nav button svg').length, 5);
   doc.querySelector('.nav button[data-tab="profile"]').click();
   await tick();
   doc.querySelector('#view-profile [data-go="info"]').click();
   await tick();
-  assert.equal(srcs()[4], '/img/hero-shield.png', 'пункт «Инфо» со щитом');
+  assert.equal(labels()[4], 'Инфо');
+  assert.equal(doc.querySelectorAll('#nav button svg').length, 5);
 });
 
 test('шапка обмена — живой знак обмена, завершение заявки — объёмный щит', async (t) => {
