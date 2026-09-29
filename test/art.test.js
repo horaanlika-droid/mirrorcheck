@@ -84,6 +84,47 @@ test('прелоадер: герб статичен — без слоёв све
   assert.doesNotMatch(pre, /mix-blend-mode|mask-image|mask-composite|animation: (?!none)/, 'световых слоёв и анимаций над гербом нет');
 });
 
+test('лого прелоадера без фона: края кадра и просветы букв прозрачные, металл плотный', () => {
+  const file = path.join(__dirname, '../public/img/logo-full.png');
+  const img = decodePng(file);
+  assert.deepEqual([img.width, img.height], [1200, 561], 'размер совпадает с width/height в разметке');
+  const alpha = (x, y) => img.px[(y * img.width + x) * 4 + 3];
+  // Прежний PNG был непрозрачным: тёмная подложка рендера рисовалась
+  // прямоугольником поверх гравюры прелоадера.
+  for (let x = 0; x < img.width; x += 1) {
+    assert.equal(alpha(x, 0), 0, `верхний край прозрачный (x=${x})`);
+    assert.equal(alpha(x, img.height - 1), 0, `нижний край прозрачный (x=${x})`);
+  }
+  for (let y = 0; y < img.height; y += 1) {
+    assert.equal(alpha(0, y), 0, `левый край прозрачный (y=${y})`);
+    assert.equal(alpha(img.width - 1, y), 0, `правый край прозрачный (y=${y})`);
+  }
+  const { transparent, opaque } = alphaStats(file);
+  const total = img.width * img.height;
+  assert.ok(transparent / total > 0.5, `фон вокруг надписи вырезан: ${(transparent / total * 100).toFixed(1)}%`);
+  assert.ok(opaque / total > 0.25, `буквы и год остались плотными: ${(opaque / total * 100).toFixed(1)}%`);
+  // Замкнутые просветы (петли P, e, l, 0, 2, 6…) не связаны с краем кадра:
+  // заливка прозрачного от краёв до них не доходит, но подложки в них тоже нет.
+  const W = img.width;
+  const clear = (i) => img.px[i * 4 + 3] === 0;
+  const outside = new Uint8Array(total);
+  const queue = new Int32Array(total);
+  let head = 0;
+  let tail = 0;
+  const push = (i) => { if (!outside[i] && clear(i)) { outside[i] = 1; queue[tail++] = i; } };
+  for (let x = 0; x < W; x += 1) { push(x); push(total - W + x); }
+  for (let y = 0; y < img.height; y += 1) { push(y * W); push(y * W + W - 1); }
+  while (head < tail) {
+    const i = queue[head++];
+    if (i % W > 0) push(i - 1);
+    if (i % W < W - 1) push(i + 1);
+    if (i >= W) push(i - W);
+    if (i < total - W) push(i + W);
+  }
+  const enclosed = transparent - tail;
+  assert.ok(enclosed > 20000, `просветы внутри букв тоже прозрачные: ${enclosed} px`);
+});
+
 test('кнопки и сегменты — шампанские пилюли по референсу IMG_1230', () => {
   assert.match(iosCss, /\.btn \{ min-height: 50px; border-radius: 999px;/, 'кнопки-пилюли');
   assert.match(iosCss, /\.btn-primary \{\n\s*color: var\(--tint-fill-ink\);\n\s*background: linear-gradient\(135deg, var\(--sand-1\) 0%, var\(--tint-fill\) 55%, var\(--sand-2\) 100%\);/, 'главная кнопка — шампанский градиент');

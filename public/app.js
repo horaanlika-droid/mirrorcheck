@@ -37,12 +37,13 @@
   const TERMINAL = ['completed', 'rejected', 'cancelled'];
   // jsdom в тестах медиа не проигрывает: звук там не заводим вовсе.
   const isTestEnv = typeof navigator !== 'undefined' && (/jsdom/i.test(navigator.userAgent) || navigator.userAgent === '');
-  // Настройки отклика живут в localStorage и переключаются в профиле:
-  // «дзынь» кассы на прелоадере и виброотклик на нажатия. По умолчанию включены.
-  const PREF_SOUND = 'pricelex_sound';
-  const PREF_HAPTICS = 'pricelex_haptics';
-  const prefOn = (key) => { try { return localStorage.getItem(key) !== 'off'; } catch (e) { return true; } };
-  const setPref = (key, on) => { try { localStorage.setItem(key, on ? 'on' : 'off'); } catch (e) { /* приватный режим */ } };
+  // «Дзынь» кассы на прелоадере и виброотклик на нажатия всегда включены:
+  // переключатели «Звук кассы» и «Виброотклик» из профиля убраны. Выбор,
+  // сохранённый ими когда-то, больше ни на что не влияет — стираем его.
+  try {
+    localStorage.removeItem('pricelex_sound');
+    localStorage.removeItem('pricelex_haptics');
+  } catch (e) { /* приватный режим */ }
   // Штаб-квартира. Адрес — часть юридических данных, поэтому он живёт константой
   // в коде, а не настройкой: разъехаться с тем, что написано в правилах, дороже,
   // чем неудобство менять его через админ-меню. Показывается в контактах «Инфо»
@@ -53,7 +54,8 @@
     + encodeURIComponent('Street 11B 243/3, Umm Al Sheif, Dubai, United Arab Emirates');
   const S = {
     settings: null, me: null, orders: [], order: null, tab: 'exchange',
-    returnTab: 'exchange', orderOpen: false,
+    navStack: [], // экраны, через которые пришли на текущий: куда ведёт «назад»
+    orderOpen: false,
     currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [],
     history: { points: [], updatedFor: null },
     access: null, // состояние доступа: бесплатные дни / подписка
@@ -310,7 +312,6 @@
   let pendingReceipt = null;
   let lastHapticAt = 0; // время последнего импульса — по нему гасится дубль от общего обработчика
   const haptic = (t = 'light') => {
-    if (!prefOn(PREF_HAPTICS)) return;
     lastHapticAt = Date.now();
     try {
       if (tg && tg.HapticFeedback) {
@@ -422,8 +423,6 @@
     bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>',
     theme: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6.5 6.5 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M17 4h.01M20 8h.01"/></svg>',
     chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
-    sound: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6"/><path d="M18.2 6.5a8 8 0 0 1 0 11"/></svg>',
-    vibe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="3.5" width="8" height="17" rx="2"/><path d="M4.5 8.5v7M19.5 8.5v7M2 10.5v3M22 10.5v3"/></svg>',
   };
 
   /* ---------- медные монеты валют ---------- */
@@ -686,6 +685,7 @@
           <div class="hdr-actions"><div class="hdr-status">${status}${demoTag}</div><button class="icon-button" id="profileMenu" type="button" aria-label="Открыть профиль">${ICONS.menu}</button></div>
         </div>`;
       $('#profileMenu').addEventListener('click', () => { haptic('light'); goTab('profile'); });
+      syncTgBackButton(false);
       return;
     }
 
@@ -701,8 +701,13 @@
         <div class="hdr-page-spacer" aria-hidden="true"></div>
       </div>`;
     $('#headerBack').addEventListener('click', goBack);
+    syncTgBackButton(true);
   }
 
+  /* ---------- «назад» ---------- */
+  // Стрелка в шапке, свайп и системная кнопка Telegram ведут сюда. Экран заявки
+  // закрывается обратно в форму обмена, остальные экраны достают из стека
+  // прошлый экран (см. goTab), а когда стек пуст — возвращают на обмен.
   function goBack() {
     if (isOrderPage()) {
       S.orderOpen = false;
@@ -713,7 +718,25 @@
       document.body.scrollTop = 0;
       return;
     }
-    goTab(S.returnTab || 'exchange');
+    goTab(S.navStack.pop() || 'exchange', { back: true });
+  }
+
+  // Системная кнопка «назад» Telegram (в шапке клиента, на Android — ещё и
+  // аппаратная «назад») видна там же, где стрелка в шапке приложения, и ведёт
+  // в тот же goBack(). На главном экране обмена её нет: там Telegram
+  // показывает своё «Закрыть».
+  function syncTgBackButton(show) {
+    const button = tg && tg.BackButton;
+    if (!button || typeof button.show !== 'function' || typeof button.hide !== 'function') return;
+    if (typeof tg.isVersionAtLeast === 'function' && !tg.isVersionAtLeast('6.1')) return;
+    try {
+      if (!syncTgBackButton.wired && typeof button.onClick === 'function') {
+        button.onClick(() => { haptic('light'); goBack(); });
+        syncTgBackButton.wired = true;
+      }
+      if (show) button.show();
+      else button.hide();
+    } catch (e) { /* клиент Telegram без BackButton */ }
   }
 
   /* ---------- свайп влево — «назад» ---------- */
@@ -780,9 +803,21 @@
     el.textContent = t || '';
   }
 
-  function goTab(tab) {
+  // Переход вперёд кладёт текущий экран в стек «назад», а «назад» достаёт его
+  // оттуда. Раньше помнился только один прошлый экран, и пара «Профиль ⇄
+  // Помощь» замыкалась сама на себя: из Помощи «назад» вёл в Профиль, из
+  // Профиля — снова в Помощь, и выйти на обмен было нельзя. Обмен — корень:
+  // переход на него стек очищает. Если экран уже лежит в стеке (вернулись к
+  // нему по ссылке, а не стрелкой), всё, что сверху, отбрасывается — экраны в
+  // стеке не повторяются, и «назад» всегда доводит до обмена.
+  function goTab(tab, { back = false } = {}) {
     if (tab === S.tab) return;
-    S.returnTab = S.tab;
+    if (tab === 'exchange') S.navStack = [];
+    else if (!back) {
+      const seen = S.navStack.indexOf(tab);
+      if (seen >= 0) S.navStack = S.navStack.slice(0, seen);
+      else S.navStack.push(S.tab);
+    }
     S.tab = tab;
     document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
     const view = $('#view-' + tab);
@@ -2120,16 +2155,6 @@
           <span class="profile-row-copy"><b>Уведомления</b><small>Статус и сообщения по заявкам</small></span>
           <span class="profile-toggle" aria-hidden="true"><i></i></span>
         </button>
-        <button class="profile-row" type="button" id="profileSound" role="switch" aria-checked="${prefOn(PREF_SOUND)}">
-          <span class="profile-row-icon">${ICONS.sound}</span>
-          <span class="profile-row-copy"><b>Звук кассы</b><small>«Дзынь» при запуске приложения</small></span>
-          <span class="profile-toggle ${prefOn(PREF_SOUND) ? '' : 'off'}" aria-hidden="true"><i></i></span>
-        </button>
-        <button class="profile-row" type="button" id="profileHaptics" role="switch" aria-checked="${prefOn(PREF_HAPTICS)}">
-          <span class="profile-row-icon">${ICONS.vibe}</span>
-          <span class="profile-row-copy"><b>Виброотклик</b><small>Лёгкий отклик на нажатия</small></span>
-          <span class="profile-toggle ${prefOn(PREF_HAPTICS) ? '' : 'off'}" aria-hidden="true"><i></i></span>
-        </button>
         <div class="profile-row static-row">
           <span class="profile-row-icon language-icon">А</span>
           <span class="profile-row-copy"><b>Язык</b></span>
@@ -2169,7 +2194,8 @@
       const a = accessNow();
       if (a.ok && a.state === 'active') return toast(`Подписка активна до ${fmtAccessUntil(a.until)}`);
       if (a.ok && a.state === 'trial') return toast(`Бесплатный доступ: ещё ${a.daysLeft} дн.`);
-      S.tab = 'exchange';
+      // Раньше здесь сначала выставлялось S.tab = 'exchange', и goTab() считал,
+      // что переходить некуда: оставался экран профиля, а «назад» молчал.
       goTab('exchange');
       toast(a.state === 'pending' ? 'Оплата на проверке — включим доступ после подтверждения' : 'Оформите подписку, чтобы продолжить');
     });
@@ -2177,6 +2203,9 @@
     if (active) active.addEventListener('click', () => {
       S.orderOpen = true;
       goTab('exchange');
+      // Экран обмена перерисовывается с заявкой вместо формы — иначе шапка
+      // уже «Заявка», а под ней оставалась форма обмена.
+      renderExchange();
       renderHeader();
       renderNav();
     });
@@ -2189,20 +2218,6 @@
         toast('Уведомления доступны при запуске приложения в Telegram');
       }
     });
-    // Переключатели отклика: включение сразу даёт попробовать результат.
-    const wirePref = (id, key, onEnable) => {
-      const row = $('#' + id);
-      if (!row) return;
-      row.addEventListener('click', () => {
-        const on = !prefOn(key);
-        setPref(key, on);
-        row.setAttribute('aria-checked', String(on));
-        row.querySelector('.profile-toggle').classList.toggle('off', !on);
-        if (on) onEnable();
-      });
-    };
-    wirePref('profileSound', PREF_SOUND, () => kachingPlay());
-    wirePref('profileHaptics', PREF_HAPTICS, () => haptic('medium'));
     $('#profileLogout').addEventListener('click', () => {
       haptic('light');
       if (tg && typeof tg.close === 'function') tg.close();
@@ -3313,7 +3328,7 @@
   // на готовности. Импульсов «под луч» по-прежнему нет: блик с герба убран.
   // В Telegram — HapticFeedback, в обычном браузере — navigator.vibrate;
   // при prefers-reduced-motion вибрации нет вовсе (звук — не движение, он
-  // выключается отдельным переключателем «Звук кассы» в профиле).
+  // остаётся).
   // Звук интерфейса не должен глушить музыку пользователя: на iOS 17+
   // audioSession переводится в 'ambient' — «дзынь» подмешивается к плееру и
   // молчит при беззвучном режиме. WebView Telegram играет звук без жеста;
@@ -3325,7 +3340,7 @@
   let kachingAudio = null;
   let kachingOnTap = null;
   function prepareKaching() {
-    if (isTestEnv || !prefOn(PREF_SOUND) || typeof window.Audio !== 'function') return null;
+    if (isTestEnv || typeof window.Audio !== 'function') return null;
     try {
       if (navigator.audioSession && navigator.audioSession.type !== 'ambient') navigator.audioSession.type = 'ambient';
     } catch (e) { /* старые движки без Audio Session API */ }

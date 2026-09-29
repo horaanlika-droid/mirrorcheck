@@ -91,8 +91,8 @@ test('профиль: настроек без переключателя тем�
   assert.equal(doc.documentElement.getAttribute('data-theme'), 'light', 'палитра приложения не зависит от темы Telegram');
   assert.equal(doc.querySelector('#themeSeg'), null, 'переключателя нет в разметке');
   const rows = [...doc.querySelectorAll('.profile-settings .profile-row-copy b')].map((b) => b.textContent);
-  assert.deepEqual(rows, ['Уведомления', 'Звук кассы', 'Виброотклик', 'Язык'],
-    'в настройках — уведомления, отклик (звук кассы и вибрация) и язык');
+  assert.deepEqual(rows, ['Уведомления', 'Язык'],
+    'в настройках — уведомления и язык; переключателей звука и вибрации нет');
   assert.match(doc.querySelector('#view-profile').textContent, /Русский/);
 });
 

@@ -4,7 +4,9 @@
    тёмные металлы внутри силуэта не становятся полупрозрачными, а кромка
    получает мягкое перо по яркости. Запуск:
      node tools/png-key.js <src.png> <dst.png> <size>
-     node tools/png-key.js grade [--ramp=bronze] <file.png>…   — единый оттенок набора */
+     node tools/png-key.js grade [--ramp=bronze] <file.png>…   — единый оттенок набора
+     node tools/png-key.js backdrop <src.png> [dst.png]        — непрозрачный тёмный фон
+                                                                кадра → альфа, без кропа */
 'use strict';
 
 const fs = require('fs');
@@ -156,6 +158,131 @@ function keyBlack(img, { bgMax = 52, feather = 26 } = {}) {
   return img;
 }
 
+/* ---------- тёмная подложка кадра → альфа (логотип прелоадера) ---------- */
+// keyBlack рассчитан на чистый чёрный. У рендера логотипа подложка — не чёрный,
+// а вертикальный градиент (≈3 сверху → ≈17 снизу по максимуму каналов), а тени
+// металла внутри букв бывают темнее этой подложки. Поэтому фон моделируется по
+// строкам (медиана краевых столбцов, сглаженная по вертикали), заливка от краёв
+// идёт по |яркость − подложка строки| < flood, а замкнутые просветы букв (петли
+// P, e, 0, 2…) становятся фоном, только если это ровное поле уровня подложки,
+// а не тёмный металл. Кромка шириной band получает альфу по превышению над
+// подложкой, цвет кромки восстанавливается «раз-смешиванием» с подложкой, так
+// что на любом фоне не остаётся ни прямоугольника, ни тёмного ореола.
+function keyBackdrop(img, {
+  flood = 12, // допуск заливки фона по яркости относительно подложки строки
+  d0 = 5, d1 = 40, // рампа альфы кромки: превышение над подложкой → 0…1
+  band = 2, // ширина кромки, px
+  holeMin = 24, // минимальный размер замкнутого просвета, px
+  flat = 4.5, // просвет должен быть ровным: среднее |отклонение| от подложки
+  edge = 8, // сколько краевых столбцов с каждой стороны описывают подложку
+  smooth = 6, // сглаживание подложки по вертикали, ± строк
+} = {}) {
+  const { width: W, height: H, px } = img;
+  const N = W * H;
+  const median = (arr) => { const s = [...arr].sort((a, b) => a - b); return s[s.length >> 1]; };
+  const rowBg = [];
+  for (let y = 0; y < H; y += 1) {
+    const ch = [[], [], []];
+    for (let k = 0; k < edge; k += 1) {
+      for (const x of [k, W - 1 - k]) {
+        const o = (y * W + x) * 4;
+        for (let c = 0; c < 3; c += 1) ch[c].push(px[o + c]);
+      }
+    }
+    rowBg.push(ch.map(median));
+  }
+  const bg = rowBg.map((_, y) => {
+    const acc = [0, 0, 0];
+    for (let k = -smooth; k <= smooth; k += 1) {
+      const row = rowBg[Math.min(H - 1, Math.max(0, y + k))];
+      for (let c = 0; c < 3; c += 1) acc[c] += row[c];
+    }
+    return acc.map((v) => v / (2 * smooth + 1));
+  });
+  const bgL = bg.map((c) => Math.max(c[0], c[1], c[2]));
+  const d = new Float32Array(N);
+  for (let i = 0; i < N; i += 1) {
+    const o = i * 4;
+    d[i] = Math.max(px[o], px[o + 1], px[o + 2]) - bgL[(i / W) | 0];
+  }
+  const bgLike = (i) => Math.abs(d[i]) < flood;
+  const neighbours = (i) => {
+    const x = i % W;
+    const y = (i / W) | 0;
+    return [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1];
+  };
+  // 1) фон, связанный с краями кадра
+  const mask = new Uint8Array(N); // 1 — подложка
+  const queue = new Int32Array(N);
+  let head = 0;
+  let tail = 0;
+  const push = (i) => {
+    if (mask[i] || !bgLike(i)) return;
+    mask[i] = 1;
+    queue[tail++] = i;
+  };
+  for (let x = 0; x < W; x += 1) { push(x); push((H - 1) * W + x); }
+  for (let y = 0; y < H; y += 1) { push(y * W); push(y * W + W - 1); }
+  while (head < tail) for (const j of neighbours(queue[head++])) if (j >= 0) push(j);
+  // 2) замкнутые просветы букв: ровные поля уровня подложки
+  const seen = new Uint8Array(N);
+  let holes = 0;
+  for (let s = 0; s < N; s += 1) {
+    if (seen[s] || mask[s] || !bgLike(s)) continue;
+    const comp = [s];
+    seen[s] = 1;
+    let dev = 0;
+    for (let k = 0; k < comp.length; k += 1) {
+      dev += Math.abs(d[comp[k]]);
+      for (const j of neighbours(comp[k])) {
+        if (j < 0 || seen[j] || mask[j] || !bgLike(j)) continue;
+        seen[j] = 1;
+        comp.push(j);
+      }
+    }
+    if (comp.length >= holeMin && dev / comp.length <= flat) {
+      for (const i of comp) mask[i] = 1;
+      holes += 1;
+    }
+  }
+  // 3) расстояние до границы «подложка / силуэт» (BFS, не дальше band)
+  const dist = new Int16Array(N).fill(32767);
+  head = 0;
+  tail = 0;
+  for (let i = 0; i < N; i += 1) {
+    if (neighbours(i).some((j) => j >= 0 && mask[j] !== mask[i])) {
+      dist[i] = 0;
+      queue[tail++] = i;
+    }
+  }
+  while (head < tail) {
+    const i = queue[head++];
+    const nd = dist[i] + 1;
+    if (nd > band) continue;
+    for (const j of neighbours(i)) {
+      if (j < 0 || dist[j] <= nd) continue;
+      dist[j] = nd;
+      queue[tail++] = j;
+    }
+  }
+  // 4) альфа (smoothstep по рампе на кромке) и цвет без примеси подложки
+  let transparent = 0;
+  let opaque = 0;
+  let partial = 0;
+  for (let i = 0; i < N; i += 1) {
+    const o = i * 4;
+    let a = dist[i] <= band ? Math.min(1, Math.max(0, (d[i] - d0) / (d1 - d0))) : (mask[i] ? 0 : 1);
+    a = a * a * (3 - 2 * a);
+    if (a <= 0.004) { px[o] = 0; px[o + 1] = 0; px[o + 2] = 0; px[o + 3] = 0; transparent += 1; continue; }
+    if (a >= 0.996) { px[o + 3] = 255; opaque += 1; continue; }
+    const b = bg[(i / W) | 0];
+    for (let c = 0; c < 3; c += 1) px[o + c] = Math.max(0, Math.min(255, Math.round((px[o + c] - b[c] * (1 - a)) / a)));
+    px[o + 3] = Math.round(a * 255);
+    partial += 1;
+  }
+  return { img, stats: { holes, transparent, opaque, partial } };
+}
+
 /* ---------- кроп по альфе + даунскейл усреднением ---------- */
 function cropAlpha(img) {
   const { width, height, px } = img;
@@ -296,14 +423,49 @@ function gradeBronze(img, ramp = RAMP_CHAMPAGNE) {
   return img;
 }
 
-/* ---------- кодировщик PNG (RGBA, filter 0) ---------- */
+/* ---------- кодировщик PNG (RGBA, адаптивные фильтры строк) ---------- */
+// Для каждой строки берётся фильтр PNG (None/Sub/Up/Average/Paeth) с минимальной
+// суммой модулей — стандартная эвристика libpng. Фото-ассеты с альфой так
+// сжимаются заметно лучше, чем без фильтров.
+function filterRow(type, cur, prev, bpp, out) {
+  for (let x = 0; x < cur.length; x += 1) {
+    const a = x >= bpp ? cur[x - bpp] : 0;
+    const b = prev ? prev[x] : 0;
+    const c = x >= bpp && prev ? prev[x - bpp] : 0;
+    let pred = 0;
+    if (type === 1) pred = a;
+    else if (type === 2) pred = b;
+    else if (type === 3) pred = (a + b) >> 1;
+    else if (type === 4) {
+      const p = a + b - c;
+      const pa = Math.abs(p - a);
+      const pb = Math.abs(p - b);
+      const pc = Math.abs(p - c);
+      pred = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+    }
+    out[x] = (cur[x] - pred) & 0xff;
+  }
+  return out;
+}
 function encodePng(img, file) {
   const { width, height, px } = img;
-  const stride = width * 4 + 1;
+  const rowLen = width * 4;
+  const stride = rowLen + 1;
   const raw = Buffer.alloc(stride * height);
+  const trial = Buffer.alloc(rowLen);
   for (let y = 0; y < height; y += 1) {
-    raw[y * stride] = 0;
-    px.copy(raw, y * stride + 1, y * width * 4, (y + 1) * width * 4);
+    const cur = px.subarray(y * rowLen, (y + 1) * rowLen);
+    const prev = y > 0 ? px.subarray((y - 1) * rowLen, y * rowLen) : null;
+    let best = 0;
+    let bestCost = Infinity;
+    for (let type = 0; type <= 4; type += 1) {
+      filterRow(type, cur, prev, 4, trial);
+      let cost = 0;
+      for (let x = 0; x < rowLen; x += 1) cost += trial[x] < 128 ? trial[x] : 256 - trial[x];
+      if (cost < bestCost) { bestCost = cost; best = type; }
+    }
+    raw[y * stride] = best;
+    filterRow(best, cur, prev, 4, raw.subarray(y * stride + 1, (y + 1) * stride));
   }
   const chunk = (type, data) => {
     const len = Buffer.alloc(4);
@@ -349,10 +511,22 @@ if (require.main === module) {
       const bytes = encodePng(img, file);
       console.log(`grade:${name} ${file} ${img.width}×${img.height} ${(bytes / 1024).toFixed(0)} KB`);
     }
+  } else if (argv[0] === 'backdrop') {
+    // логотип на тёмной подложке → прозрачный фон того же размера:
+    // node tools/png-key.js backdrop <src.png> [dst.png]
+    const [src, dst = src] = argv.slice(1);
+    if (!src) throw new Error('укажите файл: node tools/png-key.js backdrop <src.png> [dst.png]');
+    const img = decodePng(src);
+    for (let i = 3; i < img.px.length; i += 4) {
+      if (img.px[i] < 255) throw new Error(`${src} уже с прозрачностью — нужен исходник с непрозрачной подложкой`);
+    }
+    const { stats } = keyBackdrop(img);
+    const bytes = encodePng(img, dst);
+    console.log(`backdrop ${src} → ${dst} ${img.width}×${img.height} ${(bytes / 1024).toFixed(0)} KB`, stats);
   } else {
     const [src, dst, size] = argv;
     convert(src, dst, Number(size) || 96);
   }
 }
 
-module.exports = { decodePng, encodePng, keyBlack, cropAlpha, resize, convert, gradeBronze, rampColor, RAMPS };
+module.exports = { decodePng, encodePng, keyBlack, keyBackdrop, cropAlpha, resize, convert, gradeBronze, rampColor, RAMPS };

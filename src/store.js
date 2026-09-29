@@ -631,16 +631,61 @@ function dropRatePointsAfter(ts = 0) {
   });
 }
 
-// Точки окна [since; ∞) с прореживанием до maxPoints (последняя всегда сохраняется).
+// Свечи бирж в провалы истории (дни, когда бот не работал): точки встают между
+// живыми наблюдениями, существующие не заменяются. В отличие от seedRateHistory
+// курс в настройках не трогается — провал в прошлом не меняет текущий курс.
+function insertRatePoints(points) {
+  const valid = (Array.isArray(points) ? points : [])
+    .filter((p) => p && Number.isFinite(Number(p.at)) && Number(p.btc) > 0 && Number(p.gram) > 0)
+    .map((p) => {
+      const pt = { at: Number(p.at), btc: Math.round(Number(p.btc)), gram: Math.round(Number(p.gram)) };
+      if (Number(p.baseBtc) > 0) pt.baseBtc = Math.round(Number(p.baseBtc));
+      if (Number(p.baseGram) > 0) pt.baseGram = Math.round(Number(p.baseGram));
+      return pt;
+    });
+  if (!valid.length) return 0;
+  return mutate((d) => {
+    if (!Array.isArray(d.rateHistory)) d.rateHistory = [];
+    const taken = new Set(d.rateHistory.map((p) => Math.round(p.at / 60000)));
+    let added = 0;
+    for (const p of valid) {
+      const minute = Math.round(p.at / 60000);
+      if (taken.has(minute)) continue;
+      taken.add(minute);
+      d.rateHistory.push(p);
+      added += 1;
+    }
+    if (!added) return 0;
+    d.rateHistory.sort((a, b) => a.at - b.at);
+    if (d.rateHistory.length > RATE_HISTORY_MAX) d.rateHistory.splice(0, d.rateHistory.length - RATE_HISTORY_MAX);
+    return added;
+  });
+}
+
+// Точки окна [since; ∞), не больше maxPoints. Прореживание — по времени, а не по
+// номеру точки: отрезок от первой до последней точки делится на равные
+// интервалы, из каждого берётся первое наблюдение (без усреднения — точки
+// остаются фактическими), последняя точка сохраняется всегда. Раньше брали
+// каждую N-ю точку, и минутные наблюдения живого курса забирали почти весь
+// лимит: дни из часовых свечей (до запуска бота или пока он не работал)
+// оставались с парой точек и рисовались на графике длинными прямыми.
 function rateHistorySince(since = 0, maxPoints = 180) {
   const all = (db.rateHistory || []).filter((p) => p.at >= since);
   const limit = Math.max(2, Number(maxPoints) || 180);
   const pick = (p) => ({ at: p.at, btc: p.btc, gram: p.gram });
   if (all.length <= limit) return all.map(pick);
-  const step = Math.ceil(all.length / limit);
-  const out = all.filter((_, i) => i % step === 0).map(pick);
-  const last = pick(all[all.length - 1]);
-  if (!out.length || out[out.length - 1].at !== last.at) out.push(last);
+  const first = all[0].at;
+  const span = Math.max(1, all[all.length - 1].at - first);
+  const slots = limit - 1; // последней точке — отдельное место
+  const out = [];
+  let slot = -1;
+  for (let i = 0; i < all.length - 1; i += 1) {
+    const k = Math.min(slots - 1, Math.floor(((all[i].at - first) / span) * slots));
+    if (k === slot) continue;
+    slot = k;
+    out.push(pick(all[i]));
+  }
+  out.push(pick(all[all.length - 1]));
   return out;
 }
 
@@ -1529,6 +1574,7 @@ module.exports = {
   stats,
   pushRatePoint,
   dropRatePointsAfter,
+  insertRatePoints,
   rateHistorySince,
   seedRateHistory,
   createSupportMessage,

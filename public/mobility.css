@@ -56,6 +56,9 @@ html[data-device] {
   font-weight: 600;
   color: var(--ink);
   text-align: left !important;
+  /* fix.css центрирует последнюю строку (text-align-last) — без этого
+     «крипту?» и «цену.» уезжали в середину под левой первой строкой */
+  text-align-last: left !important;
 }
 .exchange-heading p {
   color: var(--mut);
@@ -63,6 +66,7 @@ html[data-device] {
   margin-top: 6px;
   line-height: 1.5;
   text-align: left !important;
+  text-align-last: left !important;
 }
 .brokers-online-chip,
 .compare-link {
@@ -195,6 +199,16 @@ html[data-device] {
   letter-spacing: 0;
   margin-bottom: 14px;
   text-align: left !important;
+}
+/* Шаги «1 Сколько меняем?» и «2 Куда отправить?» стоят у левого края — как
+   «Начнём обмен», «Что хотите получить?», подписи полей и шаг 3. fix.css §2
+   центрирует любой .card-title (justify-content и text-align-last с
+   !important), поэтому для заголовков шагов формы обмена это перебито точечно. */
+.exchange-journey .exchange-form-card > .card-title,
+.exchange-journey .wallet-card > .card-title {
+  justify-content: flex-start !important;
+  text-align: left !important;
+  text-align-last: left !important;
 }
 .step-number {
   display: inline-grid;
