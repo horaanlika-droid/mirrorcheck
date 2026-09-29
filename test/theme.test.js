@@ -1,6 +1,4 @@
-// Тема одна — тёмная: ни светлой палитры, ни переключателя, ни bootstrap'а
-// с разрешением режима. Токены объявлены безусловно в слоях
-// style/reference/ios, хром Telegram красится app.js в цвет темы.
+// Единая светлая палитра, согласованная с браузером и Telegram.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -12,33 +10,18 @@ const html = pub('index.html');
 const appJs = pub('app.js');
 const referenceCss = pub('reference.css');
 const iosCss = pub('ios.css');
-const styleCss = pub('style.css');
-const devicesCss = pub('devices.css');
-const fixCss = pub('fix.css');
+const mobilityCss = pub('mobility.css');
 
-// Все слои, которые реально доезжают до браузера.
-const layers = { 'index.html': html, 'style.css': styleCss, 'reference.css': referenceCss, 'ios.css': iosCss, 'devices.css': devicesCss, 'fix.css': fixCss, 'app.js': appJs };
-
-test('светлой темы нет: ни файлов палитры, ни подключения в разметке', () => {
-  assert.ok(!fs.existsSync(path.join(__dirname, '../public/theme.css')), 'слой светлых токенов удалён');
-  assert.ok(!fs.existsSync(path.join(__dirname, '../public/theme.js')), 'bootstrap переключения темы удалён');
-  assert.doesNotMatch(html, /href="\/theme\.css"/, 'светлый слой не подключается');
-  assert.doesNotMatch(html, /src="\/theme\.js"/, 'скрипт переключения темы не подключается');
-});
-
-test('тёмная палитра объявлена безусловно и не зависит от атрибутов', () => {
-  assert.match(html, /<html[^>]*data-theme="dark"/, 'разметка сразу помечена тёмной темой');
-  for (const [name, src] of Object.entries(layers)) {
-    if (!name.endsWith('.css')) continue;
-    assert.doesNotMatch(src, /data-theme='light'/, `${name}: нет светлых токенов`);
-    assert.doesNotMatch(src, /data-theme="light"/, `${name}: нет светлых токенов`);
-  }
-  assert.match(html, /<meta name="theme-color" content="#080d11"/, 'хром браузера — графитовый');
-  assert.match(html, /<meta name="color-scheme" content="dark"/, 'формы браузера — тёмные');
-  // Каналы объявлены в тёмных слоях, иначе производные цвета не соберутся.
-  assert.match(referenceCss, /--line-rgb:\s*228, 236, 240/);
-  assert.match(referenceCss, /--tint-rgb:\s*201, 168, 126/);
-  assert.match(iosCss, /--tint-fill:\s*#c9a87e/, 'заливки кнопок отделены от текстового акцента');
+test('единая светлая палитра подключается последней', () => {
+  assert.match(html, /<html[^>]*data-theme="light"/);
+  assert.match(html, /<meta name="theme-color" content="#f4f4f0"/);
+  assert.match(html, /<meta name="color-scheme" content="light"/);
+  const sheets = [...html.matchAll(/href="(\/[^" ]+\.css)"/g)].map((m) => m[1]);
+  assert.equal(sheets.at(-1), '/mobility.css');
+  assert.match(mobilityCss, /color-scheme: light/);
+  assert.match(mobilityCss, /--surface: #fff/);
+  assert.match(mobilityCss, /--ink: #202020/);
+  assert.match(mobilityCss, /--tint-fill: #ffda32/);
 });
 
 test('переключателя темы нет ни в профиле, ни в API приложения', () => {
@@ -55,8 +38,8 @@ test('график по-прежнему красится из токенов, �
   assert.match(referenceCss, /\.chart \.gs-line-1 \{ stop-color: var\(--sand-5\); \}/);
 });
 
-test('хром Telegram красится в цвет тёмной темы после ready()', () => {
-  assert.match(appJs, /CHROME_COLOR = '#080d11'/);
+test('хром Telegram красится в цвет светлой темы после ready()', () => {
+  assert.match(appJs, /CHROME_COLOR = '#f4f4f0'/);
   assert.match(appJs, /tg\.setHeaderColor\(CHROME_COLOR\)/);
   assert.match(appJs, /tg\.setBackgroundColor\(CHROME_COLOR\)/);
   const ready = appJs.indexOf('tg.ready()');
@@ -102,10 +85,10 @@ async function app(t, { telegram = null, storage = {} } = {}) {
   return d;
 }
 
-test('профиль: настроек без переключателя темы, приложение остаётся тёмным', async (t) => {
-  const d = await app(t, { telegram: { colorScheme: 'light' } });
+test('профиль: настроек без переключателя темы, приложение остаётся светлым', async (t) => {
+  const d = await app(t, { telegram: { colorScheme: 'dark' } });
   const doc = d.window.document;
-  assert.equal(doc.documentElement.getAttribute('data-theme'), 'dark', 'светлая тема Telegram игнорируется');
+  assert.equal(doc.documentElement.getAttribute('data-theme'), 'light', 'палитра приложения не зависит от темы Telegram');
   assert.equal(doc.querySelector('#themeSeg'), null, 'переключателя нет в разметке');
   const rows = [...doc.querySelectorAll('.profile-settings .profile-row-copy b')].map((b) => b.textContent);
   assert.deepEqual(rows, ['Уведомления', 'Звук кассы', 'Виброотклик', 'Язык'],
@@ -114,8 +97,8 @@ test('профиль: настроек без переключателя тем�
 });
 
 test('профиль: сохранённый когда-то режим темы не влияет на палитру', async (t) => {
-  const d = await app(t, { storage: { pricelex_theme: 'light' } });
+  const d = await app(t, { storage: { pricelex_theme: 'dark' } });
   const doc = d.window.document;
-  assert.equal(doc.documentElement.getAttribute('data-theme'), 'dark');
+  assert.equal(doc.documentElement.getAttribute('data-theme'), 'light');
   assert.equal(doc.querySelector('#themeSeg'), null);
 });

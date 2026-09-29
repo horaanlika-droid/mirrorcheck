@@ -91,10 +91,10 @@ const runUpTo = ({ timers }, limit) => [...timers.values()]
 // Только те правила, что относятся к прелоадеру: по ним сверяем «нет анимаций».
 const preloaderRules = (css) => css.split(/\n(?=\S)/).filter((b) => /\.preloader/.test(b)).join('\n');
 
-test('прелоадер: большое лого и полный текст — PRICELEX, Private Crypto Brokerage, Since 2026', () => {
+test('прелоадер: большое лого и полный текст — PRICELEX, Обмен без лишних шагов, Since 2026', () => {
   assert.match(html, /class="preloader-wordmark" src="\/img\/logo-full\.png"/);
   assert.match(html, /alt="PRICELEX — Since 2026" width="1200" height="561"/);
-  assert.match(html, /<div class="preloader-tag">Private Crypto Brokerage<\/div>/);
+  assert.match(html, /<div class="preloader-tag">Обмен без лишних шагов<\/div>/);
   assert.doesNotMatch(html, /preloader-logo-wrap|preloader-logo-sheen/);
   assert.match(html, /class="preloader-bar"/);
   assert.match(html, /class="preloader-progress"/);
