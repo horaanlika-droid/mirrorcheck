@@ -203,6 +203,26 @@ async function notifyClientTx(o) {
   }
 }
 
+// Клиенту — сообщение о новом предложении брокера с кнопкой открыть приложение,
+// где его можно принять. Уточнение цены тем же брокером повторно не шлём.
+async function notifyClientBid(o, bid) {
+  if (!o || !o.userId || !bid) return false;
+  if (bid.updatedAt && bid.createdAt && bid.updatedAt !== bid.createdAt) return false;
+  const url = store.get().settings.publicUrl;
+  const kb = url && /^https:\/\//.test(url) ? new InlineKeyboard().webApp('👀 Посмотреть предложения', url) : undefined;
+  try {
+    await bot.api.sendMessage(o.userId,
+      `💬 <b>Новое предложение по заявке #${o.id}</b>\n\n` +
+      `🤝 ${esc(store.brokerCard(bid.login).name || bid.name || 'Брокер')} предлагает <b>${fmtRub(bid.rate)}</b> за 1 ${o.currency}.\n` +
+      'Откройте приложение, чтобы сравнить предложения и принять подходящее.',
+      { parse_mode: 'HTML', ...(kb ? { reply_markup: kb } : {}) });
+    return true;
+  } catch (e) {
+    console.error(`[bot] bid #${o.id} → client:`, e.message);
+    return false;
+  }
+}
+
 /* ---------- события заказов из веб-части ---------- */
 
 async function onOrderEvent({ order, type, bid, declined, payload = {}, user }) {
@@ -214,6 +234,7 @@ async function onOrderEvent({ order, type, bid, declined, payload = {}, user }) 
   if (type === 'bid') {
     // отклик брокера из ЛК: админам достаточно строки в карточке заявки
     await broadcast(`💬 <b>Отклик по оферу #${order.id}</b>: ${esc(bid?.name || bid?.login || '—')} предлагает ${fmtRub(bid?.rate || 0)} за 1 ${order.currency}.`);
+    await notifyClientBid(order, bid);
   }
   if (type === 'bid_accepted') {
     await notifyBidAccepted(order, bid, declined);
@@ -340,7 +361,7 @@ async function brokerChatAdminView(ctx, userId, login) {
   let body =
     `💬 <b>Чат с брокером</b> <code>${esc(login)}</code> · <code>${esc(userId)}</code>\n` +
     (p && p.depositBtc
-      ? `🛡 Депозит: ${fmtBtc(p.depositBtc)} · стажировка до ${p.internUntil ? fmtDate(p.internUntil) : '—'}\n` : '') +
+      ? `🛡 Депозит: ${fmtBtc(p.depositBtc)}\n` : '') +
     '\n';
   if (!msgs.length) {
     body += 'Сообщений от брокера пока нет.';
@@ -970,14 +991,8 @@ const SET_FIELDS = {
   bshare: { label: 'долю брокера в спреде, % (например 70)', num: true, key: 'brokerSharePercent' },
   bops: { label: 'операционные расходы со сделки, ₽ (вычитаются из спреда до деления)', num: true, key: 'opsExpensesRub' },
   bminp: { label: 'минимальную выплату брокеру в BTC (например 0.0002)', num: true, key: 'brokerMinPayoutBtc' },
-  bdepbtc: { label: 'депозит стажёра в BTC (например 0.0002)', num: true, key: 'brokerDepositBtc' },
   gfund: { label: 'общий гарантийный депозит всех брокеров в BTC — его видит клиент (например 0.02)', num: true, key: 'guaranteeFundBtc' },
-  bdepusd: { label: 'депозит стажёра в $ для текстов (например 20)', num: true, key: 'brokerDepositUsd' },
   bdepa: { label: 'BTC-адрес для приёма депозитов брокеров', key: 'brokerDepositAddress' },
-  bdepfee: { label: 'сбор за подключение брокера, % от депозита (0–100, например 10)', num: true, key: 'brokerDepositFeePercent' },
-  bdepfeemax: { label: 'предел сбора за подключение в BTC (0 — без предела, например 0.0005)', num: true, key: 'brokerDepositFeeMaxBtc' },
-  binmax: { label: 'лимит заявки стажёра, ₽ (например 5000)', num: true, key: 'internMaxRub' },
-  bindays: { label: 'длительность стажировки в днях (например 7)', num: true, key: 'internDays' },
 };
 
 async function requisitesPrompt(ctx, o, payRub = o.rub) {
@@ -1153,12 +1168,6 @@ async function handleAdminText(ctx) {
           if (!isFinite(n) || n < 0 || n > 100) return ctx.reply('Доля брокера — от 0 до 100. Пример: 70');
         } else if (key === 'bops') {
           if (!isFinite(n) || n < 0) return ctx.reply('Расходы — неотрицательное число в ₽. Пример: 50');
-        } else if (key === 'bindays') {
-          if (!isFinite(n) || n < 1 || n > 90) return ctx.reply('Стажировка — от 1 до 90 дней. Пример: 7');
-        } else if (key === 'bdepfee') {
-          if (!isFinite(n) || n < 0 || n > 100) return ctx.reply('Сбор — от 0 до 100% от депозита. Пример: 10');
-        } else if (key === 'bdepfeemax') {
-          if (!isFinite(n) || n < 0) return ctx.reply('Предел сбора — неотрицательное число в BTC. Пример: 0.0005 (0 — без предела)');
         } else if (key === 'subamt') {
           if (!isFinite(n) || n < 1 || n > 1_000_000) return ctx.reply('Донат — от 1 до 1 000 000 ₽. Пример: 200');
         } else if (key === 'trial') {
@@ -1259,20 +1268,16 @@ function brokerHomeText(login) {
   const avail = store.brokerAvailableBtc(login);
   const deals = store.brokerLedgerFor(login).length;
   const p = store.brokerProfile(login);
-  const intern = store.brokerIsIntern(login);
+  const lim = store.brokerLimit(login);
   let head = `🤝 <b>Кабинет брокера</b> · <code>${esc(login)}</code>\n\n`;
-  if (intern && !(p && p.depositBtc)) {
+  if (!(p && p.depositBtc > 0)) {
     head +=
-      `🎓 Вы на стажировке. Первый шаг — чат: напишите о себе (опыт, направления, объёмы), администрация выдаст реквизиты на возвратный депозит.\n\n` +
-      `💬 <b>Чат</b> — открыть переписку с площадкой (кнопка ниже).\n\n`;
-  } else if (intern) {
+      `🏦 Депозит не внесён. Пополните его в разделе «🏦 Депозит»: после подтверждения администратором ` +
+      `вы откликаетесь на заявки клиентов в пределах суммы депозита.\n\n`;
+  } else {
     head +=
-      `🎓 Стажировка: осталось ~${store.brokerInternLeft(login)} дн. ` +
-      `Торгуете ровно на сумму депозита ${fmtBtc(p.depositBtc)} (до ${fmtRub(s.internMaxRub)}). ` +
-      `Если у клиента возникнут проблемы с выплатой, площадка компенсирует из депозита.\n\n`;
-  } else if (p && p.depositBtc) {
-    head +=
-      `🛡️ Депозит ${fmtBtc(p.depositBtc)} под контролем площадки. Со временем, по мере роста доверия, площадка закрывает часть депозита — ваш лимит растёт на освободившуюся сумму.\n\n`;
+      `🏦 Депозит: <b>${fmtBtc(lim.depositBtc)}</b> ≈ ${fmtRub(lim.depositRub)}\n` +
+      `🔒 В сделках: ${fmtRub(lim.lockedRub)} · ✅ Свободно для заявок: <b>${fmtRub(lim.freeRub)}</b>\n\n`;
   }
   return (
     head +
@@ -1280,8 +1285,7 @@ function brokerHomeText(login) {
     `💼 Доступно к выводу: <b>${fmtBtc(avail)}</b>\n` +
     `🧾 Завершённых сделок: <b>${deals}</b>\n` +
     `📉 Ваша доля — ${s.brokerSharePercent}% спреда каждой сделки.\n` +
-    `💸 Выплата от ${fmtBtc(s.brokerMinPayoutBtc)} в любое время.\n\n` +
-    `Дальше обучение — его анонсируем отдельно.`
+    `💸 Выплата от ${fmtBtc(s.brokerMinPayoutBtc)} в любое время.`
   );
 }
 
@@ -1310,21 +1314,10 @@ async function brokerHome(ctx, edit = false) {
   return ctx.reply(text, opts);
 }
 
-// Отклик на «💬 Чат» в кабинете брокера: если персональная лента пустая и нет
-// подтверждённого депозита, показываем карточку первого шага (собеседование →
-// реквизиты → депозит), иначе открываем переписку с площадкой.
+// «💬 Чат» в кабинете брокера — переписка с площадкой.
 async function brokerChatOpen(ctx, edit = true) {
   const login = brokerCtx(ctx);
   if (!login) return brokerAuthStart(ctx);
-  const p = store.brokerProfile(login);
-  const started = store.getSupportMessages(String(ctx.from.id)).some((m) => m.broker === String(login));
-  const pending = p && p.depositBtc;
-  if (!started && !pending) {
-    const intro = brokerInvestMessage(login);
-    const opts = { parse_mode: 'HTML', reply_markup: intro.kb };
-    if (edit) return ctx.editMessageText(intro.text, opts).catch(() => {});
-    return ctx.reply(intro.text, opts);
-  }
   return brokerSupportThreadView(ctx, login, edit);
 }
 
@@ -1437,7 +1430,7 @@ async function brokerBalanceMenu(ctx, edit = true) {
     return `· #${e.orderId} ${o ? fmtRub(o.rub) : ''} → <b>+${fmtBtc(e.btc)}</b> (спред ${fmtRub(e.spread || 0)}, расходы ${fmtRub(e.ops || 0)})`;
   });
   const pays = store.payoutsByLogin(login).slice(0, 3).map((p) =>
-    `· ${fmtBtc(p.btc)} ${p.kind === 'deposit' ? '(возврат депозита) ' : ''}— ${p.status === 'pending' ? '⏳ в работе' : p.status === 'paid' ? '✅ выплачено' : '❌ отклонено'}`
+    `· ${fmtBtc(p.btc)} ${p.kind === 'deposit' ? '(вывод депозита) ' : ''}— ${p.status === 'pending' ? '⏳ в работе' : p.status === 'paid' ? '✅ выплачено' : '❌ отклонено'}`
   );
   const text =
     `💰 <b>Баланс</b>\n\n` +
@@ -1455,45 +1448,23 @@ async function brokerDepositMenu(ctx, edit = true) {
   const login = brokerCtx(ctx);
   if (!login) return brokerAuthStart(ctx);
   const s = store.get().settings;
-  const p = store.brokerProfile(login);
-  const intern = store.brokerIsIntern(login);
-  const refund = store.brokerDepositRefundable(login);
-  const pend = (!p || !p.depositBtc) && store.brokerDepositsByStatus('pending').find((x) => x.login === login);
-  // Для заявки в работе показываем зафиксированные в ней суммы, для новой — текущие настройки.
-  const sumBtc = pend ? pend.btc : s.brokerDepositBtc;
-  const feeBtc = pend ? pend.feeBtc : store.brokerDepositFeeFor(s.brokerDepositBtc);
-  const totalBtc = pend ? pend.totalBtc : store.brokerDepositTotalBtc(s.brokerDepositBtc);
+  const lim = store.brokerLimit(login);
+  const pend = store.brokerDepositsByStatus('pending').find((x) => x.login === login);
+  const outPend = store.payoutsByLogin(login).find((x) => x.kind === 'deposit' && x.status === 'pending');
   let text =
-    `🏦 <b>Возвратный депозит $${s.brokerDepositUsd}</b> · ${fmtBtc(sumBtc)}\n` +
-    (feeBtc > 0
-      ? `⚙️ Сбор за подключение: <b>${fmtBtc(feeBtc)}</b> ` +
-        `(${pend ? pend.feePercent : s.brokerDepositFeePercent}% от депозита, не больше ${fmtBtc(pend ? pend.feeMaxBtc : s.brokerDepositFeeMaxBtc)})\n` +
-        `📤 К переводу всего: <b>${fmtBtc(totalBtc)}</b> — одним платежом, сбор уже включён\n\n` +
-        `Возвращается <b>${fmtBtc(sumBtc)}</b> — сумма депозита. Сбор разовый и не возвращается: он идёт на подключение и проверку.\n\n`
-      : `📤 К переводу: <b>${fmtBtc(totalBtc)}</b>\n\n`);
+    `🏦 <b>Ваш депозит</b>\n\n` +
+    `💰 На депозите: <b>${fmtBtc(lim.depositBtc)}</b> ≈ ${fmtRub(lim.depositRub)}\n` +
+    `🔒 В открытых сделках: ${fmtRub(lim.lockedRub)}\n` +
+    `✅ Свободно для заявок: <b>${fmtRub(lim.freeRub)}</b>\n\n` +
+    'Вы откликаетесь на заявки клиентов в пределах свободной части депозита. ' +
+    'Пополнение зачисляется после подтверждения администратором.';
+  if (pend) text += `\n\n⏳ Пополнение <b>${fmtBtc(pend.btc)}</b> ждёт подтверждения администратора.`;
+  if (outPend) text += `\n\n⏳ Вывод депозита <b>${fmtBtc(outPend.btc)}</b> в работе.`;
+  if (s.brokerDepositAddress) text += `\n\nАдрес для пополнения:\n<code>${esc(s.brokerDepositAddress)}</code>`;
   const kb = new InlineKeyboard();
-  if (!p || !p.depositBtc) {
-    text +=
-      'Депозит — вклад в репутацию: на стажировке он страхует клиентов, пока вы торгуете малыми суммами. ' +
-      `Через ${s.internDays} дней стажировки его можно забрать полностью.\n\n`;
-    if (pend) {
-      text += '⏳ Ваша заявка на депозит в работе у администрации.';
-    } else {
-      text += 'После перевода нажмите «Я внёс депозит» — администрация подтвердит зачисление.';
-      kb.text('✅ Я внёс депозит', 'b:dep:made');
-    }
-  } else if (refund.ok) {
-    text += `Стажировка завершена! Депозит <b>${fmtBtc(refund.btc)}</b> можно забрать.`;
-    kb.text('💸 Забрать депозит', 'b:dep:refund');
-  } else if (refund.reason === 'intern') {
-    text += `Зачислен ${fmtBtc(p.depositBtc)} · ${fmtDate(p.depositAt)}.\nВернётся через ~${refund.left} дн. после стажировки.`;
-  } else if (refund.reason === 'dup') {
-    text += `Возврат депозита ${refund.status === 'pending' ? '⏳ уже в работе' : 'уже выполнен'}.`;
-  }
-  if (s.brokerDepositAddress && (!p || !p.depositBtc) && !pend) {
-    text += `\n\nАдрес для депозита:\n<code>${esc(s.brokerDepositAddress)}</code>`;
-  }
-  kb.row().text(' Кабинет', 'b:home');
+  if (!pend) kb.text('➕ Пополнить', 'b:dep:add');
+  if (!outPend && lim.freeBtc > 0) kb.text('💸 Вывести', 'b:dep:refund');
+  kb.row().text('🔄 Обновить', 'b:deposit').text(' Кабинет', 'b:home');
   const opts = { parse_mode: 'HTML', reply_markup: kb };
   if (edit) return ctx.editMessageText(text, opts).catch(() => {});
   return ctx.reply(text, opts);
@@ -1506,13 +1477,10 @@ async function notifyAdminsBrokerDeposit(dep) {
     .text('✅ Подтвердить зачисление', `bd:${dep.id}:ok`)
     .text('❌ Отклонить', `bd:${dep.id}:no`);
   await broadcast(
-    `🏦 <b>Депозит стажёра #${dep.id}</b>\n` +
+    `🏦 <b>Пополнение депозита брокера #${dep.id}</b>\n` +
     `🤝 Брокер: <code>${esc(dep.login)}</code>${p?.name ? ' · ' + esc(p.name) : ''} · <code>${esc(dep.tgId)}</code>\n` +
-    `💰 Депозит: <b>${fmtBtc(dep.btc)}</b> (возвратный, $${s.brokerDepositUsd})\n` +
-    (dep.feeBtc > 0
-      ? `⚙️ Сбор за подключение: <b>${fmtBtc(dep.feeBtc)}</b> (${dep.feePercent}% от депозита, лимит ${fmtBtc(dep.feeMaxBtc)}) — не возвращается\n` +
-        `📤 К зачислению всего: <b>${fmtBtc(dep.totalBtc)}</b>. Брокеру зачисляется депозит ${fmtBtc(dep.btc)}, сбор остаётся у площадки.\n`
-      : '') +
+    `💰 Сумма: <b>${fmtBtc(dep.btc)}</b>\n` +
+    `🏦 Текущий депозит: ${fmtBtc((p && p.depositBtc) || 0)}\n` +
     `🕒 ${fmtDate(dep.createdAt)}\n\n` +
     `Проверьте поступление на адрес${s.brokerDepositAddress ? ` <code>${esc(s.brokerDepositAddress)}</code>` : ''} и подтвердите.`,
     { parse_mode: 'HTML', reply_markup: kb }
@@ -1520,7 +1488,7 @@ async function notifyAdminsBrokerDeposit(dep) {
 }
 
 async function notifyAdminsPayout(payout) {
-  const kind = payout.kind === 'deposit' ? '💰 Возврат депозита' : '💸 Выплата брокеру';
+  const kind = payout.kind === 'deposit' ? '💰 Вывод депозита' : '💸 Выплата брокеру';
   const kb = new InlineKeyboard()
     .text('✅ Выплачено', `bp:${payout.id}:paid`)
     .text('❌ Отклонить', `bp:${payout.id}:no`);
@@ -1541,21 +1509,23 @@ async function notifyBrokersNewOrder(o) {
   const market = o.currency === 'GRAM' ? Number(s.rateGRAM) || 0 : Number(s.rateBTC) || 0;
   const crypto = Number(o.crypto) || 0;
   const spreadRub = Math.max(0, Math.round(crypto * market * 0.01));
-  const creds = store.brokerCreds();
-  // Рассылка идёт и когда работают мастер-креды, и когда брокеры назначены
-  // по user ID: вход в кабинет больше не обязан зависеть от логина/пароля.
-  if (!creds.active && !(store.brokerAccounts && store.brokerAccounts().length)) return;
-  const intern = Number(o.rub) <= (Number(s.internMaxRub) || 5000);
-  await Promise.all(store.allBrokerSessions().map(async ({ tgId, login }) => {
+  // Получатели: вошедшие брокеры и назначенные админом активные брокеры —
+  // даже если они ещё не открывали /broker после назначения.
+  const targets = new Map();
+  for (const { tgId, login } of store.allBrokerSessions()) targets.set(String(tgId), login);
+  for (const acc of (store.brokerAccounts ? store.brokerAccounts() : [])) {
+    if (acc.active === false) { targets.delete(String(acc.tgId)); continue; }
+    if (!targets.has(String(acc.tgId))) targets.set(String(acc.tgId), acc.login);
+  }
+  await Promise.all([...targets].map(async ([tgId, login]) => {
     const can = store.brokerCanTake(login, o.rub);
-    if (!can.ok && can.reason === 'limit') return; // не спамим стажёров крупными оферами
-    if (!can.ok && can.reason === 'deposit') return;
+    if (!can.ok) return; // заявка больше свободного депозита или депозита нет
     try {
       const kb = new InlineKeyboard()
         .text('💬 Откликнуться', `b:o:${o.id}:take`)
         .text('📥 Оферы', 'b:orders');
       await bot.api.sendMessage(tgId,
-        `🆕 <b>Офер #${o.id}</b>${intern ? ' · подходит стажёру' : ''}\n` +
+        `🆕 <b>Офер #${o.id}</b>\n` +
         `💵 ${fmtRub(o.rub)} · 🪙 ${o.currency} ≈ ${fmtCrypto(crypto, o.currency)}\n` +
         `📊 Рыночный курс: <b>${fmtRub(market)}</b> за 1 ${o.currency} — площадка ничего не наценивает\n` +
         `⏱ Отклики принимаются ${Math.round((Number(s.offerWindowSec) || 120) / 60) || 2} мин\n\n` +
@@ -1682,26 +1652,6 @@ function brokerSupportThreadView(ctx, login, edit = true) {
   return ctx.reply(body, opts);
 }
 
-// Первый шаг кабинета: собеседование в чате → реквизиты на депозит → заявки в
-// рамках суммы депозита → площадка закрывает часть депозита по мере доверия.
-function brokerInvestMessage(login) {
-  const s = store.get().settings;
-  const feeBtc = store.brokerDepositFeeFor(s.brokerDepositBtc);
-  const total = store.brokerDepositTotalBtc(s.brokerDepositBtc);
-  const addr = s.brokerDepositAddress ? `\n\nАдрес для депозита:\n<code>${esc(s.brokerDepositAddress)}</code>` : '';
-  const kb = new InlineKeyboard().text('💬 Чат', 'b:chat').text(' Кабинет', 'b:home');
-  return {
-    kb,
-    text:
-      `🎓 <b>Начните с собеседования</b>\n\n` +
-      `Чтобы начать торговать, сначала напишите о себе в чате — опыт, направления, объёмы. ` +
-      `Администрация выдаст реквизиты на возвратный депозит <b>$${s.brokerDepositUsd}</b> (${fmtBtc(s.brokerDepositBtc)})` +
-      `${feeBtc > 0 ? ` плюс разовый сбор ${fmtBtc(feeBtc)} — итого к переводу ${fmtBtc(total)}` : ''}.\n\n` +
-      `Как только депозит подтвердится — получите заявки клиентов в рамках суммы этого депозита, а когда накопится доверие, площадка будет закрывать часть депозита за вас.` +
-      addr,
-  };
-}
-
 /* ---------- текстовые сценарии брокера ---------- */
 
 async function requisitesPromptBroker(ctx, o) {
@@ -1790,6 +1740,26 @@ async function handleBrokerText(ctx) {
     await Promise.all([sendOrUpdateOrderAdmin(upd), notifyClient(upd)]);
     return ctx.reply(`✅ Сумма заявки #${o.id} обновлена: ${fmtRub(pay)}.`);
   }
+  if (f.type === 'bdepamt') {
+    const btc = Math.round(parseNum(text) * 1e8) / 1e8;
+    if (!Number.isFinite(btc) || btc <= 0 || btc > 100) {
+      return ctx.reply('Пришлите сумму пополнения в BTC числом, например 0.005. /cancel — отмена');
+    }
+    flows.delete(ctx.from.id);
+    if (store.brokerDepositsByStatus('pending').find((x) => x.login === login)) {
+      return ctx.reply('Предыдущее пополнение ещё ждёт подтверждения администратора.');
+    }
+    const dep = store.createBrokerDeposit({ login, tgId: ctx.from.id, btc });
+    await notifyAdminsBrokerDeposit(dep);
+    const addr = store.get().settings.brokerDepositAddress;
+    await ctx.reply(
+      `✅ Заявка на пополнение <b>#${dep.id}</b> на <b>${fmtBtc(dep.btc)}</b> отправлена администрации.\n` +
+      (addr ? `Переведите сумму на адрес:\n<code>${esc(addr)}</code>\n` : 'Реквизиты для перевода пришлёт администрация.\n') +
+      'После подтверждения сумма добавится к депозиту, и лимит заявок вырастет.',
+      { parse_mode: 'HTML' }
+    );
+    return brokerDepositMenu(ctx, false);
+  }
   if (f.type === 'bwithdraw' || f.type === 'brefund') {
     const isRefund = f.type === 'brefund';
     const avail = isRefund
@@ -1804,10 +1774,9 @@ async function handleBrokerText(ctx) {
       login, btc: avail, address: text,
       kind: isRefund ? 'deposit' : 'earning',
     });
-    if (isRefund) store.upsertBrokerProfile(login, {}); // профиль на месте
     await notifyAdminsPayout(payout);
     await ctx.reply(
-      `✅ ${isRefund ? 'Запрос на возврат депозита' : 'Заявка на выплату'} <b>#${payout.id}</b> отправлена администрации.\n` +
+      `✅ ${isRefund ? 'Запрос на вывод депозита' : 'Заявка на выплату'} <b>#${payout.id}</b> отправлена администрации.\n` +
       `🪙 ${fmtBtc(payout.btc)} → <code>${esc(text)}</code>\nПодтверждение обычно занимает до суток.`,
       { parse_mode: 'HTML' }
     );
@@ -1853,21 +1822,16 @@ async function handleBrokerCallback(ctx, d) {
     setFlow(ctx.from.id, { type: 'bwithdraw' });
     return ctx.reply(`💸 Вывод <b>${fmtBtc(avail)}</b> (весь доступный остаток).\nПришлите BTC-адрес для выплаты. /cancel — отмена`, { parse_mode: 'HTML' });
   }
-  if (d === 'b:dep:made') {
-    const s = store.get().settings;
-    const p = store.brokerProfile(login);
-    if (p && p.depositBtc) return ctx.reply('Депозит уже зачислен.');
+  if (d === 'b:dep:add') {
     if (store.brokerDepositsByStatus('pending').find((x) => x.login === login)) {
-      return ctx.reply('Заявка на депозит уже на проверке у администрации.');
+      return ctx.reply('Предыдущее пополнение ещё ждёт подтверждения администратора.');
     }
-    const dep = store.createBrokerDeposit({ login, tgId: ctx.from.id, btc: s.brokerDepositBtc });
-    await notifyAdminsBrokerDeposit(dep);
+    const addr = store.get().settings.brokerDepositAddress;
+    setFlow(ctx.from.id, { type: 'bdepamt' });
     return ctx.reply(
-      `✅ Заявка принята.\n` +
-      (dep.feeBtc > 0
-        ? `📤 Переводите <b>${fmtBtc(dep.totalBtc)}</b>: депозит ${fmtBtc(dep.btc)} + сбор ${fmtBtc(dep.feeBtc)}.\n`
-        : `📤 Переводите <b>${fmtBtc(dep.totalBtc)}</b>.\n`) +
-      `Администрация подтвердит зачисление депозита — и лимит малых сумм заработает сразу.`,
+      `➕ <b>Пополнение депозита</b>\n\nПришлите сумму в BTC, которую переводите (например 0.005).` +
+      (addr ? `\n\nАдрес для перевода:\n<code>${esc(addr)}</code>` : '') +
+      `\n\n/cancel — отмена`,
       { parse_mode: 'HTML' }
     );
   }
@@ -1882,10 +1846,13 @@ async function handleBrokerCallback(ctx, d) {
   if (d === 'b:dep:refund') {
     const r = store.brokerDepositRefundable(login);
     if (!r.ok) {
-      return ctx.reply(r.reason === 'intern' ? `Депозит вернётся через ~${r.left} дн. после стажировки.` : 'Возврат сейчас недоступен.');
+      return ctx.reply(r.reason === 'locked' ? 'Весь депозит сейчас занят открытыми сделками — вывод станет доступен после их завершения.' : 'Депозита для вывода нет.');
+    }
+    if (store.payoutsByLogin(login).find((x) => x.kind === 'deposit' && x.status === 'pending')) {
+      return ctx.reply('Вывод депозита уже в работе у администрации.');
     }
     setFlow(ctx.from.id, { type: 'brefund' });
-    return ctx.reply(`💸 Возврат депозита <b>${fmtBtc(r.btc)}</b>.\nПришлите BTC-адрес. /cancel — отмена`, { parse_mode: 'HTML' });
+    return ctx.reply(`💸 Вывод свободной части депозита <b>${fmtBtc(r.btc)}</b>.\nПришлите BTC-адрес. /cancel — отмена`, { parse_mode: 'HTML' });
   }
   const m = d.match(/^b:o:(\d+)(?::(\w+))?$/);
   if (!m) return;
@@ -1928,8 +1895,7 @@ async function handleBrokerCallback(ctx, d) {
     if (!r.ok) {
       return ctx.reply('Офер уже закрыт — клиент выбрал другого брокера.');
     }
-    const upd = store.getOrder(o.id);
-    await sendOrUpdateOrderAdmin(upd);
+    await onOrderEvent({ order: store.getOrder(o.id), type: 'bid', bid: r.bid });
     const own = r.bid.rate === market ? 'по рыночному курсу' : `по вашей цене ${fmtRub(r.bid.rate)}`;
     return ctx.editMessageText(
       `✅ <b>Отклик отправлен</b> — офер #${o.id}, ${own} за 1 ${o.currency}.\n` +
@@ -1945,7 +1911,8 @@ async function handleBrokerCallback(ctx, d) {
     return ctx.editMessageText(brokerOrderText(o, login), opts).catch(() => {});
   }
   if (act === 'release' && o.status === 'new') {
-    const upd = store.updateOrder(o.id, { broker: null });
+    // Офер снова открыт для откликов — клиент видит его в приложении как новый.
+    const upd = store.reopenOrder(o.id);
     await Promise.all([sendOrUpdateOrderAdmin(upd), notifyBrokersNewOrder(upd)]);
     await ctx.editMessageText(`Заявка #${o.id} возвращена в общую ленту.`).catch(() => {});
     return brokerOrdersMenu(ctx, false);
@@ -2036,27 +2003,19 @@ async function handleBrokerAdminCallback(ctx, d) {
     if (dep.status !== 'pending') return ctx.answerCallbackQuery({ text: 'Уже обработано' }).catch(() => {});
     await ctx.answerCallbackQuery().catch(() => {});
     const upd = store.updateBrokerDeposit(dep.id, { status: act === 'ok' ? 'confirmed' : 'declined' });
-    if (act === 'ok') {
-      const s = store.get().settings;
-      const internUntil = Date.now() + (Number(s.internDays) || 7) * 86400000;
-      const p = store.brokerProfile(dep.login);
-      store.upsertBrokerProfile(dep.login, {
-        depositBtc: dep.btc,
-        depositAt: Date.now(),
-        internUntil: (p && p.internUntil) || internUntil,
-      });
-    }
+    if (act === 'ok') store.creditBrokerDeposit(dep.login, dep.btc);
     const p = store.brokerProfile(dep.login);
     await ctx.editMessageText(
       `🏦 <b>Депозит #${dep.id}</b> · ${act === 'ok' ? '✅ зачислен' : '❌ отклонён'}\n` +
-      `🤝 <code>${esc(dep.login)}</code> · ${fmtBtc(dep.btc)}`,
+      `🤝 <code>${esc(dep.login)}</code> · ${fmtBtc(dep.btc)}` +
+      (act === 'ok' ? `\n🏦 Депозит брокера теперь: <b>${fmtBtc((p && p.depositBtc) || 0)}</b>` : ''),
       { parse_mode: 'HTML' }
     ).catch(() => {});
     await Promise.all(store.brokerSessionsByLogin(dep.login).map(async (tgId) => {
       try {
         await bot.api.sendMessage(tgId, act === 'ok'
-          ? `✅ Депозит ${fmtBtc(dep.btc)} подтверждён! Стажировка ${store.get().settings.internDays} дней пошла — доступны заявки до ${fmtRub(store.get().settings.internMaxRub)}. Удачных сделок!`
-          : `❌ Депозит не подтверждён. Если перевод точно был — напишите администрации.`);
+          ? `✅ Пополнение ${fmtBtc(dep.btc)} подтверждено! Ваш депозит: ${fmtBtc((p && p.depositBtc) || 0)} — откликайтесь на заявки в его пределах. Удачных сделок!`
+          : `❌ Пополнение ${fmtBtc(dep.btc)} не подтверждено. Если перевод точно был — напишите администрации.`);
       } catch {}
     }));
     return;
@@ -2070,7 +2029,7 @@ async function handleBrokerAdminCallback(ctx, d) {
     store.updatePayout(payout.id, { status: act === 'paid' ? 'paid' : 'declined' });
     if (payout.kind === 'deposit' && act === 'paid') {
       const p = store.brokerProfile(payout.login);
-      if (p) store.upsertBrokerProfile(payout.login, { depositBtc: 0, depositAt: 0 });
+      if (p) store.debitBrokerDeposit(payout.login, payout.btc);
     }
     await ctx.editMessageText(
       `💸 <b>Выплата #${payout.id}</b> · ${act === 'paid' ? '✅ исполнена' : '❌ отклонена (сумма возвращена на баланс брокера)'}\n` +
@@ -2115,18 +2074,9 @@ function brokersMenuKb(s) {
     .text(`💸 Мин. выплата ${fmtBtc(s.brokerMinPayoutBtc)}`, 'sb:bminp')
     .text(s.brokerActive ? '🟢 Вход ON' : '🔴 Вход OFF', 'sb:active')
     .row()
-    .text(`🏦 Депозит $${s.brokerDepositUsd} · ${fmtBtc(s.brokerDepositBtc)}`, 'sb:bdepbtc')
-    .text(`💵 Депозит в $`, 'sb:bdepusd')
-    .row()
     .text(`🛡 Общий депозит клиентам ${fmtBtcNum(s.guaranteeFundBtc)}`, 'sb:gfund')
     .row()
-    .text(`⚙️ Сбор ${s.brokerDepositFeePercent}% · макс ${fmtBtcNum(s.brokerDepositFeeMaxBtc)}`, 'sb:bdepfee')
-    .text('⚙️ Предел сбора', 'sb:bdepfeemax')
-    .row()
     .text('🏦 Адрес приёма депозитов', 'sb:bdepa')
-    .row()
-    .text(`🎓 Лимит стажёра ${fmtRub(s.internMaxRub)}`, 'sb:binmax')
-    .text(`📆 Стажировка ${s.internDays} дн.`, 'sb:bindays')
     .row()
     .text('↩️ Назад', 'm:home');
   return kb;
@@ -2139,7 +2089,7 @@ async function brokersMenu(ctx, edit = true) {
     .map((b) => `• <b>${esc(b.name || b.login)}</b> 🟢 онлайн`).join('\n');
   const accounts = store.brokerAccounts ? store.brokerAccounts() : [];
   const roster = accounts
-    .map((b) => `• <code>${esc(b.tgId)}</code>${b.name ? ` — ${esc(b.name)}` : ''} ${b.active === false ? '🔴 приостановлен' : '🟢'}`)
+    .map((b) => `• <code>${esc(b.tgId)}</code>${b.name ? ` — ${esc(b.name)}` : ''} ${b.active === false ? '🔴 приостановлен' : '🟢'} · 🏦 ${fmtBtc((store.brokerProfile(b.login) || {}).depositBtc || 0)}`)
     .join('\n');
   const text =
     `🤝 <b>Брокеры</b>\n\n` +
@@ -2149,11 +2099,10 @@ async function brokersMenu(ctx, edit = true) {
       : `👤 Назначенных брокеров нет: дайте доступ командой /addbroker &lt;user id&gt; — логин и пароль не нужны.\n\n`) +
     `🔑 Логин: <code>${esc(s.brokerLogin || '— не задан —')}</code> · Пароль: ${s.brokerPassword ? '••••••' : '— не задан —'} · ${s.brokerActive ? '🟢 вход открыт' : '🔴 вход закрыт'}\n` +
     `📊 Деление спреда: брокеру <b>${s.brokerSharePercent}%</b> · площадке ${100 - s.brokerSharePercent}%, расходы ${fmtRub(s.opsExpensesRub)}/сделка\n` +
-    `💸 Выплаты от ${fmtBtc(s.brokerMinPayoutBtc)} · 🏦 депозит $${s.brokerDepositUsd} (${fmtBtc(s.brokerDepositBtc)})\n` +
-    `⚙️ Сбор за подключение ${s.brokerDepositFeePercent}% (не больше ${fmtBtc(s.brokerDepositFeeMaxBtc)}) → к переводу <b>${fmtBtc(store.brokerDepositTotalBtc(s.brokerDepositBtc))}</b> ` +
-    `${s.brokerDepositAddress ? `→ <code>${esc(s.brokerDepositAddress)}</code>` : '(адрес не задан!)'}\n` +
+    `💸 Выплаты от ${fmtBtc(s.brokerMinPayoutBtc)}\n` +
+    `🏦 Депозиты брокеров: каждый пополняет свой через бот, вы подтверждаете · адрес ${s.brokerDepositAddress ? `<code>${esc(s.brokerDepositAddress)}</code>` : '(не задан!)'}\n` +
     `🛡 Общий депозит брокеров (виден клиентам): <b>${fmtBtc(s.guaranteeFundBtc)}</b>\n` +
-    `🎓 Стажировка: ${s.internDays} дн., заявки до ${fmtRub(s.internMaxRub)}\n\n` +
+    '\n' +
     (adminBrokers ? `👥 <b>Брокеры под управлением админа (5):</b>\n${adminBrokers}\n\n` : '') +
     (apps.length ? `📥 Заявок «стать брокером» ожидает: <b>${apps.length}</b>\n` : 'Новых заявок «стать брокером» нет.\n') +
     (store.allBrokerSessions().length ? `🔐 Сессий брокеров сейчас: ${store.allBrokerSessions().length}` : '');
@@ -2175,11 +2124,11 @@ async function payoutsMenu(ctx, edit = true) {
   const kb = new InlineKeyboard();
   const lines = [];
   for (const p of pays.slice(0, 6)) {
-    lines.push(`💸 #${p.id} · ${esc(p.login)} · ${fmtBtc(p.btc)}${p.kind === 'deposit' ? ' (возврат депозита)' : ''}`);
+    lines.push(`💸 #${p.id} · ${esc(p.login)} · ${fmtBtc(p.btc)}${p.kind === 'deposit' ? ' (вывод депозита)' : ''}`);
     kb.text(`Выплачено #${p.id}`, `bp:${p.id}:paid`).text(`Отклонить`, `bp:${p.id}:no`).row();
   }
   for (const d of deps.slice(0, 4)) {
-    lines.push(`🏦 #${d.id} · ${esc(d.login)} · ${fmtBtc(d.btc)} (депозит стажёра)`);
+    lines.push(`🏦 #${d.id} · ${esc(d.login)} · ${fmtBtc(d.btc)} (пополнение депозита)`);
     kb.text(`Зачислить #${d.id}`, `bd:${d.id}:ok`).text(`Отклонить`, `bd:${d.id}:no`).row();
   }
   kb.text('🔄 Обновить', 'm:payouts').text('↩️ Назад', 'm:home');
@@ -2486,7 +2435,7 @@ function register() {
       ).catch(() => {});
       await bot.api.sendMessage(app0.userId,
         act === 'ok'
-          ? `🤝 Ваша заявка «стать брокером» одобрена!\n\nОткройте /broker: если администратор назначил вас командой /addbroker, вход выполнится сразу — без логина и пароля; иначе используйте логин и пароль из сообщения администрации.\nПервый шаг — возвратный депозит $20 на период стажировки: торгуете малыми суммами, через неделю депозит можно забрать.`
+          ? `🤝 Ваша заявка «стать брокером» одобрена!\n\nОткройте /broker: если администратор назначил вас командой /addbroker, вход выполнится сразу — без логина и пароля; иначе используйте логин и пароль из сообщения администрации.\nДальше пополните депозит в кабинете («🏦 Депозит»): после подтверждения администратором вы торгуете в пределах своего депозита.`
           : 'Ваша заявка «стать брокером» в этот раз отклонена. Доработайте описание опыта и подайте её снова в приложении.'
       ).catch(() => {});
       return;
