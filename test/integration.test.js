@@ -601,3 +601,37 @@ test('bot: reviews menu copes with hundreds of reviews — distribution, ≤3★
   await click(111, 'm:reviews');
   assert.ok(!buttons(lastEdit()).some((b) => b.callback_data === 'rvs:purge'), 'удалять больше нечего — кнопки нет');
 });
+
+/* ---------- домен без Telegram и предложения брокеров до заявки ---------- */
+
+test('домен без Telegram: гость инициализируется под своим id, а не получает401', async () => {
+  await ready;
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const r = await fetch(`${base}/api/init`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ demo: { id: 900123, name: 'Гость' } }),
+  });
+  assert.equal(r.status, 200);
+  const data = await r.json();
+  assert.equal(data.me.id, 'guest-900123', 'гостевой id со своим префиксом — не реальный tg-id');
+  assert.equal(data.demo, false, 'демо-админка гостю не включается');
+  assert.ok(data.access, 'доступ приходит и гостю');
+  assert.equal(data.access.amountRub, 200, 'тариф «Минимальный донат» — 200 ₽/мес');
+  // Без initData и без demo авторизация по-прежнему не проходит.
+  const bare = await fetch(`${base}/api/me`);
+  assert.equal(bare.status, 401);
+});
+
+test('/api/offers: живые цены брокеров видны до создания заявки', async () => {
+  const before = await (await api('/api/offers')).json();
+  assert.ok(Array.isArray(before.offers) && before.offers.length === 0, 'цен ещё нет — клиент увидит «не предлагают»');
+  store.setBrokerPrice('stony montana', { currency: 'BTC', rate: 10_100_000 });
+  store.setBrokerPrice('safer', { currency: 'BTC', rate: 10_300_000 });
+  const { offers, market } = await (await api('/api/offers')).json();
+  assert.equal(offers.length, 2);
+  assert.equal(offers[0].login, 'stony montana', 'ниже цена — выгоднее клиенту, такой отклик сверху');
+  assert.ok(offers[0].name && offers[0].rating, 'карточка брокера: имя и рейтинг');
+  assert.equal(offers[0].BTC, 10_100_000);
+  assert.ok(Number(market.BTC) > 0, 'официальный курс отдан для сравнения');
+});

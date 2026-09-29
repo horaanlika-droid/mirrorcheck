@@ -154,7 +154,7 @@ test('«Инфо»: пункты безопасности и «Почему PRIC
   await a.open('info');
   const view = a.doc.querySelector('#view-info');
   const items = [...view.querySelectorAll('.feat .f')];
-  assert.equal(items.length, 12, 'семь пунктов безопасности и пять — «Почему PRICELEX»');
+  assert.equal(items.length, 14, 'семь пунктов безопасности и семь — «Почему PRICELEX»');
   for (const f of items) {
     assert.deepEqual([...f.children].map((c) => c.className), ['i', 'f-copy']);
     assert.deepEqual(looseText(f), []);

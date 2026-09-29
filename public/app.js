@@ -911,7 +911,7 @@
 
   /* ---------- доступ: 3 дня бесплатно, дальше подписка на Tribute ---------- */
 
-  const accessNow = () => S.access || { ok: true, state: 'open', trialDays: 3, amountRub: 5000, tributeUrl: '' };
+  const accessNow = () => S.access || { ok: true, state: 'open', trialDays: 3, amountRub: 200, tributeUrl: '' };
   const fmtAccessUntil = (ts) => (ts ? new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) : '');
 
   // Тихая строка состояния: бесплатные дни или активная подписка — без плашек.
@@ -948,7 +948,7 @@
         <div class="stage-sub">
           ${pending
             ? 'Спасибо! Включим доступ сразу после подтверждения платежа на Tribute.'
-            : `Дальше доступ — подписка: минимальный месячный донат <b>${fmtRub(a.amountRub)}</b>. Никаких процентов и сборов со сделок.`}
+            : `Дальше доступ — подписка «Минимальный донат»: <b>${fmtRub(a.amountRub)}</b>/мес. Никаких процентов и сборов со сделок.`}
         </div>
         <div class="note">
           ${pending ? 'Обычно это занимает несколько минут.' : `Подписка одна на человека: платить можно с любой стороны — и клиент, и брокер.`}
@@ -978,6 +978,66 @@
         toast('Спасибо! Включим доступ после подтверждения оплаты');
         renderExchange();
         renderProfile();
+      } catch (e) {
+        toast(e.message);
+        paid.disabled = false;
+      }
+    });
+  }
+
+  /* ---------- подписка «Минимальный донат» в личном кабинете ---------- */
+  // Тариф, сумма и статус Tribute видны сразу в ЛК — и клиенту, и брокеру,
+  // без перехода на экран обмена.
+  function subscriptionCardHtml(idp) {
+    const a = accessNow();
+    const stateText = {
+      trial: `Бесплатно ещё ${a.daysLeft} дн. из ${a.trialDays} · дальше ${fmtRub(a.amountRub)}/мес`,
+      active: `Активна до ${fmtAccessUntil(a.until)}`,
+      pending: 'Оплата на проверке',
+      open: 'Открыт без подписки',
+      expired: 'Не оформлена',
+    }[a.state] || 'Открыт без подписки';
+    const needPay = !a.ok;
+    const note = a.state === 'pending'
+      ? `<div class="note">Включим доступ сразу после подтверждения платежа на Tribute — обычно это занимает несколько минут.</div>`
+      : needPay && !a.tributeUrl
+        ? `<div class="note">Ссылка на оплату появится здесь, как только площадка её впишет.</div>`
+        : a.ok
+          ? `<div class="note">Оплата проходит на стороне Tribute — одна подписка открывает и обмен, и кабинет брокера.</div>`
+          : '';
+    const buttons = needPay && a.state !== 'pending' && a.tributeUrl
+      ? `<button class="btn btn-primary mt" id="${idp}SubPay" type="button">${ICONS.bolt}<span>Оформить подписку</span></button>
+         <button class="btn btn-ghost mt" id="${idp}SubPaid" type="button">✅ Я оплатил</button>`
+      : '';
+    return `
+      <section class="card profile-sub" aria-label="Подписка">
+        <div class="profile-section-title">Подписка</div>
+        <div class="sub-row"><span>Тариф</span><b>Минимальный донат · ${fmtRub(a.amountRub)}/мес</b></div>
+        <div class="sub-row"><span>Статус</span><b class="sub-state ${a.ok ? 'on' : 'off'}">${esc(stateText)}</b></div>
+        ${note}
+        ${buttons}
+      </section>`;
+  }
+
+  function wireSubscriptionCard(idp) {
+    const pay = document.getElementById(idp + 'SubPay');
+    if (pay) pay.addEventListener('click', () => {
+      haptic('medium');
+      const url = accessNow().tributeUrl;
+      if (!url) return toast('Ссылка на оплату ещё не задана');
+      if (tg && typeof tg.openLink === 'function') tg.openLink(url);
+      else window.open(url, '_blank', 'noopener');
+    });
+    const paid = document.getElementById(idp + 'SubPaid');
+    if (paid) paid.addEventListener('click', async () => {
+      paid.disabled = true;
+      haptic('medium');
+      try {
+        const r = await api('/api/subscription/paid', { method: 'POST', body: {} });
+        S.access = r.access;
+        toast('Спасибо! Включим доступ после подтверждения оплаты');
+        renderProfile();
+        if (S.brokerLk || S.brokerLkErr) renderBrokerLk();
       } catch (e) {
         toast(e.message);
         paid.disabled = false;
@@ -1084,7 +1144,12 @@
           <div class="f-err" id="fErr"></div>
         </div>
 
-        <button class="btn btn-cta mt" id="btnGo">${ICONS.bolt}<span>Опубликовать офер</span></button>
+        <div class="card offers-card">
+          <div class="card-title">Что предлагают брокеры</div>
+          <div class="offers-list" id="offersList"><div class="note">Загружаем предложения…</div></div>
+        </div>
+
+        <button class="btn btn-cta mt" id="btnGo">${ICONS.bolt}<span>Создать заявку</span></button>
       </div>
       <div id="exOrder" class="${S.order && S.orderOpen ? '' : 'hidden'}"></div>
     `;
@@ -1101,6 +1166,7 @@
         });
         renderHero();
         renderFormMeta();
+        renderOffers();
       })
     );
     const activeOrder = $('#activeOrder');
@@ -1118,6 +1184,8 @@
     renderHero();
     renderFormMeta();
     renderOrderStage();
+    renderOffers();
+    loadOffers();
   }
 
   function renderFormMeta() {
@@ -1152,7 +1220,7 @@
     $('#inWallet').placeholder = cur === 'BTC' ? 'Адрес BTC-кошелька (bc1… / 1… / 3…)' : 'Адрес GRAM-кошелька';
     $('#inCrypto').placeholder = cur === 'BTC' ? '0.0005' : '40';
     $('#fMeta').innerHTML = `
-      <div class="row"><span>Курс обмена</span><b>1 ${cur} = ${fmtRub(rate)}</b></div>
+      <div class="row"><span>Официальный курс</span><b>1 ${cur} = ${fmtRub(rate)}</b></div>
       ${s.rateUpdatedAt ? `<div class="row"><span>Курс обновлён</span><b>${fmtDate(s.rateUpdatedAt)}</b></div>` : ''}
       <div class="row"><span>Сделку ведёт</span><button class="f-link" id="yourBroker"><b>брокер PRICELEX</b>${ICONS.info}</button></div>`;
     const yb = $('#yourBroker');
@@ -1162,7 +1230,71 @@
     btn.disabled = !s.online || Boolean(hasOpenOrder);
     btn.querySelector('span').textContent = !s.online
       ? 'Обмен временно недоступен'
-      : hasOpenOrder ? 'Сначала завершите текущую заявку' : 'Опубликовать офер';
+      : hasOpenOrder ? 'Сначала завершите текущую заявку' : 'Создать заявку';
+  }
+
+  /* ---------- что предлагают брокеры до создания заявки ---------- */
+  // Живые цены из кабинетов брокеров — механика inDrive: сначала смотришь
+  // предложения, потом решаешь. Если цен нет — честно показываем «не предлагают».
+  async function loadOffers() {
+    try {
+      S.offers = await api('/api/offers');
+    } catch {
+      S.offers = { offers: [], failed: true };
+    }
+    renderOffers();
+  }
+
+  function renderOffers() {
+    const box = $('#offersList');
+    if (!box) return;
+    const cur = S.currency;
+    if (!S.offers) {
+      box.innerHTML = '<div class="note">Предложения брокеров загружаются…</div>';
+      return;
+    }
+    if (S.offers.failed) {
+      box.innerHTML = '<div class="note">Предложения брокеров сейчас не загружаются — создайте заявку, отклики придут в неё.</div>';
+      return;
+    }
+    const market = Number((S.offers.market || {})[cur]) ||
+      Number(S.settings && (cur === 'BTC' ? S.settings.rateBTC : S.settings.rateGRAM)) || 0;
+    const list = (S.offers.offers || [])
+      .filter((o) => Number(o[cur]) > 0)
+      .sort((a, b) => Number(a[cur]) - Number(b[cur])); // ниже рынка — выгоднее клиенту, такие сверху
+    if (!list.length) {
+      const w = (S.settings && S.settings.offerWindowSec) || 120;
+      box.innerHTML = `<div class="note" id="offersEmpty">Брокеры пока не предлагают цену по ${cur} — создайте заявку: отклики придут в течение ${w} сек.</div>`;
+      return;
+    }
+    box.innerHTML = list.map((o) => {
+      const rate = Number(o[cur]);
+      const delta = market ? (rate / market - 1) * 100 : 0;
+      const cls = !market || Math.abs(delta) < 0.05 ? 'eq' : delta > 0 ? 'up' : 'down';
+      const txt = !market ? '' : Math.abs(delta) < 0.05
+        ? 'по рынку'
+        : delta > 0
+          ? `дороже рынка на ${Math.abs(delta).toFixed(2)}%`
+          : `выгоднее рынка на ${Math.abs(delta).toFixed(2)}%`;
+      const meta = [o.rating ? `★ ${o.rating}` : '', o.deals ? `${o.deals} сделок` : ''].filter(Boolean).join(' · ');
+      return `
+        <div class="offer-row">
+          <div class=\"offer-who\"><b>${esc(o.name || o.login)}</b>${meta ? `<span>${meta}</span>` : ''}</div>
+          <div class="offer-rate"><b>${fmtRub(rate)}</b>${txt ? `<span class="offer-delta ${cls}">${txt}</span>` : ''}</div>
+          <button class="btn btn-primary btn-sm offer-pick" data-pick-offer="${esc(o.login)}" type="button">Выбрать</button>
+        </div>`;
+    }).join('') +
+      `<div class="note">Цены — из кабинетов брокеров, выбирать не обязательно: в заявке они пришлют отклик, и вы примете лучший.</div>`;
+    box.querySelectorAll('[data-pick-offer]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        haptic('selection');
+        const field = $('#inRub');
+        if (field) {
+          try { if (field.scrollIntoView) field.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* jsdom без прокрутки */ }
+          field.focus({ preventScroll: true });
+        }
+        toast('Введите сумму и создайте заявку — брокеры пришлют отклик, и вы выберёте лучший');
+      }));
   }
 
   async function submitOrder() {
@@ -1412,7 +1544,7 @@
       <div class="card stage stage-offer">
         <div class="offer-head">
           <div>
-            <div class="stage-kicker">Офер #${o.id}</div>
+            <div class="stage-kicker">Заявка #${o.id}</div>
             <div class="offer-sum">${fmtRub(o.rub)} → ${esc(o.currency)}</div>
           </div>
           <div class="offer-timer">
@@ -1430,8 +1562,8 @@
           <span class="dot-online"></span> Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b>
           ${(S.bids || []).length ? `<span class="offer-count">Откликов: <b>${S.bids.length}</b></span>` : ''}
         </div>
-        <div class="note">Можно принять любой отклик сразу — или подождать ещё: брокеры видят офер одновременно.</div>
-        <button class="btn btn-ghost mt" id="btnCancel">Отменить офер</button>
+        <div class="note">Можно принять любой отклик сразу — или подождать ещё: брокеры видят заявку одновременно.</div>
+        <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
       </div>`;
     startOfferTicker(o);
     box.querySelectorAll('[data-take]').forEach((btn) =>
@@ -1909,6 +2041,7 @@
           <span class="profile-value">Русский ${ICONS.chevron}</span>
         </div>
       </section>
+      ${subscriptionCardHtml('profile')}
       <section class="card profile-links" aria-label="Разделы">
         <button class="profile-link" type="button" id="profileAccess">
           <span class="profile-row-icon">💳</span>
@@ -1934,6 +2067,7 @@
       haptic('light');
       goTab(button.dataset.go);
     }));
+    wireSubscriptionCard('profile');
     const accRow = $('#profileAccess');
     if (accRow) accRow.addEventListener('click', () => {
       haptic('light');
@@ -2095,6 +2229,7 @@
         </div>
         <div class="lk-head-access">${esc(accessSummaryUi())}</div>
       </section>
+      ${subscriptionCardHtml('lk')}
       <div class="card">
         <div class="card-title">Моя цена</div>
         <div class="seg block currency-segment" id="lkCur">
@@ -2148,6 +2283,7 @@
       </div>
       <div class="signature">PRICELEX<span>кабинет брокера</span></div>`;
 
+    wireSubscriptionCard('lk');
     $('#lkCur').querySelectorAll('button').forEach((btn) =>
       btn.addEventListener('click', () => {
         S.lkCurrency = btn.dataset.c;
@@ -2384,6 +2520,8 @@
           <div class="f"><span class="i">◆</span><span class="f-copy">Сумма к оплате известна заранее — без доплат</span></div>
           <div class="f"><span class="i">◆</span><span class="f-copy">Просадки курса отмечены на графике — видно хорошую точку входа</span></div>
           <div class="f"><span class="i">◆</span><span class="f-copy">Отзывы только от реальных клиентов — после завершённого обмена</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">Стать брокером может любой клиент — заявка из личного кабинета, быстрая проверка опыта, и вы работаете под брендом площадки</span></div>
+          <div class="f"><span class="i">◆</span><span class="f-copy">С депозита брокера после подключения ничего не удерживаем — возвратный депозит возвращается после стажировки</span></div>
         </div>
       </div>
       <div class="card why-pair">
@@ -2397,7 +2535,7 @@
         <div class="card-title">Как это работает</div>
         <div class="steps">
           <div class="step"><div class="n">1</div><span class="step-copy">Выберите валюту и сумму: калькулятор считает по рыночному курсу — без наценки площадки.</span></div>
-          <div class="step"><div class="n">2</div><span class="step-copy">Укажите кошелёк и опубликуйте офер: брокеры откликнутся своей ценой за актив.</span></div>
+          <div class="step"><div class="n">2</div><span class="step-copy">Укажите кошелёк и создайте заявку: брокеры откликнутся своей ценой за актив.</span></div>
           <div class="step"><div class="n">3</div><span class="step-copy">Примите отклик — сразу или дождавшись окна: брокер пришлёт реквизиты, дальше перевод, PDF-чек и «Я оплатил».</span></div>
           <div class="step"><div class="n">4</div><span class="step-copy">После подтверждения средства уходят на ваш кошелёк — ссылку на транзакцию увидите в заявке.</span></div>
         </div>

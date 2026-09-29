@@ -38,7 +38,7 @@ const defaults = () => ({
     // Ссылку на Tribute задаёт хост в переменной окружения (можно поменять в боте).
     accessRequired: process.env.ACCESS_REQUIRED !== '0',
     trialDays: Number(process.env.TRIAL_DAYS) || 3,
-    subscriptionAmountRub: Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 5000,
+    subscriptionAmountRub: Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 200,
     tributeUrl: String(process.env.TRIBUTE_URL || process.env.TRIBUTE_SUBSCRIPTION_URL || process.env.SUBSCRIPTION_URL || '').trim(),
     rateUpdatedAt: null,
     rateSource: 'manual',
@@ -78,9 +78,9 @@ const defaults = () => ({
     internMaxRub: 5000, // стажёр работает только с заявками до этой суммы, ₽
     internDays: 7, // длительность стажировки в днях
     adminBrokers: DEFAULT_ADMIN_BROKERS,
-    // Ежемесячный платёж за доступ к платформе (Tribute)
+    // Ежемесячный платёж за доступ к платформе (Tribute) — «Минимальный донат»
     subscriptionRequired: process.env.SUBSCRIPTION_REQUIRED === '1',
-    subscriptionAmountRub: Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 5000,
+    subscriptionAmountRub: Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 200,
     subscriptionProvider: 'tribute',
     tributeBtcEnabled: false, // feature flag: приём BTC в оплату услуг Pricelex выключен
     // Wallet-провайдер
@@ -221,7 +221,13 @@ function load() {
       if (bs.internDays === undefined) bs.internDays = 7;
       if (!Array.isArray(bs.adminBrokers) || bs.adminBrokers.length === 0) bs.adminBrokers = DEFAULT_ADMIN_BROKERS;
       if (bs.subscriptionRequired === undefined) bs.subscriptionRequired = process.env.SUBSCRIPTION_REQUIRED === '1';
-      if (bs.subscriptionAmountRub === undefined) bs.subscriptionAmountRub = Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 5000;
+      if (bs.subscriptionAmountRub === undefined) bs.subscriptionAmountRub = Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 200;
+      // Один раз переводим старый дефолт 5000 на тариф «Минимальный донат» (200 ₽/мес);
+      // после миграции вручную выставленная сумма не сбрасывается.
+      if (bs.subscriptionAmountMigrated !== true && Number(bs.subscriptionAmountRub) === 5000) {
+        bs.subscriptionAmountRub = Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 200;
+      }
+      if (bs.subscriptionAmountRub !== undefined) bs.subscriptionAmountMigrated = true;
       if (bs.subscriptionProvider === undefined) bs.subscriptionProvider = 'tribute';
       if (bs.tributeBtcEnabled === undefined) bs.tributeBtcEnabled = false;
       if (bs.walletProvider === undefined) bs.walletProvider = (process.env.WALLET_PROVIDER || 'mock').trim() || 'mock';
@@ -231,7 +237,12 @@ function load() {
       if (!db.userSubs || typeof db.userSubs !== 'object') db.userSubs = {};
       if (bs.accessRequired === undefined) bs.accessRequired = process.env.ACCESS_REQUIRED !== '0';
       if (bs.trialDays === undefined) bs.trialDays = Number(process.env.TRIAL_DAYS) || 3;
-      if (bs.subscriptionAmountRub === undefined) bs.subscriptionAmountRub = Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 5000;
+      if (bs.subscriptionAmountRub === undefined) bs.subscriptionAmountRub = Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 200;
+      if (bs.subscriptionAmountMigrated !== true && Number(bs.subscriptionAmountRub) === 5000) {
+        bs.subscriptionAmountRub = Number(process.env.SUBSCRIPTION_AMOUNT_RUB) || 200;
+        bs.subscriptionAmountMigrated = true;
+      }
+      if (bs.subscriptionAmountRub !== undefined) bs.subscriptionAmountMigrated = true;
       if (bs.tributeUrl === undefined) bs.tributeUrl = String(process.env.TRIBUTE_URL || process.env.TRIBUTE_SUBSCRIPTION_URL || process.env.SUBSCRIPTION_URL || '').trim();
       for (const u of Object.values(db.users || {})) {
         // Бесплатные сутки считаются от первого захода в приложение.
@@ -380,9 +391,9 @@ function publicSettings() {
     avgExchangeMin: Number(s.avgExchangeMin) > 0 ? Number(s.avgExchangeMin) : avgExchangeMinutesComputed(),
     // Ежемесячный платёж за доступ (Tribute)
     subscriptionRequired: !!s.subscriptionRequired,
-    subscriptionAmountRub: Number(s.subscriptionAmountRub) || 5000,
+    subscriptionAmountRub: Number(s.subscriptionAmountRub) || 200,
     subscriptionProvider: s.subscriptionProvider || 'tribute',
-    subscriptionLabel: s.subscriptionRequired ? 'Ежемесячный платёж за доступ' : 'Ежемесячный платёж за доступ (опционально)',
+    subscriptionLabel: s.subscriptionRequired ? 'Минимальный донат' : 'Минимальный донат (опционально)',
     tributeBtcEnabled: !!s.tributeBtcEnabled,
     // Wallet-провайдер
     walletProvider: s.walletProvider || 'mock',
@@ -1029,7 +1040,7 @@ const accessSettings = () => {
   return {
     required: s.accessRequired !== false,
     trialDays: Number.isFinite(trialDays) && trialDays >= 0 ? Math.min(90, Math.round(trialDays)) : 3,
-    amountRub: Number.isFinite(amount) && amount > 0 ? Math.round(amount) : 5000,
+    amountRub: Number.isFinite(amount) && amount > 0 ? Math.round(amount) : 200,
     tributeUrl: String(s.tributeUrl || '').trim(),
   };
 };
@@ -1050,10 +1061,10 @@ function activateUserSub(userId, { days = 30, amount, externalId, by } = {}) {
       provider: 'tribute',
       status: 'active',
       currency: 'RUB',
-      amount: Number(d.settings.subscriptionAmountRub) || 5000,
+      amount: Number(d.settings.subscriptionAmountRub) || 200,
     }, prev || {}, {
       status: 'active',
-      amount: amount != null ? Number(amount) : (prev && prev.amount) || Number(d.settings.subscriptionAmountRub) || 5000,
+      amount: amount != null ? Number(amount) : (prev && prev.amount) || Number(d.settings.subscriptionAmountRub) || 200,
       externalId: externalId != null ? String(externalId) : (prev && prev.externalId) || null,
       currentPeriodStart: now,
       currentPeriodEnd: base + period,
@@ -1082,7 +1093,7 @@ function requestUserSubPayment(userId, { amount, method } = {}) {
       createdAt: now,
     }, prev || {}, {
       status: subActive(prev, now) ? prev.status : 'pending',
-      amount: amount != null ? Number(amount) : (prev && prev.amount) || Number(d.settings.subscriptionAmountRub) || 5000,
+      amount: amount != null ? Number(amount) : (prev && prev.amount) || Number(d.settings.subscriptionAmountRub) || 200,
       method: method ? String(method).slice(0, 40) : (prev && prev.method) || null,
       requestedAt: now,
       updatedAt: now,
@@ -1295,6 +1306,21 @@ function setBrokerPrice(login, { currency, rate }) {
 
 const brokerPricePoints = (login, limit = 240) =>
   (db.brokerPriceHistory[String(login)] || []).slice(-limit);
+
+// Что брокеры предлагают прямо сейчас: живые цены из их кабинетов. Клиент видит
+// список до создания заявки — «пока не предлагают», если цен ещё нет.
+function brokerOffers() {
+  return Object.keys(db.brokerPrices || {})
+    .map((login) => {
+      const p = db.brokerPrices[login] || {};
+      return Object.assign(brokerCard(login), {
+        BTC: Number(p.BTC) || null,
+        GRAM: Number(p.GRAM) || null,
+        updatedAt: p.updatedAt || null,
+      });
+    })
+    .filter((o) => o.BTC || o.GRAM);
+}
 
 /* ---------- карточка брокера для клиента и статистика для ЛК ---------- */
 
@@ -1545,6 +1571,7 @@ module.exports = {
   brokerPrice,
   setBrokerPrice,
   brokerPricePoints,
+  brokerOffers,
   brokerCard,
   reviewsForBroker,
   brokerStats,

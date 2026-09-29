@@ -595,6 +595,90 @@
 .lk-offer .btn {
   width: 100%;
 }
+
+/* Подписка «Минимальный донат» в личном кабинете: тариф и статус Tribute. */
+.profile-sub .sub-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 14px;
+  align-items: baseline;
+  padding: 8px 0;
+  font-size: 13.5px;
+  border-bottom: 1px solid var(--sep, rgba(255, 255, 255, 0.06));
+}
+.profile-sub .sub-row:last-of-type {
+  border-bottom: 0;
+}
+.profile-sub .sub-row span {
+  color: var(--muted, #8a929b);
+}
+.profile-sub .sub-row b {
+  font-weight: 600;
+  text-align: right;
+}
+.profile-sub .sub-state.on {
+  color: #8fd0a0;
+}
+.profile-sub .sub-state.off {
+  color: #f0c98a;
+}
+
+/* Что предлагают брокеры: живые цены до создания заявки (лучшие сверху). */
+.offers-card .offers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.offer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--sep, rgba(255, 255, 255, 0.06));
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.offer-pick {
+  flex: none;
+}
+.offer-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.offer-who b {
+  font-size: 14px;
+}
+.offer-who span {
+  font-size: 11.5px;
+  color: var(--muted, #8a929b);
+}
+.offer-rate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+  white-space: nowrap;
+}
+.offer-rate b {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.offer-delta {
+  font-size: 11px;
+}
+.offer-delta.up {
+  color: #f0c98a;
+}
+.offer-delta.down {
+  color: #8fd0a0;
+}
+.offer-delta.eq {
+  color: var(--muted, #8a929b);
+}
 .lk-review {
   padding: 11px 0;
   border-bottom: 1px solid var(--sep, rgba(255, 255, 255, 0.06));

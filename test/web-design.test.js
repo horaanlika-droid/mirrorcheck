@@ -514,7 +514,7 @@ test('плавающая кнопка чата появляется после �
   assert.ok(fab.classList.contains('show'), 'после возврата из чата плашка снова на месте');
 });
 
-test('кнопка «Опубликовать офер» — литая бронзовая CTA с бликом', async (t) => {
+test('кнопка «Создать заявку» — литая бронзовая CTA с бликом', async (t) => {
   const a = await app(t);
   const btn = a.document.querySelector('#btnGo');
   assert.ok(btn, 'кнопка формы обмена на месте');
