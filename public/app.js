@@ -1149,7 +1149,7 @@
           <div class="offers-list" id="offersList"><div class="note">Загружаем предложения…</div></div>
         </div>
 
-        <button class="btn btn-cta mt" id="btnGo">${ICONS.bolt}<span>Опубликовать офер</span></button>
+        <button class="btn btn-cta mt" id="btnGo">${ICONS.bolt}<span>Создать заявку</span></button>
       </div>
       <div id="exOrder" class="${S.order && S.orderOpen ? '' : 'hidden'}"></div>
     `;
@@ -1230,7 +1230,7 @@
     btn.disabled = !s.online || Boolean(hasOpenOrder);
     btn.querySelector('span').textContent = !s.online
       ? 'Обмен временно недоступен'
-      : hasOpenOrder ? 'Сначала завершите текущую заявку' : 'Опубликовать офер';
+      : hasOpenOrder ? 'Сначала завершите текущую заявку' : 'Создать заявку';
   }
 
   /* ---------- что предлагают брокеры до создания заявки ---------- */
@@ -1279,10 +1279,22 @@
       const meta = [o.rating ? `★ ${o.rating}` : '', o.deals ? `${o.deals} сделок` : ''].filter(Boolean).join(' · ');
       return `
         <div class="offer-row">
-          <div class="offer-who"><b>${esc(o.name || o.login)}</b>${meta ? `<span>${meta}</span>` : ''}</div>
+          <div class=\"offer-who\"><b>${esc(o.name || o.login)}</b>${meta ? `<span>${meta}</span>` : ''}</div>
           <div class="offer-rate"><b>${fmtRub(rate)}</b>${txt ? `<span class="offer-delta ${cls}">${txt}</span>` : ''}</div>
+          <button class="btn btn-primary btn-sm offer-pick" data-pick-offer="${esc(o.login)}" type="button">Выбрать</button>
         </div>`;
-    }).join('');
+    }).join('') +
+      `<div class="note">Цены — из кабинетов брокеров, выбирать не обязательно: в заявке они пришлют отклик, и вы примете лучший.</div>`;
+    box.querySelectorAll('[data-pick-offer]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        haptic('selection');
+        const field = $('#inRub');
+        if (field) {
+          try { if (field.scrollIntoView) field.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* jsdom без прокрутки */ }
+          field.focus({ preventScroll: true });
+        }
+        toast('Введите сумму и создайте заявку — брокеры пришлют отклик, и вы выберёте лучший');
+      }));
   }
 
   async function submitOrder() {
@@ -1532,7 +1544,7 @@
       <div class="card stage stage-offer">
         <div class="offer-head">
           <div>
-            <div class="stage-kicker">Офер #${o.id}</div>
+            <div class="stage-kicker">Заявка #${o.id}</div>
             <div class="offer-sum">${fmtRub(o.rub)} → ${esc(o.currency)}</div>
           </div>
           <div class="offer-timer">
@@ -1550,8 +1562,8 @@
           <span class="dot-online"></span> Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b>
           ${(S.bids || []).length ? `<span class="offer-count">Откликов: <b>${S.bids.length}</b></span>` : ''}
         </div>
-        <div class="note">Можно принять любой отклик сразу — или подождать ещё: брокеры видят офер одновременно.</div>
-        <button class="btn btn-ghost mt" id="btnCancel">Отменить офер</button>
+        <div class="note">Можно принять любой отклик сразу — или подождать ещё: брокеры видят заявку одновременно.</div>
+        <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
       </div>`;
     startOfferTicker(o);
     box.querySelectorAll('[data-take]').forEach((btn) =>
@@ -2523,7 +2535,7 @@
         <div class="card-title">Как это работает</div>
         <div class="steps">
           <div class="step"><div class="n">1</div><span class="step-copy">Выберите валюту и сумму: калькулятор считает по рыночному курсу — без наценки площадки.</span></div>
-          <div class="step"><div class="n">2</div><span class="step-copy">Укажите кошелёк и опубликуйте офер: брокеры откликнутся своей ценой за актив.</span></div>
+          <div class="step"><div class="n">2</div><span class="step-copy">Укажите кошелёк и создайте заявку: брокеры откликнутся своей ценой за актив.</span></div>
           <div class="step"><div class="n">3</div><span class="step-copy">Примите отклик — сразу или дождавшись окна: брокер пришлёт реквизиты, дальше перевод, PDF-чек и «Я оплатил».</span></div>
           <div class="step"><div class="n">4</div><span class="step-copy">После подтверждения средства уходят на ваш кошелёк — ссылку на транзакцию увидите в заявке.</span></div>
         </div>

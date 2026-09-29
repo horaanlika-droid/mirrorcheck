@@ -639,6 +639,9 @@
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.03);
 }
+.offer-pick {
+  flex: none;
+}
 .offer-who {
   display: flex;
   flex-direction: column;

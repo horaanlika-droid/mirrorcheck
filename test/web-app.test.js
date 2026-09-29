@@ -56,8 +56,8 @@ async function app(t, order = initial) {
 
 test('renders requisites on poll even when settings request fails; fetch bypasses cache', async (t) => {
   const a = await app(t);
-  // Офер ждёт откликов брокеров — клиент видит таймер приёма и рыночный курс
-  assert.match(a.document.querySelector('#exOrder').textContent, /Офер/);
+  // Заявка ждёт откликов брокеров — клиент видит таймер приёма и рыночный курс
+  assert.match(a.document.querySelector('#exOrder').textContent, /Заявка/);
   assert.match(a.document.querySelector('#exOrder').textContent, /Рыночный курс/);
   a.handle((url) => {
     if (url === '/api/settings') return Promise.reject(new Error('offline'));
