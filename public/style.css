@@ -1013,3 +1013,8 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
   .rev-summary { flex-direction: column; gap: 14px; text-align: center; }
   .rev-dist { width: 100%; }
 }
+
+.adm-text-row { padding: 14px 0; border-bottom: 1px solid rgba(255,255,255,.12); }
+.adm-text-row label { display: block; color: #aab8bf; font-size: 13px; margin-bottom: 8px; overflow-wrap: anywhere; }
+.adm-text-row textarea { width: 100%; box-sizing: border-box; resize: vertical; background: #101f28; color: #fff; border: 1px solid #38505d; border-radius: 10px; padding: 10px; font: inherit; }
+.adm-text-row .adm-actions { margin-top: 8px; }

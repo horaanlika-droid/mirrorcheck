@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const currencies = require('./currencies');
+const textCatalogue = require('./texts');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
@@ -22,6 +23,7 @@ const defaults = () => {
     operator: '@VEGA_obmen',
     channel: 'https://t.me/VEGA_Official_65',
     chat: 'https://t.me/+tY5b6RUJ0xUwNmNh',
+    textOverrides: {},
     publicUrl: null,
     botUsername: null,
   };
@@ -130,6 +132,7 @@ function publicSettings() {
   const s = db.settings;
   // The client only sees gift-card directions and the final BTC payout per $1 of face value.
   return {
+    texts: textCatalogue().filter((item) => Object.prototype.hasOwnProperty.call(s.textOverrides || {}, item.id)).map((item) => ({ text: item.text, value: s.textOverrides[item.id] })),
     rates: currencies.publicRates(s).map((r) => ({ ...r, rate: r.direction === 'sell' ? r.rate : null })),
     rateUpdatedAt: s.rateUpdatedAt,
     online: !!s.online,

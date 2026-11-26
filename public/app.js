@@ -1552,6 +1552,7 @@
     document.querySelectorAll('#adminSheet .adm-pane').forEach((p) => p.classList.toggle('hidden', p.dataset.pane !== adminTab));
     if (adminTab === 'reviews') loadAdminReviews();
     if (adminTab === 'promos') loadAdminPromos();
+    if (adminTab === 'texts') loadAdminTexts();
   }
   function openAdminSheet() {
     const sheet = $('#adminSheet');
@@ -1938,7 +1939,90 @@
       return false;
     }
   }
+  let adminTextsLoaded = false;
+  async function loadAdminTexts() {
+    if (adminTextsLoaded) return;
+    const list = $('#admTextList');
+    try {
+      const data = await api('/api/admin/texts');
+      list.replaceChildren();
+      for (const item of data.texts) {
+        const row = document.createElement('div');
+        row.className = 'adm-text-row';
+        row.dataset.search = item.text.toLocaleLowerCase('ru');
+        const label = document.createElement('label');
+        label.textContent = item.text;
+        const input = document.createElement('textarea');
+        input.rows = 2;
+        input.maxLength = 1000;
+        input.value = data.overrides[item.id] ?? item.text;
+        input.setAttribute('aria-label', 'Изменить: ' + item.text);
+        const actions = document.createElement('div');
+        actions.className = 'adm-actions';
+        const save = document.createElement('button');
+        save.type = 'button'; save.className = 'btn btn-primary'; save.textContent = 'Сохранить';
+        const reset = document.createElement('button');
+        reset.type = 'button'; reset.className = 'btn btn-ghost'; reset.textContent = 'Вернуть исходный';
+        async function update(value) {
+          save.disabled = reset.disabled = true;
+          try {
+            const result = await api('/api/admin/texts', { method: 'PUT', body: { id: item.id, value } });
+            S.settings = result.settings;
+            if (value === null) input.value = item.text;
+            applyCopy();
+            $('#admTextStatus').textContent = 'Сохранено. Изменение увидят все клиенты.';
+          } catch (e) { $('#admTextStatus').textContent = e.message; }
+          finally { save.disabled = reset.disabled = false; }
+        }
+        save.addEventListener('click', () => update(input.value));
+        reset.addEventListener('click', () => update(null));
+        actions.append(save, reset); row.append(label, input, actions); list.append(row);
+      }
+      adminTextsLoaded = true;
+    } catch (e) { $('#admTextStatus').textContent = e.message; }
+  }
+
+  // Replace fixed copy as text, never as HTML. Preserve source values so that
+  // subsequent edits and resets also update already-rendered screens.
+  const copyNodes = new WeakMap();
+  function applyCopy() {
+    const replacements = new Map(((S.settings && S.settings.texts) || []).map((x) => [x.text, x.value]));
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    let node;
+    while ((node = walk.nextNode())) {
+      const element = node.nodeType === 1 ? node : node.parentElement;
+      if (!element || element.closest('#adminSheet, script, style, .rev-text, .rev-name, .msg-bubble') || (node.nodeType === 3 && element.closest('input, textarea'))) continue;
+      if (node.nodeType === 3) {
+        const old = copyNodes.get(node);
+        const current = node.nodeValue;
+        const source = old && current === old.applied ? old.source : current;
+        const trimmed = source.trim();
+        const replacement = replacements.get(trimmed);
+        const applied = replacement === undefined ? source : source.replace(trimmed, replacement);
+        copyNodes.set(node, { source, applied });
+        if (current !== applied) node.nodeValue = applied;
+      } else {
+        for (const attr of ['placeholder', 'aria-label', 'title']) {
+          if (!node.hasAttribute(attr)) continue;
+          let state = copyNodes.get(node) || {};
+          const current = node.getAttribute(attr);
+          const prev = state[attr];
+          const source = prev && current === prev.applied ? prev.source : current;
+          const applied = replacements.has(source) ? replacements.get(source) : source;
+          state[attr] = { source, applied }; copyNodes.set(node, state);
+          if (current !== applied) node.setAttribute(attr, applied);
+        }
+      }
+    }
+  }
+  const copyObserver = new MutationObserver(() => applyCopy());
+  copyObserver.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['placeholder', 'aria-label', 'title'] });
+
   function wireAdminSheet() {
+    $('#admTextSearch').addEventListener('input', (e) => {
+      const query = e.target.value.trim().toLocaleLowerCase('ru');
+      document.querySelectorAll('.adm-text-row').forEach((row) => { row.hidden = !row.dataset.search.includes(query); });
+    });
     document.querySelectorAll('#admTabs .adm-tab').forEach((b) =>
       b.addEventListener('click', () => { adminTab = b.dataset.tab; haptic('light'); syncAdminTabs(); })
     );
@@ -2302,6 +2386,7 @@
     const s = await api('/api/settings');
     if (JSON.stringify(s) !== JSON.stringify(S.settings)) {
       S.settings = s;
+      applyCopy();
       renderHeader();
       renderFormMeta();
       if (S.tab === 'reviews') renderReviews();

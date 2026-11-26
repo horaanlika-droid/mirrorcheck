@@ -6,6 +6,7 @@ const bus = require('./bus');
 const currencies = require('./currencies');
 const { validateInitData, parseUser } = require('./validate');
 const admins = require('./admins');
+const textCatalogue = require('./texts');
 
 const clientOrder = (o, reviewedIds) => ({
   id: o.id,
@@ -247,6 +248,27 @@ function createApp() {
     // In demo mode (BOT_TOKEN unset) the admin panel is open only to the demo guest and admins — clients don't see it.
     return admins.has(id) || (!config.botToken && id === '900001') ? a : null;
   };
+
+  // Only known fixed UI strings can be changed; never accept arbitrary keys or HTML.
+  app.get('/api/admin/texts', (req, res) => {
+    if (!needAuth(req, res)) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
+    res.json({ texts: textCatalogue(), overrides: store.get().settings.textOverrides || {} });
+  });
+  app.put('/api/admin/texts', (req, res) => {
+    if (!needAuth(req, res)) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
+    const { id, value } = req.body || {};
+    if (!textCatalogue().some((item) => item.id === id) || (value !== null && (typeof value !== 'string' || !value.trim() || value.length > 1000))) {
+      return res.status(400).json({ error: 'Некорректный текст или идентификатор.' });
+    }
+    store.mutate((db) => {
+      if (!db.settings.textOverrides || typeof db.settings.textOverrides !== 'object') db.settings.textOverrides = {};
+      if (value === null) delete db.settings.textOverrides[id];
+      else db.settings.textOverrides[id] = value;
+    });
+    res.json({ settings: store.publicSettings() });
+  });
 
   // Админ: все редактируемые настройки. Курс и скидка отдаются для каждой карты отдельно.
   const adminSettingsBlock = () => {
