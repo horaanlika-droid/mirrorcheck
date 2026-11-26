@@ -151,7 +151,7 @@ function startWeb() {
   const CLIENTS_ANNOUNCE_OPEN =
     '🟢 <b>Pricelex Worldwide: приём карт открыт!</b>\n\n' +
     'Снова принимаем подарочные карты Google, iTunes, Xbox и Apple Store региона США в USD 🎁\n' +
-    'У каждой карты свой курс, выплата в BTC, без документов и регистрации — в приложении и в боте.';
+    'Выплата в BTC, без документов и регистрации — в приложении и в боте.';
   const DIRECTION_KEYS = currencies.list().map((p) => p.key);
   const feeValue = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 50 ? Number(v) : null);
 

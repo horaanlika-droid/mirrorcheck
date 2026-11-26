@@ -462,9 +462,9 @@
         <div id="assetPicker" role="region" aria-label="Выберите подарочную карту">
           <section class="exchange-hero">
             <div class="hero-copy">
-              <div class="hero-kicker"><i></i> ЧАСТНЫЙ БРОКЕР ПОДАРОЧНЫХ КАРТ</div>
+              <div class="hero-kicker"><i></i> ПРИВАТНЫЙ ОБМЕН ЦИФРОВЫХ ПОДАРОЧНЫХ КАРТ</div>
               <h1>Подарочные карты<br>на <span>Bitcoin</span></h1>
-              <p>Приватный обмен цифровых подарочных карт. Укажите номинал — увидите выплату в BTC до создания заявки. У каждой карты свой курс.</p>
+              <p>Приватный обмен цифровых подарочных карт. Укажите номинал — увидите выплату в BTC до создания заявки.</p>
               <button class="hero-cta" id="heroStart">Начать обмен <span aria-hidden="true">→</span></button>
               <div class="hero-footnote"><span>Курс BTC/USD</span><b>·</b><span>Личная поддержка</span></div>
             </div>
@@ -496,7 +496,7 @@
             <div class="gain-note-title"><span class="gain-note-ic" aria-hidden="true">🛒</span>Где купить карту — решать вам</div>
             <div class="gain-item"><span class="gain-num">✦</span><p>Нам <b>не важно, где вы купили карту и по какому курсу</b>: на маркетплейсе, в магазине цифровых кодов, у знакомых, за наличные — где угодно. Чек и цену покупки мы не спрашиваем.</p></div>
             <div class="gain-item"><span class="gain-num">✓</span><p>Важно одно: <b>карта работает</b>. Регион <b>США</b>, номинал в <b>USD ($)</b>, баланс полный и не тронутый. Всё остальное — детали, которые нас не касаются.</p></div>
-            <div class="gain-item"><span class="gain-num">₿</span><p>Курс выплаты у каждой карты свой и виден заранее — мы считаем по нему, а не по тому, сколько вы заплатили за карту.</p></div>
+            <div class="gain-item"><span class="gain-num">₿</span><p>Сумма выплаты видна до создания заявки и не зависит от того, сколько вы заплатили за карту.</p></div>
           </div>
         </div>
         <div id="assetForm" class="hidden">

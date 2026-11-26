@@ -99,7 +99,7 @@ function clientMenu(ctx) {
   return show(ctx,
     `🌌 <b>Pricelex Worldwide | Official</b> — обмен\n${online}\n\n` +
     `Выкупаем подарочные карты Google, iTunes, Xbox и Apple Store (регион США, USD) с выплатой в BTC.\n` +
-    `У каждой карты свой курс.\n\n` +
+    `Сумма выплаты видна до создания заявки.\n\n` +
     `Что хотите сделать?`,
     menuKb(s));
 }
@@ -113,7 +113,7 @@ function assetScreen(ctx) {
     return show(ctx, '💱 <b>Направления временно недоступны.</b>\nЗагляните чуть позже.', backMenuKb());
   }
   return show(ctx,
-    `💱 <b>Выберите карту</b>\n\nКакую карту сдаёте? Курс у каждой карты свой:\n\n${rateListText()}`,
+    `💱 <b>Выберите карту</b>\n\nКакую карту сдаёте?\n\n${rateListText()}`,
     assetKb());
 }
 
@@ -329,7 +329,7 @@ function infoScreen(ctx) {
   const s = store.get().settings;
   return show(ctx,
     `ℹ️ <b>Pricelex Worldwide | Official</b>\n\n` +
-    `Точный курс выплаты смотрите в заявке — выплата только в BTC. У каждой карты свой курс:\n${rateListText()}\n\n` +
+    `Выплата только в BTC. Сумма видна до создания заявки:\n${rateListText()}\n\n` +
     `Статус: ${s.online ? '🟢 Онлайн' : '🔴 Оффлайн'}\n\n` +
     `📇 Оператор: ${esc(s.operator)}\n📣 Канал: ${esc(s.channel)}\n💬 Чат: ${esc(s.chat)}`,
     backMenuKb());
