@@ -136,18 +136,25 @@ function giftRules(ctx, pair) {
     new InlineKeyboard().text('✅ Понятно — выбрать номинал', `c:giftnom:${pair.key}`).row().text('↩️ К списку карт', 'c:exchange'));
 }
 
-function giftIntro(ctx, pair) {
+function giftIntro(ctx, pair, promo = null) {
   const s = store.get().settings;
-  const rate = currencies.rateOf(s, pair.currency);
-  clientFlows.set(uidOf(ctx), { type: 'gift_select', key: pair.key });
+  const baseRate = currencies.rateOf(s, pair.currency);
+  const effectiveRate = promo ? currencies.applyPromoToRate(baseRate, promo.percent) : baseRate;
+  clientFlows.set(uidOf(ctx), { type: 'gift_select', key: pair.key, promoCode: promo ? promo.code : null });
   const kb = new InlineKeyboard()
     .text('$10', `c:units:${pair.key}:10`).text('$20', `c:units:${pair.key}:20`).text('$50', `c:units:${pair.key}:50`).text('$100', `c:units:${pair.key}:100`).row()
-    .text('Другой номинал', `c:giftnum:${pair.key}`).row()
-    .text('↩️ К списку карт', 'c:exchange');
+    .text('Другой номинал', `c:giftnum:${pair.key}`).row();
+  if (promo) {
+    kb.text(`🏷 Промокод ${promo.code} (+${promo.percent}%) ✕`, `c:promoclear:${pair.key}`).row();
+  } else {
+    kb.text('🏷 Ввести промокод', `c:promo:${pair.key}`).row();
+  }
+  kb.text('↩️ К списку карт', 'c:exchange');
   return show(ctx,
     `${esc(pair.label)} → BTC\n\n` +
     `Вы отдаёте код карты ${esc(pair.label)} номиналом в <b>USD</b> — мы выплачиваем BTC на ваш Bitcoin-кошелёк.\n\n` +
-    `💱 Курс этой карты: <b>1 $ = ${esc(fmtCrypto(rate, 'BTC', 8))}</b>. Курс обновляется автоматически.\n` +
+    `💱 Курс этой карты: <b>1 $ = ${esc(fmtCrypto(effectiveRate, 'BTC', 8))}</b>. Курс обновляется автоматически.\n` +
+    (promo ? `🏷 Промокод <b>${esc(promo.code)}</b>: <b>+${promo.percent}%</b> к выплате${promo.minUnits ? ` (от $${promo.minUnits})` : ''}.\n` : '') +
     `⏱ На сделку — 1 час с момента создания заявки.\n` +
     `✅ Только карты региона США в долларах (USD).\n\n` +
     GIFT_PRIVACY + `\n\n` +
@@ -156,8 +163,8 @@ function giftIntro(ctx, pair) {
 }
 
 // Заявка создаётся БЕЗ кода: клиент отправляет код только после подключения оператора.
-function askGiftWallet(ctx, units, pair) {
-  clientFlows.set(uidOf(ctx), { type: 'gift_wallet', units, key: pair.key });
+function askGiftWallet(ctx, units, pair, promoCode = null) {
+  clientFlows.set(uidOf(ctx), { type: 'gift_wallet', units, key: pair.key, promoCode: promoCode || null });
   return show(ctx,
     `👛 <b>Адрес Bitcoin-кошелька</b>\n\n` +
     `Куда отправить BTC? Пришлите Bitcoin-адрес: <b>bc1…</b>, <b>1…</b> или <b>3…</b>.\n\n` +
@@ -165,7 +172,7 @@ function askGiftWallet(ctx, units, pair) {
     new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`));
 }
 
-function createGiftOrder(ctx, units, wallet, pair) {
+function createGiftOrder(ctx, units, wallet, pair, promoCode = null) {
   const s = store.get().settings;
   if (!s.online) return { error: 'Обмен временно недоступен — попробуйте позже.' };
   if (!pair || pair.kind !== 'gift') return { error: 'Неизвестный тип карты.' };
@@ -174,7 +181,13 @@ function createGiftOrder(ctx, units, wallet, pair) {
   if (unitsError) return { error: unitsError };
   const walletError = currencies.validateWallet(wallet);
   if (walletError) return { error: walletError };
-  const payout = currencies.giftPayout(s, units, pair.currency);
+  let promo = null;
+  if (promoCode) {
+    const check = store.validatePromo(promoCode, { units });
+    if (!check.ok) return { error: check.error };
+    promo = check.promo;
+  }
+  const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0);
   if (!payout || !(payout.crypto > 0)) {
     return { error: 'Курс выплаты в BTC временно недоступен — попробуйте позже.' };
   }
@@ -189,8 +202,13 @@ function createGiftOrder(ctx, units, wallet, pair) {
     wallet,
     rate: payout.rate,
     crypto: payout.crypto,
+    promoId: promo ? promo.id : null,
+    promoCode: promo ? promo.code : null,
+    promoPercent: promo ? promo.percent : null,
+    baseCrypto: promo ? payout.baseCrypto : null,
     referrer: usr && usr.referrer,
   });
+  if (promo) store.consumePromo(promo.id);
   bus.emit('order_event', { order, type: 'new' });
   return { order };
 }
@@ -319,6 +337,7 @@ async function clientCancel(ctx, id) {
     return show(ctx, 'Время на сделку истекло. Создайте новую заявку.', backMenuKb());
   }
   const upd = store.updateOrder(o.id, { status: 'cancelled' });
+  if (upd && upd.promoId && !upd.promoReleased) store.releaseOrderPromo(upd.id);
   bus.emit('order_event', { order: upd, type: 'cancelled' });
   return show(ctx, `⚪ <b>Заявка #${o.id} отменена.</b>`, new InlineKeyboard().text('💱 Новый обмен', 'c:exchange').text('↩️ Меню', 'c:menu'));
 }
@@ -376,6 +395,7 @@ async function clientCancelWidget(ctxLike, id) {
   if (!o) return { ok: 0, error: 'not_found' };
   if (!['new', 'details'].includes(o.status)) return { ok: 0, error: 'not_allowed' };
   const upd = store.updateOrder(o.id, { status: 'cancelled' });
+  if (upd && upd.promoId && !upd.promoReleased) store.releaseOrderPromo(upd.id);
   bus.emit('order_event', { order: upd, type: 'cancelled' });
   return { ok: 1, order: upd };
 }
@@ -402,6 +422,7 @@ async function handleClientCallback(ctx, d) {
   if (d === 'c:refs') return refsScreen(ctx);
   if (d === 'c:support') return supportPrompt(ctx);
   if (d === 'c:giftnom' || d.startsWith('c:giftnom:')) {
+    const flow = clientFlows.get(uidOf(ctx));
     const key = d === 'c:giftnom' ? currencies.GIFT_KEY : d.slice('c:giftnom:'.length);
     const pair = currencies.get(key);
     const s = store.get().settings;
@@ -409,14 +430,30 @@ async function handleClientCallback(ctx, d) {
     if (!currencies.isEnabled(s, pair.key) || !currencies.rateOf(s, pair.currency)) {
       return show(ctx, 'Эта карта сейчас недоступна. Выберите другую или загляните позже.', assetKb());
     }
-    return giftIntro(ctx, pair);
+    const existingPromo = flow && flow.promoCode && flow.key === pair.key ? store.validatePromo(flow.promoCode).promo || null : null;
+    return giftIntro(ctx, pair, existingPromo);
+  }
+  if (d.startsWith('c:promo:')) {
+    const key = d.slice('c:promo:'.length) || currencies.GIFT_KEY;
+    const pair = currencies.get(key);
+    if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
+    clientFlows.set(uidOf(ctx), { type: 'gift_promo', key: pair.key });
+    return show(ctx,
+      '🏷 <b>Промокод на обмен</b>\n\nПришлите промокод одним сообщением:\n\n/cancel — отмена',
+      new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`));
+  }
+  if (d.startsWith('c:promoclear:')) {
+    const key = d.slice('c:promoclear:'.length) || currencies.GIFT_KEY;
+    const pair = currencies.get(key);
+    if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
+    return giftIntro(ctx, pair, null);
   }
   if (d === 'c:giftnum' || d.startsWith('c:giftnum:')) {
     const flow = clientFlows.get(uidOf(ctx));
     const key = d === 'c:giftnum' ? flow?.key || currencies.GIFT_KEY : d.slice('c:giftnum:'.length);
     const pair = currencies.get(key);
     if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
-    clientFlows.set(uidOf(ctx), { type: 'gift_units', key: pair.key });
+    clientFlows.set(uidOf(ctx), { type: 'gift_units', key: pair.key, promoCode: flow?.promoCode || null });
     return show(ctx,
       'Введите номинал карты в $ (кратно $10, минимум $10):\n\n/cancel — отмена',
       new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`));
@@ -434,7 +471,7 @@ async function handleClientCallback(ctx, d) {
       return show(ctx, 'Эта карта сейчас недоступна. Выберите другую или загляните позже.', assetKb());
     }
     if (!Number.isFinite(units) || currencies.validateUnits(units)) return giftIntro(ctx, pair);
-    return askGiftWallet(ctx, units, pair);
+    return askGiftWallet(ctx, units, pair, flow && flow.key === pair.key ? flow.promoCode : null);
   }
   if (d.startsWith('c:buy:')) {
     const pair = currencies.get(d.slice('c:buy:'.length));
@@ -474,6 +511,15 @@ async function handleClientText(ctx) {
   if (!f) {
     return ctx.reply('Я здесь, чтобы помочь с обменом 🌌\nОткройте меню — или нажмите /menu.', { reply_markup: menuKb(s) });
   }
+  if (f.type === 'gift_promo') {
+    const pair = currencies.get(f.key || currencies.GIFT_KEY);
+    if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
+    const check = store.validatePromo(text);
+    if (!check.ok) {
+      return ctx.reply(`⚠️ ${check.error} Попробуйте другой промокод или нажмите /cancel.`);
+    }
+    return giftIntro(ctx, pair, check.promo);
+  }
   if (f.type === 'gift_units') {
     const pair = currencies.get(f.key || currencies.GIFT_KEY);
     if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
@@ -482,19 +528,20 @@ async function handleClientText(ctx) {
     if (!Number.isFinite(n) || currencies.validateUnits(units)) {
       return ctx.reply('Минимум $10, шаг $10. Например: 20');
     }
-    return askGiftWallet(ctx, units, pair);
+    return askGiftWallet(ctx, units, pair, f.promoCode || null);
   }
   if (f.type === 'gift_wallet') {
     const wallet = text.trim();
     const units = f.units;
     const pair = currencies.get(f.key || currencies.GIFT_KEY);
-    const { order, error } = createGiftOrder(ctx, units, wallet, pair);
+    const { order, error } = createGiftOrder(ctx, units, wallet, pair, f.promoCode || null);
     if (error) return ctx.reply(`⚠️ ${error}`);
     clientFlows.delete(uidOf(ctx));
     return show(ctx,
       `✅ <b>Заявка #${order.id} создана!</b>\n\n` +
-      `🎁 ${esc(giftLabel(order))} <b>$${giftUnits(order)}</b> → <b>${payoutOf(order)}</b>\n\n` +
-      `⏳ <b>Ждём подключения оператора</b> — дождитесь его сигнала в этом чате.\n` +
+      `🎁 ${esc(giftLabel(order))} <b>$${giftUnits(order)}</b> → <b>${payoutOf(order)}</b>\n` +
+      (order.promoCode ? `🏷 Промокод <b>${esc(order.promoCode)}</b> (+${order.promoPercent}%)\n` : '') +
+      `\n⏳ <b>Ждём подключения оператора</b> — дождитесь его сигнала в этом чате.\n` +
       `<b>Ничего не отправляйте и не сообщайте код карты</b>, пока оператор не попросит. На сделку — 1 час.`,
       new InlineKeyboard().text('📦 Мои заявки', 'c:orders').text('❌ Отменить', `c:cancel:${order.id}`));
   }

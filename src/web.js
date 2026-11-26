@@ -22,6 +22,9 @@ const clientOrder = (o, reviewedIds) => ({
   wallet: o.wallet,
   crypto: o.crypto,
   rate: o.rate,
+  promoCode: o.promoCode || null,
+  promoPercent: o.promoPercent ?? null,
+  baseCrypto: o.baseCrypto ?? null,
   status: o.status,
   requisites: o.requisites,
   receipt: o.receipt || null,
@@ -42,7 +45,125 @@ const clientUser = (u) => ({
   isAdmin: admins.has(String(u.id)) || (!config.botToken && String(u.id) === '900001'),
 });
 
-function startWeb() {
+const MIN_TS = Date.UTC(2000, 0, 1);
+const MAX_TS = Date.UTC(2100, 11, 31, 23, 59, 59);
+
+function parseTimestamp(raw, errLabel = 'Некорректный формат даты и времени.') {
+  if (raw === undefined || raw === null || raw === '') {
+    return { provided: false, value: null };
+  }
+  let ts = NaN;
+  if (typeof raw === 'number') {
+    ts = raw;
+  } else {
+    const str = String(raw).trim();
+    if (!str) return { provided: false, value: null };
+    if (/^-?\d+$/.test(str)) {
+      ts = Number(str);
+    } else {
+      // Поддержка DD.MM.YYYY HH:mm(:ss)? и ISO/YYYY-MM-DD HH:mm
+      const ru = str.match(/^(\d{2})\.(\d{2})\.(\d{4})(?:[\sT]+(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+      if (ru) {
+        const [, dd, mm, yyyy, hh = '00', mi = '00', ss = '00'] = ru;
+        const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(mi), Number(ss));
+        if (
+          d.getFullYear() === Number(yyyy) &&
+          d.getMonth() === Number(mm) - 1 &&
+          d.getDate() === Number(dd) &&
+          d.getHours() === Number(hh) &&
+          d.getMinutes() === Number(mi) &&
+          d.getSeconds() === Number(ss)
+        ) {
+          ts = d.getTime();
+        }
+      } else {
+        ts = Date.parse(str.includes(' ') && !str.includes('T') ? str.replace(' ', 'T') : str);
+      }
+    }
+  }
+  if (!Number.isFinite(ts) || ts < MIN_TS || ts > MAX_TS) {
+    return { provided: true, error: errLabel };
+  }
+  return { provided: true, value: Math.round(ts) };
+}
+
+function validatePromoInput(body, { partial = false, existingId = null } = {}) {
+  const b = body || {};
+  const patch = {};
+
+  if (!partial || b.code !== undefined) {
+    const code = store.normalizePromoCode(b.code);
+    if (!/^[A-Z0-9_-]{2,32}$/.test(code)) {
+      return { status: 400, error: 'Код промокода: от 2 до 32 символов (латинские буквы, цифры, «-» и «_»).' };
+    }
+    const existing = store.getPromoByCode(code);
+    if (existing && Number(existing.id) !== Number(existingId)) {
+      return { status: 409, error: 'Промокод с таким кодом уже существует.' };
+    }
+    patch.code = code;
+  }
+
+  if (!partial || b.percent !== undefined) {
+    const pct = Number(String(b.percent ?? '').replace(',', '.'));
+    if (!Number.isFinite(pct) || pct < 0.1 || pct > 50) {
+      return { status: 400, error: 'Скидка промокода: число от 0.1 до 50 (%).' };
+    }
+    patch.percent = Math.round(pct * 100) / 100;
+  }
+
+  if (b.maxUses !== undefined) {
+    if (b.maxUses === null || String(b.maxUses).trim() === '') {
+      patch.maxUses = null;
+    } else {
+      const m = Number(b.maxUses);
+      if (!Number.isInteger(m) || m < 1 || m > 1000000) {
+        return { status: 400, error: 'Лимит использований: целое число от 1 (или оставьте пустым).' };
+      }
+      patch.maxUses = m;
+    }
+  } else if (!partial) {
+    patch.maxUses = null;
+  }
+
+  if (b.minUnits !== undefined) {
+    if (b.minUnits === null || String(b.minUnits).trim() === '') {
+      patch.minUnits = null;
+    } else {
+      const mu = Number(b.minUnits);
+      if (!Number.isInteger(mu) || mu < 10 || mu % 10 !== 0 || mu > 100000) {
+        return { status: 400, error: 'Минимальный номинал: от $10, кратно $10 (или оставьте пустым).' };
+      }
+      patch.minUnits = mu;
+    }
+  } else if (!partial) {
+    patch.minUnits = null;
+  }
+
+  if (b.expiresAt !== undefined) {
+    const parsed = parseTimestamp(b.expiresAt, 'Некорректная дата окончания промокода.');
+    if (parsed.error) return { status: 400, error: parsed.error };
+    patch.expiresAt = parsed.provided ? parsed.value : null;
+  } else if (!partial) {
+    patch.expiresAt = null;
+  }
+
+  if (b.active !== undefined) {
+    if (typeof b.active !== 'boolean') {
+      return { status: 400, error: 'active: только true или false.' };
+    }
+    patch.active = b.active;
+  } else if (!partial) {
+    patch.active = true;
+  }
+
+  if (partial && !Object.keys(patch).length) {
+    return { status: 400, error: 'Нечего обновлять — передайте хотя бы одно поле.' };
+  }
+
+  return { patch };
+}
+
+function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', true);
@@ -289,7 +410,16 @@ function startWeb() {
     }
     const walletError = currencies.validateWallet(wallet);
     if (walletError) return res.status(400).json({ error: pair.walletError });
-    const payout = currencies.giftPayout(s, units, pair.currency);
+
+    const promoRaw = String(req.body.promoCode || '').trim();
+    let promo = null;
+    if (promoRaw) {
+      const check = store.validatePromo(promoRaw, { units });
+      if (!check.ok) return res.status(400).json({ error: check.error });
+      promo = check.promo;
+    }
+
+    const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0);
     if (!payout) {
       return res.status(400).json({ error: 'Курс выплаты в BTC временно недоступен — попробуйте позже.' });
     }
@@ -308,8 +438,13 @@ function startWeb() {
       wallet,
       rate: payout.rate,
       crypto: payout.crypto,
+      promoId: promo ? promo.id : null,
+      promoCode: promo ? promo.code : null,
+      promoPercent: promo ? promo.percent : null,
+      baseCrypto: promo ? payout.baseCrypto : null,
       referrer: user.referrer,
     });
+    if (promo) store.consumePromo(promo.id);
     bus.emit('order_event', { order, type: 'new' });
     return res.json({ order: clientOrder(order) });
   });
@@ -390,10 +525,69 @@ function startWeb() {
     }
     if (['new', 'details'].includes(o.status)) {
       const upd = store.updateOrder(o.id, { status: 'cancelled' });
+      if (upd && upd.promoId && !upd.promoReleased) store.releaseOrderPromo(upd.id);
       bus.emit('order_event', { order: upd, type: 'cancelled' });
       return res.json({ order: clientOrder(upd) });
     }
     res.json({ order: clientOrder(o) });
+  });
+
+  /* ---------- promo codes ---------- */
+  app.post('/api/promo/check', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const b = req.body || {};
+    const units = b.units !== undefined && b.units !== null && b.units !== '' ? Number(b.units) : null;
+    const check = store.validatePromo(b.code, { units });
+    if (!check.ok) return res.status(400).json({ error: check.error });
+    const promo = check.promo;
+    let payout = null;
+    if (b.currency && units && units > 0) {
+      const pair = currencies.find(String(b.currency).toUpperCase());
+      if (pair && pair.kind === 'gift') {
+        payout = currencies.giftPayout(store.get().settings, units, pair.currency, promo.percent);
+      }
+    }
+    res.json({ promo: store.publicPromo(promo), payout });
+  });
+
+  app.get('/api/admin/promos', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
+    res.json({ promos: store.listPromos() });
+  });
+
+  app.post('/api/admin/promos', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
+    const v = validatePromoInput(req.body, { partial: false });
+    if (v.error) return res.status(v.status || 400).json({ error: v.error });
+    const promo = store.createPromo(v.patch);
+    res.json({ promo });
+  });
+
+  const handleUpdatePromo = (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
+    const existing = store.getPromo(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Промокод не найден' });
+    const v = validatePromoInput(req.body, { partial: true, existingId: existing.id });
+    if (v.error) return res.status(v.status || 400).json({ error: v.error });
+    const promo = store.updatePromo(existing.id, v.patch);
+    res.json({ promo });
+  };
+  app.put('/api/admin/promos/:id', handleUpdatePromo);
+  app.patch('/api/admin/promos/:id', handleUpdatePromo);
+
+  app.delete('/api/admin/promos/:id', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
+    const removed = store.deletePromo(req.params.id);
+    res.json({ ok: removed > 0 });
   });
 
   /* ---------- reviews ---------- */
@@ -458,9 +652,59 @@ function startWeb() {
     const text = String(b.text || '').trim();
     if (!text) return res.status(400).json({ error: 'Добавьте текст отзыва.' });
     if (text.length > 1000) return res.status(400).json({ error: 'Отзыв ограничен 1000 символов.' });
-    const review = store.createReview({ userId: null, orderId: null, name, rating, text, source: 'admin' });
-    res.json({ review: store.publicReview(review) });
+    const parsedAt = parseTimestamp(b.at, 'Некорректная дата и время отзыва.');
+    if (parsedAt.error) return res.status(400).json({ error: parsedAt.error });
+    const review = store.createReview({
+      userId: null,
+      orderId: null,
+      name,
+      rating,
+      text,
+      source: 'admin',
+      at: parsedAt.provided ? parsedAt.value : undefined,
+    });
+    res.json({ review: { ...store.publicReview(review), orderId: review.orderId ?? null } });
   });
+
+  const handleUpdateReview = (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
+    const existing = store.getReview(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Отзыв не найден' });
+    const b = req.body || {};
+    const patch = {};
+    if (b.name !== undefined) {
+      const name = String(b.name || '').trim().slice(0, 60);
+      if (!name) return res.status(400).json({ error: 'Укажите имя в отзыве.' });
+      patch.name = name;
+    }
+    if (b.rating !== undefined) {
+      const rating = Math.round(Number(b.rating));
+      if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+        return res.status(400).json({ error: 'Оценка: от 1 до 5 звёзд.' });
+      }
+      patch.rating = rating;
+    }
+    if (b.text !== undefined) {
+      const text = String(b.text || '').trim();
+      if (existing.source === 'admin' && !text) return res.status(400).json({ error: 'Добавьте текст отзыва.' });
+      if (text.length > 1000) return res.status(400).json({ error: 'Отзыв ограничен 1000 символов.' });
+      patch.text = text;
+    }
+    if (b.at !== undefined) {
+      const parsedAt = parseTimestamp(b.at, 'Некорректная дата и время отзыва.');
+      if (parsedAt.error) return res.status(400).json({ error: parsedAt.error });
+      if (parsedAt.provided) patch.at = parsedAt.value;
+    }
+    if (!Object.keys(patch).length) {
+      return res.status(400).json({ error: 'Нечего обновлять — передайте хотя бы одно поле.' });
+    }
+    const updated = store.updateReview(existing.id, patch);
+    res.json({ review: { ...store.publicReview(updated), orderId: updated.orderId ?? null } });
+  };
+  app.put('/api/admin/reviews/:id', handleUpdateReview);
+  app.patch('/api/admin/reviews/:id', handleUpdateReview);
 
   app.delete('/api/admin/reviews/:id', (req, res) => {
     const a = needAuth(req, res);
@@ -524,6 +768,7 @@ function startWeb() {
       const o = store.getOrder(req.params.id);
       if (!o) return res.status(404).json({ error: 'Заявка не найдена' });
       const upd = store.updateOrder(o.id, { status: 'cancelled' });
+      if (upd && upd.promoId && !upd.promoReleased) store.releaseOrderPromo(upd.id);
       bus.emit('order_event', { order: upd, type: 'cancelled' });
       res.json({ order: clientOrder(upd) });
     });
@@ -544,6 +789,11 @@ function startWeb() {
   app.use(express.static(publicDir));
   app.use((req, res) => res.sendFile(indexFile));
 
+  return app;
+}
+
+function startWeb() {
+  const app = createApp();
   const server = app.listen(config.port, config.host, () => {
     console.log(
       `[Pricelex Worldwide] web server listening on ${config.host}:${config.port} (port source: ${config.portSource})`
@@ -562,4 +812,4 @@ function startWeb() {
   return server;
 }
 
-module.exports = { startWeb };
+module.exports = { startWeb, createApp, parseTimestamp };

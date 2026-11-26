@@ -34,6 +34,7 @@ function orderText(o) {
     `📥 <b>Заявка #${o.id}</b>\n` +
     `👤 ${esc(o.userName)}${o.userUsername ? ' (@' + esc(o.userUsername) + ')' : ''} · <code>${esc(o.userId)}</code>\n` +
     `🎁 Карта: <b>${esc(dirLabel(o))} $${giftUnits(o)}</b> → выплата ${payoutText(o)}\n` +
+    (o.promoCode ? `🏷 Промокод: <b>${esc(o.promoCode)}</b> (+${o.promoPercent}%)\n` : '') +
     `🎟 Код карты: <code>${esc(o.giftCode || '—')}</code>\n` +
     `✅ Карта должна быть для региона <b>США</b> в валюте <b>USD</b> (другие регионы и валюты не принимаем)\n` +
     `👛 Кошелёк клиента: <code>${esc(o.wallet || '—')}</code>\n` +
@@ -205,6 +206,7 @@ async function onOrderEvent({ order, type }) {
     await broadcast(
       `🔔 <b>Клиент подтвердил сделку по заявке #${order.id}!</b>\n` +
       `🎁 ${esc(dirLabel(order))} <b>$${giftUnits(order)}</b> → ${payoutText(order)}\n` +
+      (order.promoCode ? `🏷 Промокод: <b>${esc(order.promoCode)}</b> (+${order.promoPercent}%)\n` : '') +
       `🎟 Код: <code>${esc(order.giftCode || '—')}</code>\n` +
       `👛 Кошелёк: <code>${esc(order.wallet)}</code>\n\n` +
       `1️⃣ Проверьте карту (регион — <b>США</b>, валюта — <b>USD</b>, номинал и баланс).\n` +
