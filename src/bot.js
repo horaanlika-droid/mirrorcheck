@@ -320,7 +320,9 @@ async function mainMenu(ctx, edit = false) {
     .text('🔗 Ссылки', 'm:links')
     .row()
     .text(`💬 Поддержка${supportCount ? ` (${supportCount})` : ''}`, 'm:support')
-    .text('👥 Админы', 'm:admins');
+    .text('👥 Админы', 'm:admins')
+    .row()
+    .text('⭐ Отзывы', 'm:reviews');
   const text = [
     '🌌 <b>PRICELEX | Official</b> — пульт оператора',
     s.online ? '🟢 Обменник <b>ОНЛАЙН</b>' : '🔴 Обменник <b>ОФФЛАЙН</b>',
@@ -418,6 +420,30 @@ async function statsMenu(ctx, edit = true) {
   else await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
 }
 
+// ⭐ Отзывы: список, ручное добавление и удаление прямо из бота.
+const reviewStars = (n) => '★'.repeat(Math.max(1, Math.min(5, Number(n) || 0))) + '☆'.repeat(5 - Math.max(1, Math.min(5, Number(n) || 0)));
+
+async function reviewsMenu(ctx, edit = true) {
+  const list = store.listReviews(8);
+  const st = store.reviewStats();
+  const head = `⭐ <b>Отзывы</b>\nОценка: <b>${st.count ? st.avg.toFixed(1) : '—'}</b> из 5 · всего: <b>${st.count}</b>\n`;
+  const body = list.length
+    ? '\n' + list
+        .map((r) => {
+          const text = r.text ? (r.text.length > 120 ? r.text.slice(0, 120) + '…' : r.text) : '—';
+          return `#${r.id} · ${reviewStars(r.rating)} · <b>${esc(r.name)}</b> · ${fmtDate(r.at)}\n${esc(text)}`;
+        })
+        .join('\n\n')
+    : '\nПока нет отзывов. Нажмите «➕ Добавить отзыв».';
+  const kb = new InlineKeyboard();
+  for (const r of list.slice(0, 5)) kb.text(`🗑 #${r.id} ${String(r.name).slice(0, 14)}`, `rv:del:${r.id}`).row();
+  kb.text('➕ Добавить отзыв', 'rv:add').row();
+  kb.text('🔄 Обновить', 'm:reviews').text('↩️ Назад', 'm:home');
+  const textStr = head + body + '\n\nОтзывы клиентов появляются после завершённых сделок — из приложения.';
+  if (edit) await ctx.editMessageText(textStr, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
+  else await ctx.reply(textStr, { parse_mode: 'HTML', reply_markup: kb });
+}
+
 async function linksMenu(ctx, edit = true) {
   const s = store.get().settings;
   const url = s.publicUrl || '(появится автоматически после первого открытия сайта)';
@@ -472,6 +498,28 @@ async function handleAdminText(ctx) {
   if (/^\/(cancel|stop)(?:@\w+)?(?:\s|$)|^отмена$/i.test(text)) {
     flows.delete(ctx.from.id);
     return ctx.reply('❌ Ввод отменён.', { reply_markup: homeKb() });
+  }
+  if (f.type === 'review_name') {
+    const name = text.trim();
+    if (name.length < 2 || name.length > 40) return ctx.reply('Имя клиента — от 2 до 40 символов. Например: Алексей К.');
+    flows.set(ctx.from.id, { type: 'review_text', rating: f.rating, name });
+    return ctx.reply(
+      `Оценка: ${reviewStars(f.rating)} · ${esc(name)}\n\nТеперь отправьте текст отзыва (от 5 до 600 символов).\n/cancel — отмена`,
+      { parse_mode: 'HTML' }
+    );
+  }
+  if (f.type === 'review_text') {
+    const body = text.trim();
+    if (body.length < 5 || body.length > 600) return ctx.reply('Текст отзыва — от 5 до 600 символов.');
+    try {
+      store.createReview({ name: f.name, rating: f.rating, text: body, source: 'admin' });
+    } catch (e) {
+      flows.delete(ctx.from.id);
+      return ctx.reply(`✖ ${e.message}`, { reply_markup: homeKb() });
+    }
+    flows.delete(ctx.from.id);
+    await ctx.reply('✅ Отзыв опубликован — он уже виден на вкладке «Отзывы».', { reply_markup: homeKb() });
+    return reviewsMenu(ctx, false).catch(() => {});
   }
   if (f.type === 'support') {
     if (!text || text.length > 2000) return ctx.reply('Сообщение должно содержать от 1 до 2000 символов.');
@@ -538,7 +586,9 @@ function homeKb() {
     .text('🔗 Ссылки', 'm:links')
     .row()
     .text('💬 Поддержка', 'm:support')
-    .text('👥 Админы', 'm:admins');
+    .text('👥 Админы', 'm:admins')
+    .row()
+    .text('⭐ Отзывы', 'm:reviews');
 }
 
 async function adminsMenu(ctx) {
@@ -620,6 +670,33 @@ function register() {
     if (d === 'm:admins') return adminsMenu(ctx);
     if (d === 'm:links') return linksMenu(ctx, true);
     if (d === 'm:support') return supportMenu(ctx, true);
+    if (d === 'm:reviews') return reviewsMenu(ctx, true);
+    if (d === 'rv:add') {
+      const kb = new InlineKeyboard();
+      for (let n = 1; n <= 5; n += 1) kb.text(`${'★'.repeat(n)} ${n}`, `rv:rate:${n}`);
+      await ctx.editMessageText('⭐ Оцените обмен от 1 до 5 — затем укажите имя и текст отзыва.', { reply_markup: kb }).catch(() => {});
+      return;
+    }
+    if (d.startsWith('rv:rate:')) {
+      const rating = Number(d.slice(8));
+      if (!(rating >= 1 && rating <= 5)) return;
+      flows.set(ctx.from.id, { type: 'review_name', rating });
+      return ctx.reply(`Оценка: ${reviewStars(rating)}\n\nОтправьте имя клиента (от 2 до 40 символов).\n/cancel — отмена`, { parse_mode: 'HTML' });
+    }
+    if (d.startsWith('rv:delok:')) {
+      const id = Number(d.slice('rv:delok:'.length));
+      const removed = store.deleteReview(id);
+      return reviewsMenu(ctx, true).then(() => (removed ? ctx.reply(`🗑 Отзыв #${id} удалён.`) : null));
+    }
+    if (d.startsWith('rv:del:')) {
+      const id = Number(d.slice('rv:del:'.length));
+      const r = store.listReviews(200).find((x) => x.id === id);
+      if (!r) return reviewsMenu(ctx, true);
+      return ctx.editMessageText(
+        `Удалить отзыв #${r.id} от ${esc(r.name)}?`,
+        { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🗑 Удалить', `rv:delok:${id}`).text('↩️ Назад', 'm:reviews') }
+      ).catch(() => {});
+    }
 
     if (d.startsWith('sup:')) {
       const userId = d.slice(4);

@@ -37,12 +37,15 @@ const defaults = () => {
   return {
     seq: 1,
     supportSeq: 1,
+    reviewSeq: 1,
     settings,
     admins: [], // дополнительные операторы; владельцы задаются через окружение
     users: {},
     orders: [],
     flags: {},
     support: [], // чат поддержки: { id, userId, from: 'user'|'admin', text, at }
+    // отзывы: клиент — только после завершённой сделки, оператор — вручную из админки
+    reviews: [], // { id, userId, orderId, name, rating, text, at, source: 'client'|'admin', reply, replyAt }
   };
 };
 
@@ -58,6 +61,8 @@ function load() {
       db.settings = Object.assign(defaults().settings, raw.settings || {});
       // Миграция старых баз
       if (!Array.isArray(db.support)) db.support = [];
+      if (!Array.isArray(db.reviews)) db.reviews = [];
+      if (!Number.isFinite(db.reviewSeq)) db.reviewSeq = (db.reviews?.length || 0) + 1;
       if (db.settings.announcement === ANNOUNCE_LEGACY) {
         db.settings.announcement = ANNOUNCE_DEFAULT;
       }
@@ -189,6 +194,7 @@ function createOrder(o) {
       requisites: null,
       receipt: null,
       txUrl: null, // ссылка на блокчейн транзакцию (опционально после подтверждения)
+      review: null, // отзыв клиента по завершённой сделке: { id, rating, at }
       referrer: o.referrer || null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -300,6 +306,109 @@ function countSupportUnread() {
   return getSupportThreads().length;
 }
 
+/* ---------- отзывы ---------- */
+const REVIEW_MAX_TEXT = 600;
+const REVIEW_MAX_NAME = 40;
+
+const normalizeRating = (v) => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n >= 1 && n <= 5 ? n : null;
+};
+
+// Отзыв клиента возможен только по завершённой заявке и только один раз.
+function reviewForOrder(orderId) {
+  const id = Number(orderId);
+  if (!Number.isFinite(id)) return null;
+  return db.reviews.find((r) => Number(r.orderId) === id) || null;
+}
+
+function createReview(input = {}) {
+  const rating = normalizeRating(input.rating);
+  if (!rating) throw new Error('Оценка — целое число от 1 до 5.');
+  const name = String(input.name || 'Клиент').trim().slice(0, REVIEW_MAX_NAME) || 'Клиент';
+  const text = String(input.text || '').trim().slice(0, REVIEW_MAX_TEXT);
+  const orderId = Number(input.orderId) || null;
+  if (orderId && reviewForOrder(orderId)) throw new Error('По этой заявке отзыв уже оставлен.');
+  return mutate((d) => {
+    const review = {
+      id: d.reviewSeq++,
+      userId: input.userId != null ? String(input.userId) : null,
+      orderId,
+      name,
+      rating,
+      text,
+      at: Date.now(),
+      source: input.source === 'admin' ? 'admin' : 'client',
+      reply: null,
+      replyAt: null,
+    };
+    d.reviews.push(review);
+    // В заявке держим ссылку на отзыв — клиент видит, что уже оценил обмен.
+    if (orderId) {
+      const o = d.orders.find((x) => x.id === orderId);
+      const existed = o.review || null;
+      if (o && !existed) o.review = { id: review.id, rating: review.rating, at: review.at };
+    }
+    return review;
+  });
+}
+
+// Свежие отзывы первыми: витрина в приложении и список в админке.
+function listReviews(limit = 100) {
+  return [...db.reviews]
+    .sort((a, b) => (b.at || 0) - (a.at || 0))
+    .slice(0, Math.max(1, Number(limit) || 100));
+}
+
+function reviewStats() {
+  const all = db.reviews;
+  const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  let sum = 0;
+  for (const r of all) {
+    const n = normalizeRating(r.rating);
+    if (!n) continue;
+    dist[n] += 1;
+    sum += n;
+  }
+  return {
+    count: all.length,
+    avg: all.length ? sum / all.length : 0,
+    dist,
+  };
+}
+
+function updateReview(id, patch = {}) {
+  return mutate((d) => {
+    const r = d.reviews.find((x) => x.id === Number(id));
+    if (!r) return null;
+    if (patch.reply !== undefined) {
+      const reply = String(patch.reply || '').trim().slice(0, REVIEW_MAX_TEXT);
+      r.reply = reply || null;
+      r.replyAt = reply ? Date.now() : null;
+    }
+    if (patch.text !== undefined) r.text = String(patch.text || '').trim().slice(0, REVIEW_MAX_TEXT);
+    if (patch.rating !== undefined) {
+      const n = normalizeRating(patch.rating);
+      if (n) r.rating = n;
+    }
+    if (patch.name !== undefined) r.name = String(patch.name || 'Клиент').trim().slice(0, REVIEW_MAX_NAME) || 'Клиент';
+    return r;
+  });
+}
+
+function deleteReview(id) {
+  return mutate((d) => {
+    const idx = d.reviews.findIndex((x) => x.id === Number(id));
+    if (idx < 0) return null;
+    const [removed] = d.reviews.splice(idx, 1);
+    if (removed && removed.orderId) {
+      const o = d.orders.find((x) => x.id === Number(removed.orderId));
+      if (o && o.review && Number(o.review.id) === Number(removed.id)) o.review = null;
+    }
+    return removed;
+  });
+}
+
 load();
 
 module.exports = {
@@ -321,4 +430,10 @@ module.exports = {
   getSupportMessages,
   getSupportThreads,
   countSupportUnread,
+  reviewForOrder,
+  createReview,
+  listReviews,
+  reviewStats,
+  updateReview,
+  deleteReview,
 };

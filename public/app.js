@@ -51,7 +51,7 @@
   // dir — выбранное направление (ключ из /api/settings → rates[]).
   // screen — на каком под-экране обмена мы находимся: «picker» (выбор активов) или «form» (форма обмена).
   // sheet — какая шторка открыта (crypto | gift) или null.
-  const S = { settings: null, me: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null };
+  const S = { settings: null, me: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], reviews: [], reviewStats: null, screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, adminReviews: null, adminReviewsStats: null };
 
   // Резервный реестр направлений: нужен, если сервер старой версии не прислал rates.
   const giftFallback = (key, label, symbol, coin) => ({
@@ -257,6 +257,7 @@
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>',
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
     users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.4 3.4-5 6.5-5s5.7 1.6 6.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 15.2c2.6.3 4.4 1.8 5 4.8"/></svg>',
+    star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3.6 2.6 5.3 5.9.9-4.3 4.2 1 5.9-5.2-2.8-5.2 2.8 1-5.9L3.5 9.8l5.9-.9z"/></svg>',
     user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.6" width="18" height="12.4" rx="2.6"/><path d="M9.2 7.6V6.1A2.1 2.1 0 0 1 11.3 4h1.4a2.1 2.1 0 0 1 2.1 2.1v1.5"/><path d="M3 13.2h18"/><path d="M12 12v2.6"/></svg>',
     chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.6" width="18" height="12.8" rx="4.1"/><path d="M8.4 17.4v3.9c0 .7.8 1.1 1.3.6l3.9-4.1"/><circle cx="8.6" cy="11" r="1.05" fill="currentColor" stroke="none"/><circle cx="12" cy="11" r="1.05" fill="currentColor" stroke="none"/><circle cx="15.4" cy="11" r="1.05" fill="currentColor" stroke="none"/></svg>',
     down: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16"/><path d="m6 14 6 6 6-6"/></svg>',
@@ -278,18 +279,11 @@
     $('#hdrStatus').innerHTML = html;
   }
 
-  function renderAnnounce() {
-    const el = $('#announce');
-    const t = S.settings && S.settings.announcement;
-    if (t) { el.classList.remove('hidden'); el.textContent = t; return; }
-    el.classList.remove('hidden');
-  }
-
   function renderNav() {
     const items = [
       ['exchange', 'Обмен', ICONS.swap],
       ['history', 'История', ICONS.clock],
-      ['refs', 'Рефералы', ICONS.users],
+      ['reviews', 'Отзывы', ICONS.star],
       ['support', 'Чат', ICONS.chat],
       ['profile', 'Профиль', ICONS.user],
     ];
@@ -305,7 +299,7 @@
         $('#view-' + S.tab).classList.remove('hidden');
         renderNav();
         if (S.tab === 'history') renderHistory();
-        if (S.tab === 'refs') renderRefs();
+        if (S.tab === 'reviews') renderReviews();
         if (S.tab === 'profile') renderProfile();
         if (S.tab === 'support') renderSupport();
         syncTgBack();
@@ -499,13 +493,6 @@
           </div>
           <div class="picker-empty${cryptoOn || giftOn ? ' hidden' : ''}" id="pickerEmpty">Направления временно недоступны.<br>Загляните чуть позже.</div>
           <div class="telegram-cta"><span><b>Начать обмен прямо сейчас</b><small>Выберите карту и номинал</small></span><span class="telegram-cta-mark">↗</span></div>
-          <div class="advantages">
-            <div class="advantages-title">Преимущества PRICELEX</div>
-            <div class="advantages-item"><b>Чёткий расчёт</b> — сумма выплаты в BTC видна до создания заявки.</div>
-            <div class="advantages-item"><b>Личный подход</b> — оператор сопровождает обмен от заявки до выплаты.</div>
-            <div class="advantages-item"><b>Выплата в Bitcoin</b> — на указанный вами кошелёк, без банков и посредников.</div>
-            <div class="advantages-item"><b>Без блокировок</b> — обмен картами не блокирует счета и минимизирует цифровой след.</div>
-          </div>
           <div class="buy-note" role="note">
             <div class="gain-note-title"><span class="gain-note-ic" aria-hidden="true">🛒</span>Где купить подарочные карты</div>
             <div class="gain-item"><span class="gain-num">1</span><p><b>Ozon</b> — ozon.ru, подарочные карты Google Play, iTunes, Xbox, Apple Store.</p></div>
@@ -911,10 +898,12 @@
               <a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a>
               <button class="btn btn-ghost btn-sm" style="margin-top:10px" id="cpTx">${ICONS.copy}<span>Копировать ссылку</span></button>
             </div>` : `<div class="note" style="margin-top:12px">Выплата отправлена вручную. Ссылка на транзакцию появится здесь, если оператор её добавит.</div>`}
+          ${reviewBlock(o)}
           <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Новая заявка</button>
         </div>`;
       const cpTx = $('#cpTx');
       if (cpTx) cpTx.addEventListener('click', () => copyText(o.txUrl, 'Ссылка скопирована'));
+      wireReviewBlock(o);
       $('#btnNew').addEventListener('click', resetToForm);
       return true;
     }
@@ -1095,31 +1084,174 @@
     renderOrderStage();
   }
 
-  function renderRefs() {
-    const s = S.settings;
-    const v = $('#view-refs');
-    const link = s.botUsername ? `https://t.me/${s.botUsername}?startapp=ref${S.me.id}` : null;
+  /* ---------- отзывы + реферальная ссылка на одной вкладке ---------- */
+  const STAR = '★';
+  const starsHtml = (rating, cls = '') => {
+    const n = Math.max(0, Math.min(5, Math.round(Number(rating) || 0)));
+    let out = '';
+    for (let i = 1; i <= 5; i += 1) out += `<i class="${i <= n ? 'on' : ''}">${STAR}</i>`;
+    return `<span class="rev-stars ${cls}" aria-label="${n} из 5">${out}</span>`;
+  };
+  // Кэш витрины: рисуем сразу, затем один раз уточняем с сервера.
+  let reviewsFetching = false;
+  async function refreshReviews() {
+    if (reviewsFetching) return false;
+    reviewsFetching = true;
+    try {
+      const r = await api('/api/reviews');
+      const next = { reviews: r.reviews || [], stats: r.stats || null };
+      const changed = JSON.stringify(next) !== JSON.stringify({ reviews: S.reviews, stats: S.reviewStats });
+      S.reviews = next.reviews;
+      S.reviewStats = next.stats;
+      return changed;
+    } catch (e) {
+      return false;
+    } finally {
+      reviewsFetching = false;
+    }
+  }
+  function renderReviews() {
+    const s = S.settings || {};
+    const v = $('#view-reviews');
+    if (!v) return;
+    const me = S.me || {};
+    const list = S.reviews || [];
+    const stats = S.reviewStats || { count: list.length, avg: 0, dist: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
+    const link = s.botUsername ? `https://t.me/${s.botUsername}?startapp=ref${me.id}` : null;
+    const total = Number(stats.count) || list.length || 0;
+    const bars = [5, 4, 3, 2, 1]
+      .map((n) => {
+        const c = Number((stats.dist || {})[n]) || 0;
+        const w = total ? Math.round((c / total) * 100) : 0;
+        return `<div class="rev-bar"><span>${n} ★</span><i><b style="width:${w}%"></b></i><em>${c}</em></div>`;
+      })
+      .join('');
+    const items = list.length
+      ? list
+          .map(
+            (r) => `<div class="rev-item">
+              <div class="rev-head">
+                <b>${esc(r.name || 'Клиент')}</b>
+                ${starsHtml(r.rating)}
+                <small>${fmtDate(r.at)}</small>
+              </div>
+              ${r.text ? `<div class="rev-text">${esc(r.text).replace(/\n/g, '<br>')}</div>` : ''}
+              ${r.reply ? `<div class="rev-reply"><b>PRICELEX</b><span>${esc(r.reply).replace(/\n/g, '<br>')}</span></div>` : ''}
+            </div>`
+          )
+          .join('')
+      : `<div class="empty"><div class="e-ic">${STAR}</div>Отзывов пока нет.<br>Совершите обмен — и оставьте первый отзыв.</div>`;
     v.innerHTML = `
+      <div class="card rev-summary">
+        <div class="rev-score">
+          <b>${total ? Number(stats.avg || 0).toFixed(1) : '—'}</b>
+          ${starsHtml(Math.round(Number(stats.avg) || 0))}
+          <span>${total ? `${total} ${plural(total, 'отзыв', 'отзыва', 'отзывов')}` : 'пока без отзывов'}</span>
+        </div>
+        <div class="rev-bars">${bars}</div>
+      </div>
       <div class="card">
-        <div class="card-title">Реферальная программа</div>
+        <div class="card-title">Отзывы клиентов</div>
+        <div class="rev-list">${items}</div>
+        <div class="f-hint" style="margin-top:10px">Отзыв можно оставить после завершённой сделки — в карточке заявки.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Реферальная ссылка</div>
+        <div class="about" style="font-size:12.5px;line-height:1.6"><b>${s.refPercent ?? 1}%</b> с каждого обмена друга — без лимитов. Приглашено: <b>${me.referredCount || 0}</b></div>
         ${
           link
-            ? `<div class="ref-link" id="refLink">${esc(link)}</div>
-               <button class="btn btn-primary" style="margin-top:10px" id="cpRef">${ICONS.copy}<span>Скопировать ссылку</span></button>`
+            ? `<div class="ref-link" id="rvRefLink" style="margin-top:10px">${esc(link)}</div>
+               <div class="copy-row">
+                 <button class="btn btn-ghost btn-sm" id="rvCopyRef">${ICONS.copy}<span>Копировать ссылку</span></button>
+               </div>`
             : `<div class="empty">Реферальная ссылка появится после подключения бота.</div>`
         }
-        <div class="ref-stats">
-          <div class="ref-stat"><div class="v">${S.me.referredCount || 0}</div><div class="l">приглашено</div></div>
-          <div class="ref-stat"><div class="v">${s.refPercent}%</div><div class="l">бонус с обмена</div></div>
-        </div>
         <div class="steps">
           <div class="step"><div class="n">1</div>Отправьте ссылку другу — она закрепит его за вами навсегда.</div>
           <div class="step"><div class="n">2</div>Друг совершает обмен в PRICELEX через ваше приложение.</div>
-          <div class="step"><div class="n">3</div>Вы получаете ${s.refPercent}% с каждого его обмена — без лимитов.</div>
+          <div class="step"><div class="n">3</div>Вы получаете ${s.refPercent ?? 1}% с каждого его обмена — без лимитов.</div>
         </div>
       </div>`;
-    const cp = $('#cpRef');
+    const cp = $('#rvCopyRef');
     if (cp) cp.addEventListener('click', () => copyText(link, 'Ссылка скопирована'));
+    refreshReviews().then((changed) => {
+      if (changed && S.tab === 'reviews') renderReviews();
+    });
+  }
+  // Склонение числительных: 1 отзыв · 2 отзыва · 5 отзывов.
+  function plural(n, one, few, many) {
+    const a = Math.abs(n) % 100;
+    const b = a % 10;
+    if (a > 10 && a < 20) return many;
+    if (b > 1 && b < 5) return few;
+    if (b === 1) return one;
+    return many;
+  }
+
+  // Форма отзыва в завершённой заявке: оценка 1–5 и необязательный текст.
+  let reviewRating = 5;
+  function reviewBlock(o) {
+    if (o.review) {
+      return `<div class="rev-ask done">
+        <div class="rev-ask-title">Спасибо за отзыв ✦</div>
+        <div class="rev-ask-sub">Вы оценили обмен: ${starsHtml(o.review.rating)}</div>
+      </div>`;
+    }
+    return `<div class="rev-ask" id="revAsk">
+      <div class="rev-ask-title">Оцените обмен</div>
+      <div class="rev-ask-sub">Отзыв появится на вкладке «Отзывы» — он поможет другим клиентам.</div>
+      <div class="rev-rate" id="revRate" role="radiogroup" aria-label="Оценка обмена">
+        ${[1, 2, 3, 4, 5].map((n) => `<button type="button" class="rev-rate-btn${n <= reviewRating ? ' on' : ''}" data-v="${n}" role="radio" aria-checked="${n === reviewRating ? 'true' : 'false'}" aria-label="${n} из 5">${STAR}</button>`).join('')}
+      </div>
+      <div class="f-box" style="margin-top:8px"><textarea id="revText" rows="3" maxlength="600" placeholder="Расскажите, как прошёл обмен (необязательно)"></textarea></div>
+      <div class="f-err" id="revErr"></div>
+      <button class="btn btn-ghost" style="margin-top:8px" id="revSend">${ICONS.star}<span>Отправить отзыв</span></button>
+    </div>`;
+  }
+  function wireReviewBlock(o) {
+    const rate = $('#revRate');
+    if (!rate) return;
+    reviewRating = 5;
+    const paint = () => {
+      rate.querySelectorAll('.rev-rate-btn').forEach((b) => {
+        const on = Number(b.dataset.v) <= reviewRating;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', Number(b.dataset.v) === reviewRating ? 'true' : 'false');
+      });
+    };
+    rate.querySelectorAll('.rev-rate-btn').forEach((b) =>
+      b.addEventListener('click', () => {
+        reviewRating = Number(b.dataset.v) || 5;
+        haptic('light');
+        paint();
+        const err = $('#revErr');
+        if (err) err.textContent = '';
+      })
+    );
+    const send = $('#revSend');
+    if (!send) return;
+    send.addEventListener('click', async () => {
+      const err = $('#revErr');
+      if (err) err.textContent = '';
+      send.disabled = true;
+      haptic('medium');
+      try {
+        const text = ($('#revText') && $('#revText').value) || '';
+        const r = await api(`/api/order/${o.id}/review`, { method: 'POST', body: { rating: reviewRating, text } });
+        S.order = r.order;
+        const i = S.orders.findIndex((x) => x.id === r.order.id);
+        if (i >= 0) S.orders[i] = r.order; else S.orders.unshift(r.order);
+        S.reviews = [];
+        S.reviewStats = null;
+        toast('Спасибо за отзыв ✦');
+        haptic('heavy');
+        renderOrderStage();
+      } catch (e) {
+        if (err) err.textContent = e.message;
+        toast(e.message || 'Не удалось отправить отзыв');
+        send.disabled = false;
+      }
+    });
   }
 
   function renderProfile() {
@@ -1131,7 +1263,6 @@
     const doneOrders = S.orders.filter((o) => o.status === 'completed');
     const volume = doneOrders.reduce((sum, o) => sum + Number(o.units || 0), 0);
     const opLink = 'https://t.me/' + String(s.operator || '').replace(/^@/, '');
-    const link = s.botUsername ? `https://t.me/${s.botUsername}?startapp=ref${me.id}` : null;
     v.innerHTML = `
       <div class="card lc-head">
         <div class="lc-id">
@@ -1146,13 +1277,9 @@
         <div class="lc-stat"><b>$${volume}</b><span>выкуплено карт</span></div>
       </div>
       <div class="card">
-        <div class="card-title">Реферальная программа</div>
-        <div class="about" style="font-size:12.5px;line-height:1.6"><b>${s.refPercent}%</b> с каждого обмена друга — без лимитов. Приглашено: <b>${me.referredCount || 0}</b></div>
-        ${link ? `<div class="ref-link" id="lcRefLink" style="margin-top:10px">${esc(link)}</div>
-        <div class="copy-row">
-          <button class="btn btn-ghost btn-sm" id="lcCopyRef">${ICONS.copy}<span>Копировать ссылку</span></button>
-          <button class="btn btn-ghost btn-sm" id="lcGoRefs">${ICONS.right}<span>Как это работает</span></button>
-        </div>` : ''}
+        <div class="card-title">Отзывы и рефералы</div>
+        <div class="about" style="font-size:12.5px;line-height:1.6">Отзывы клиентов и ваша реферальная ссылка — на вкладке «Отзывы».</div>
+        <button class="btn btn-ghost btn-sm" style="margin-top:10px" id="lcGoReviews">${ICONS.star}<span>Открыть отзывы и ссылку</span></button>
       </div>
       ${S.me.isAdmin ? `
       <button class="btn btn-ghost lc-admin-btn" id="lcOpenAdmin">🛠 <span>Админка и настройки обменника</span></button>` : ''}
@@ -1166,10 +1293,8 @@
         <button class="btn btn-ghost" style="margin-top:10px" id="goSupport">${ICONS.chat}<span>Открыть чат поддержки</span></button>
       </div>
       <div class="card"><div class="about" style="text-align:center;color:var(--mut);font-size:11.5px">PRICELEX — быстро. Надёжно. Выгодно. ✦</div></div>`;
-    const copy = $('#lcCopyRef');
-    if (copy) copy.addEventListener('click', () => copyText(link, 'Ссылка скопирована'));
-    const goRefs = $('#lcGoRefs');
-    if (goRefs) goRefs.addEventListener('click', () => goTab('refs'));
+    const goReviews = $('#lcGoReviews');
+    if (goReviews) goReviews.addEventListener('click', () => goTab('reviews'));
     const go = $('#goSupport');
     if (go) go.addEventListener('click', () => goTab('support'));
     const openAdmin = $('#lcOpenAdmin');
@@ -1237,6 +1362,7 @@
     syncAdminTabs();
     syncTgBack();
     loadAdminSettings();
+    if (adminTab === 'reviews') loadAdminReviews();
   }
   function closeAdminSheet() {
     const sheet = $('#adminSheet');
@@ -1290,6 +1416,63 @@
     $('#admChatLink').value = A.chat || '';
     $('#admChatErr').textContent = '';
   }
+  /* ---------- админка: отзывы ---------- */
+  async function loadAdminReviews(force = false) {
+    if (S.adminReviews && !force) { renderAdminReviews(); return; }
+    try {
+      const r = await api('/api/admin/reviews');
+      S.adminReviews = r.reviews || [];
+      S.adminReviewsStats = r.stats || null;
+      renderAdminReviews();
+    } catch (e) {
+      toast('Не удалось загрузить отзывы');
+    }
+  }
+  function renderAdminReviews() {
+    const list = S.adminReviews || [];
+    const count = $('#admRevCount');
+    if (count) {
+      const st = S.adminReviewsStats;
+      count.textContent = st && st.count ? `${st.count} · средняя ${Number(st.avg || 0).toFixed(1)} ★` : '';
+    }
+    const box = $('#admRevList');
+    if (!box) return;
+    box.innerHTML = list.length
+      ? list
+          .map(
+            (r) => `<div class="adm-rev">
+              <div class="adm-rev-top">
+                <b>${esc(r.name || 'Клиент')}</b>
+                ${starsHtml(r.rating)}
+                <small>${fmtDate(r.at)}${r.source === 'admin' ? ' · вручную' : ''}${r.orderId ? ` · #${r.orderId}` : ''}</small>
+                <button class="adm-rev-del" data-del="${r.id}" aria-label="Удалить отзыв" title="Удалить">✕</button>
+              </div>
+              ${r.text ? `<div class="adm-rev-text">${esc(r.text)}</div>` : ''}
+            </div>`
+          )
+          .join('')
+      : '<div class="adm-note">Отзывов пока нет — добавьте первый выше.</div>';
+    box.querySelectorAll('[data-del]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        haptic('light');
+        try {
+          const r = await api(`/api/admin/reviews/${b.dataset.del}/delete`, { method: 'POST' });
+          S.adminReviews = r.reviews || [];
+          S.adminReviewsStats = r.stats || null;
+          renderAdminReviews();
+          S.reviews = [];
+          S.reviewStats = null;
+          if (S.tab === 'reviews') renderReviews();
+          toast('Отзыв удалён');
+        } catch (e) {
+          toast(e.message || 'Не удалось удалить отзыв');
+          b.disabled = false;
+        }
+      })
+    );
+  }
+
   async function loadAdminSettings(force = false) {
     if (S.admin && !force) { renderAdmin(); return; }
     try {
@@ -1324,7 +1507,12 @@
   }
   function wireAdminSheet() {
     document.querySelectorAll('#admTabs .adm-tab').forEach((b) =>
-      b.addEventListener('click', () => { adminTab = b.dataset.tab; haptic('light'); syncAdminTabs(); })
+      b.addEventListener('click', () => {
+        adminTab = b.dataset.tab;
+        haptic('light');
+        syncAdminTabs();
+        if (adminTab === 'reviews') loadAdminReviews();
+      })
     );
     const closeBtn = $('#adminSheetClose');
     if (closeBtn) closeBtn.addEventListener('click', () => { haptic('light'); closeAdminSheet(); });
@@ -1364,6 +1552,35 @@
         btn.disabled = false;
       }
     });
+    const revAdd = $('#admRevAdd');
+    if (revAdd) revAdd.addEventListener('click', async () => {
+      const err = $('#admRevErr');
+      err.textContent = '';
+      const name = ($('#admRevName').value || '').trim();
+      const text = ($('#admRevText').value || '').trim();
+      const rating = Number($('#admRevRating').value) || 5;
+      if (name.length < 2) { err.textContent = 'Укажите имя клиента (минимум 2 символа).'; return; }
+      if (text.length < 5) { err.textContent = 'Добавьте текст отзыва (минимум 5 символов).'; return; }
+      revAdd.disabled = true;
+      haptic('medium');
+      try {
+        const r = await api('/api/admin/reviews', { method: 'POST', body: { name, text, rating } });
+        S.adminReviews = r.reviews || [];
+        S.adminReviewsStats = r.stats || null;
+        renderAdminReviews();
+        $('#admRevName').value = '';
+        $('#admRevText').value = '';
+        $('#admRevRating').value = '5';
+        S.reviews = [];
+        S.reviewStats = null;
+        if (S.tab === 'reviews') renderReviews();
+        toast('Отзыв добавлен ✅');
+      } catch (e) {
+        err.textContent = e.message || 'Не удалось добавить отзыв';
+      } finally {
+        revAdd.disabled = false;
+      }
+    });
     $('#admChatLink').addEventListener('input', () => { $('#admChatErr').textContent = ''; });
     $('#admChatSave').addEventListener('click', (e) => {
       e.currentTarget.disabled = true;
@@ -1382,7 +1599,7 @@
     $('#view-' + tab).classList.remove('hidden');
     renderNav();
     if (tab === 'history') renderHistory();
-    if (tab === 'refs') renderRefs();
+    if (tab === 'reviews') renderReviews();
     if (tab === 'profile') renderProfile();
     if (tab === 'support') renderSupport();
     syncTgBack();
@@ -1568,15 +1785,14 @@
     if (JSON.stringify(s) !== JSON.stringify(S.settings)) {
       S.settings = s;
       renderHeader();
-      renderAnnounce();
       renderFormMeta();
-      if (S.tab === 'refs') renderRefs();
+      if (S.tab === 'reviews') renderReviews();
       if (S.tab === 'profile') renderProfile();
     }
   }
 
   async function pollProfile() {
-    if (S.tab !== 'history' && S.tab !== 'refs' && S.tab !== 'profile') return;
+    if (S.tab !== 'history' && S.tab !== 'reviews' && S.tab !== 'profile') return;
     const m = await api('/api/me');
     S.orders = m.orders;
     S.me = m.me;
@@ -1590,7 +1806,7 @@
       }
     }
     if (S.tab === 'history') renderHistory();
-    else if (S.tab === 'refs') renderRefs();
+    else if (S.tab === 'reviews') renderReviews();
     else if (S.tab === 'profile') renderProfile();
   }
 
@@ -1649,16 +1865,15 @@
         S.support = sup.messages || [];
       } catch {}
     } catch (e) {
-      document.getElementById('announce').textContent = '⚠️ Не удалось подключиться к серверу. Обновите страницу.';
+      syncStatus('⚠️ Не удалось подключиться к серверу. Обновите страницу.');
       hidePreloader();
       return;
     }
     renderHeader();
-    renderAnnounce();
     renderNav();
     renderExchange();
     renderHistory();
-    renderRefs();
+    renderReviews();
     renderSupport();
     renderProfile();
     // show correct initial tab

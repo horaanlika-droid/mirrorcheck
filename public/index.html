@@ -41,9 +41,6 @@
     <header class="hdr">
       <div class="hdr-star">PRIVATE GIFT CARD BROKERAGE</div>
       <img class="hdr-logo" src="/logo.png" alt="pricelex" width="220" />
-      <div class="hdr-sub">GIFT CARDS · USD → BTC</div>
-      <div class="hdr-info">Google Play · iTunes · Xbox · Apple Store — США, USD → BTC</div>
-      <div id="announce" class="announce">Почему принимать оплату подарочными картами выгодно: быстрый и прозрачный обмен на Bitcoin, без блокировок счетов и с минимальным цифровым следом — выплата на ваш кошелёк. Карты региона США в USD ($).</div>
       <div class="hdr-status" id="hdrStatus"></div>
     </header>
 
@@ -52,7 +49,7 @@
     <main id="main">
       <section id="view-exchange" class="view"></section>
       <section id="view-history" class="view hidden"></section>
-      <section id="view-refs" class="view hidden"></section>
+      <section id="view-reviews" class="view hidden"></section>
       <section id="view-support" class="view hidden"></section>
       <section id="view-profile" class="view hidden"></section>
     </main>
@@ -122,6 +119,7 @@
       <div class="adm-tabs" id="admTabs" role="tablist">
         <button class="adm-tab on" data-tab="gift" role="tab">🎁 Карты</button>
         <button class="adm-tab" data-tab="chat" role="tab">💬 Чат</button>
+        <button class="adm-tab" data-tab="reviews" role="tab">⭐ Отзывы</button>
       </div>
 
       <div class="adm-pane hidden" data-pane="gift">
@@ -140,6 +138,28 @@
         <div class="f-box"><input id="admChatLink" placeholder="https://t.me/… или @юзернейм" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
         <div class="f-err" id="admChatErr"></div>
         <button class="btn btn-primary" style="margin-top:10px" id="admChatSave"><span>Сохранить ссылку</span></button>
+      </div>
+
+      <div class="adm-pane hidden" data-pane="reviews">
+        <div class="adm-note">Отзывы появляются на вкладке «Отзывы» в приложении. Клиент может оставить отзыв после завершённой сделки, а оператор — добавить отзыв вручную или удалить любой.</div>
+        <div class="adm-review-form">
+          <label class="f-label" for="admRevName"><span>Имя клиента</span></label>
+          <div class="f-box"><input id="admRevName" maxlength="40" placeholder="Например, Алексей" autocomplete="off"></div>
+          <label class="f-label" for="admRevRating" style="margin-top:10px"><span>Оценка</span></label>
+          <div class="f-box"><select id="admRevRating">
+            <option value="5">★★★★★ — 5</option>
+            <option value="4">★★★★☆ — 4</option>
+            <option value="3">★★★☆☆ — 3</option>
+            <option value="2">★★☆☆☆ — 2</option>
+            <option value="1">★☆☆☆☆ — 1</option>
+          </select></div>
+          <label class="f-label" for="admRevText" style="margin-top:10px"><span>Текст отзыва</span></label>
+          <div class="f-box"><textarea id="admRevText" rows="3" maxlength="600" placeholder="Обменял карту $50 — BTC пришли за 10 минут."></textarea></div>
+          <div class="f-err" id="admRevErr"></div>
+          <button class="btn btn-primary" style="margin-top:10px" id="admRevAdd"><span>Добавить отзыв</span></button>
+        </div>
+        <div class="adm-rev-head"><b>Опубликованные отзывы</b><span id="admRevCount"></span></div>
+        <div class="adm-review-list" id="admRevList"></div>
       </div>
     </div>
   </div>

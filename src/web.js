@@ -27,9 +27,22 @@ const clientOrder = (o) => ({
   requisites: o.requisites,
   receipt: o.receipt || null,
   txUrl: o.txUrl || null,
+  review: o.review || null,
   createdAt: o.createdAt,
   updatedAt: o.updatedAt,
 });
+
+// Отзыв для витрины: без внутренних id пользователя и заказа.
+const publicReview = (r) => ({
+  id: r.id,
+  name: r.name,
+  rating: r.rating,
+  text: r.text,
+  at: r.at,
+  reply: r.reply || null,
+  replyAt: r.replyAt || null,
+});
+const REVIEW_TEXT_MAX = 600;
 
 // isAdmin нужен приложению, чтобы показать «Админку» (правка ссылки на чат).
 // В демо-режиме (BOT_TOKEN не задан) админка открыта всем — как и демо-пульт оператора.
@@ -376,6 +389,93 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
       return res.json({ order: clientOrder(upd) });
     }
     res.json({ order: clientOrder(o) });
+  });
+
+  /* ---------- отзывы ---------- */
+  // Публичная витрина отзывов + средняя оценка и распределение.
+  app.get('/api/reviews', (_req, res) => {
+    res.json({ reviews: store.listReviews(100).map(publicReview), stats: store.reviewStats() });
+  });
+
+  // Клиент оставляет отзыв только по своей завершённой заявке и только один раз.
+  app.post('/api/order/:id/review', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const found = store.getOrder(req.params.id);
+    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
+    const o = store.expireIfNeeded(found);
+    if (o.status !== 'completed') {
+      return res.status(400).json({ error: 'Отзыв можно оставить только после завершённой сделки.' });
+    }
+    if (store.reviewForOrder(o.id)) {
+      return res.status(400).json({ error: 'Отзыв по этой заявке уже оставлен.' });
+    }
+    const rating = Number(req.body?.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'Поставьте оценку от 1 до 5.' });
+    }
+    const text = String(req.body?.text || '').trim();
+    if (text.length > REVIEW_TEXT_MAX) {
+      return res.status(400).json({ error: `Отзыв слишком длинный (до ${REVIEW_TEXT_MAX} символов).` });
+    }
+    try {
+      store.createReview({ userId: o.userId, orderId: o.id, name: o.userName || 'Клиент', rating, text, source: 'client' });
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+    res.json({
+      order: clientOrder(store.getOrder(o.id)),
+      stats: store.reviewStats(),
+    });
+  });
+
+  // Админка: список, ручное добавление, ответ и удаление отзывов.
+  app.get('/api/admin/reviews', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора PRICELEX' });
+    res.json({ reviews: store.listReviews(200), stats: store.reviewStats() });
+  });
+
+  app.post('/api/admin/reviews', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора PRICELEX' });
+    const name = String(req.body?.name || '').trim().slice(0, 40);
+    const text = String(req.body?.text || '').trim();
+    const rating = Number(req.body?.rating);
+    if (name.length < 2) return res.status(400).json({ error: 'Укажите имя клиента (минимум 2 символа).' });
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'Оценка — целое число от 1 до 5.' });
+    }
+    if (text.length < 5) return res.status(400).json({ error: 'Добавьте текст отзыва (минимум 5 символов).' });
+    if (text.length > REVIEW_TEXT_MAX) return res.status(400).json({ error: `Отзыв слишком длинный (до ${REVIEW_TEXT_MAX} символов).` });
+    try {
+      store.createReview({ name, text, rating, source: 'admin' });
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+    res.json({ reviews: store.listReviews(200), stats: store.reviewStats() });
+  });
+
+  app.post('/api/admin/reviews/:id/reply', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора PRICELEX' });
+    const reply = String(req.body?.reply || '').trim();
+    if (reply.length > REVIEW_TEXT_MAX) return res.status(400).json({ error: `Ответ слишком длинный (до ${REVIEW_TEXT_MAX} символов).` });
+    const updated = store.updateReview(req.params.id, { reply });
+    if (!updated) return res.status(404).json({ error: 'not found' });
+    res.json({ review: updated, reviews: store.listReviews(200), stats: store.reviewStats() });
+  });
+
+  app.post('/api/admin/reviews/:id/delete', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора PRICELEX' });
+    const removed = store.deleteReview(req.params.id);
+    if (!removed) return res.status(404).json({ error: 'not found' });
+    res.json({ reviews: store.listReviews(200), stats: store.reviewStats() });
   });
 
   /* ---------- support chat ---------- */

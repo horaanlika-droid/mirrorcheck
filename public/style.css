@@ -57,16 +57,6 @@ body {
   margin: 6px auto 1px;
   filter: drop-shadow(0 0 26px rgba(142, 223, 235, 0.22));
 }
-.hdr-sub { font-size: 8.5px; letter-spacing: .4em; margin-left: .4em; color: var(--mut); margin-top: 3px; font-weight: 600; }
-.hdr-info {
-  font-size: 8.5px; letter-spacing: .14em; color: #8edfeb; margin-top: 2px; font-weight: 600;
-  text-shadow: 0 0 10px rgba(142, 223, 235, 0.35);
-}
-#announce {
-  font-size: 11px; line-height: 1.45; color: #f1f7fa; margin-top: 8px; letter-spacing: .02em;
-  text-align: center;
-}
-#announce b { color: #8edfeb; }
 .hdr-status { margin-top: 10px; }
 .pill {
   display: inline-flex; align-items: center; gap: 7px;
@@ -342,6 +332,75 @@ input[readonly] { color: #9fe8d6 !important; }
 /* ---------- инфо ---------- */
 .about { font-size: 13px; line-height: 1.65; color: #f1f7fa; }
 .about b { color: #fff; }
+
+/* ---------- отзывы ---------- */
+.rev-summary { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.rev-score { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 104px; }
+.rev-score > b { font-size: 40px; line-height: 1; font-weight: 800; color: #f1f7fa; }
+.rev-score > span:last-child { font-size: 10.5px; color: var(--mut); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; text-align: center; }
+.rev-stars { display: inline-flex; gap: 2px; line-height: 1; }
+.rev-stars i { font-style: normal; font-size: 13px; color: #2c434d; }
+.rev-stars i.on { color: #ffc757; text-shadow: 0 0 10px rgba(255, 199, 87, .45); }
+.rev-bars { flex: 1; min-width: 170px; display: flex; flex-direction: column; gap: 5px; }
+.rev-bar { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--mut); font-weight: 700; }
+.rev-bar > span { width: 26px; flex: none; }
+.rev-bar > i { flex: 1; height: 5px; border-radius: 999px; background: rgba(34, 56, 64, .8); overflow: hidden; }
+.rev-bar > i > b { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #00dccb, #8edfeb); }
+.rev-bar > em { font-style: normal; width: 26px; text-align: right; color: #d7e6ec; }
+.rev-list { display: flex; flex-direction: column; gap: 10px; }
+.rev-item { padding: 11px 0; border-bottom: 1px solid rgba(24, 56, 68, .5); }
+.rev-item:last-child { border-bottom: 0; padding-bottom: 0; }
+.rev-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rev-head > b { font-size: 13px; color: #f1f7fa; }
+.rev-head > small { margin-left: auto; font-size: 10.5px; color: var(--mut); }
+.rev-text { margin-top: 6px; font-size: 12.5px; line-height: 1.55; color: #cfe0e6; }
+.rev-reply {
+  margin-top: 8px; padding: 9px 11px; border-radius: 12px;
+  background: rgba(0, 220, 203, .06); border: 1px solid rgba(0, 220, 203, .22);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.rev-reply b { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--teal); }
+.rev-reply span { font-size: 12px; line-height: 1.5; color: #d9ebf0; }
+.rev-ask {
+  margin-top: 16px; padding: 14px 14px 12px; border-radius: 16px;
+  background: rgba(9, 14, 17, .7); border: 1px dashed rgba(0, 220, 203, .34);
+}
+.rev-ask.done { border-style: solid; border-color: rgba(0, 220, 203, .3); background: rgba(0, 220, 203, .05); }
+.rev-ask-title { font-size: 13.5px; font-weight: 800; color: #f1f7fa; }
+.rev-ask-sub { margin-top: 4px; font-size: 11.5px; line-height: 1.5; color: var(--mut); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rev-rate { display: flex; gap: 6px; margin-top: 10px; }
+.rev-rate-btn {
+  width: 38px; height: 38px; border-radius: 12px; cursor: pointer;
+  background: rgba(34, 56, 64, .35); border: 1px solid var(--line);
+  color: #46606c; font-size: 19px; line-height: 1; transition: color .15s, border-color .15s, background .15s;
+}
+.rev-rate-btn.on { color: #ffc757; border-color: rgba(255, 199, 87, .55); background: rgba(255, 199, 87, .1); text-shadow: 0 0 12px rgba(255, 199, 87, .55); }
+.rev-rate-btn:active { transform: scale(.94); }
+.rev-ask textarea { width: 100%; resize: vertical; min-height: 64px; }
+.f-box textarea, .f-box select {
+  flex: 1; min-width: 0; background: none; border: none; outline: none;
+  color: var(--txt); font: 600 13.5px 'Manrope', sans-serif; line-height: 1.5;
+}
+.f-box textarea::placeholder { color: #52717e; }
+.f-box select { appearance: none; -webkit-appearance: none; cursor: pointer; }
+.f-box select option { background: #07141c; color: var(--txt); }
+/* админка: отзывы */
+.adm-review-form { padding-bottom: 4px; }
+.adm-rev-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 16px 0 8px; font-size: 11px; color: var(--mut); letter-spacing: .08em; text-transform: uppercase; }
+.adm-rev-head b { font-size: 11px; color: #cfe0e6; }
+.adm-rev-head span { font-size: 10.5px; color: var(--teal); letter-spacing: .02em; text-transform: none; }
+.adm-review-list { display: flex; flex-direction: column; gap: 8px; max-height: 34vh; overflow-y: auto; }
+.adm-rev { padding: 9px 11px; border-radius: 13px; background: rgba(9, 14, 17, .7); border: 1px solid var(--line); }
+.adm-rev-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.adm-rev-top b { font-size: 12px; color: #f1f7fa; }
+.adm-rev-top small { font-size: 10px; color: var(--mut); }
+.adm-rev-del {
+  margin-left: auto; width: 24px; height: 24px; border-radius: 8px; cursor: pointer;
+  background: rgba(255, 84, 112, .1); border: 1px solid rgba(255, 84, 112, .3);
+  color: #ff9aa8; font-size: 11px; line-height: 1;
+}
+.adm-rev-del:active { transform: scale(.92); }
+.adm-rev-text { margin-top: 5px; font-size: 11.5px; line-height: 1.5; color: #cfe0e6; }
 .feat { margin-top: 12px; display: flex; flex-direction: column; gap: 9px; }
 .feat .f { display: flex; gap: 10px; font-size: 12.5px; line-height: 1.5; color: #f1f7fa; }
 .feat .f .i { flex: none; }
@@ -701,7 +760,6 @@ body { background: #000; font-family: 'Inter', -apple-system, 'Segoe UI', Roboto
   height: 24px; margin: 8px auto 2px;
   filter: drop-shadow(0 5px 22px rgba(0, 220, 203, .16));
 }
-.hdr-sub { letter-spacing: .25em; color: #8299a9; }
 .card, .sheet-panel, .nav, .announce { backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
 .btn-primary {
   color: #031014;
@@ -790,11 +848,6 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 }
 .gain-item p { color: #a9bdc7; font-size: 11.5px; line-height: 1.55; }
 .gain-item b { color: #e6f2f5; font-weight: 700; }
-/* Преимущества: вертикальный столбец внизу первого экрана */
-.advantages { margin: 16px 0 6px; }
-.advantages-title { font-size: 10px; font-weight: 800; color: var(--mut); letter-spacing: .16em; text-transform: uppercase; margin-bottom: 8px; }
-.advantages-item { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.5; color: #f1f7fa; padding: 7px 0; border-bottom: 1px solid rgba(24, 56, 68, .45); }
-.advantages-item b { color: var(--teal); font-weight: 700; }
 .buy-note { margin-top: 10px; }
 .trade-layout { display:grid; grid-template-columns:220px minmax(0,1fr); gap:28px; align-items:start; }
 .trade-steps { display:flex; flex-direction:column; gap:0; padding:25px 0 10px 18px; }
@@ -838,9 +891,6 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
   .hdr { position:relative; height:auto; padding:10px 44px 10px; text-align:left; display:flex; flex-direction:column; gap:5px; }
   .hdr-star { position:static; font-size:8px; margin:0; }
   .hdr-logo { position:static; margin:0; height:18px; width:auto; display:block; }
-  .hdr-sub { position:static; margin:0; font-size:7px; letter-spacing:.23em; }
-  .hdr-info { position:static; margin:0; font-size:7px; letter-spacing:.16em; color:#8edfeb; }
-  #announce { position:static; margin:6px 0 0; font-size:10px; line-height:1.4; color:#f1f7fa; text-align:left; }
   .hdr-status { position:static; align-self:flex-end; margin-top:6px; }
   .nav { position:fixed; z-index:25; left:50%; right:auto; top:24px; bottom:auto; transform:translateX(-50%); width:max-content; max-width:none; display:flex; gap:23px; padding:0; border:0; background:transparent; box-shadow:none; }
   .nav button { flex-direction:row; gap:7px; padding:7px 0; font-size:10px; color:#9ab0ba; }
