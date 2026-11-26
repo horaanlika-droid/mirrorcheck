@@ -385,19 +385,25 @@ test('тексты интерфейса доступны оператору, с�
   assert.equal(list.status, 200);
   const item = list.data.texts.find((t) => t.text === 'ПРИВАТНЫЙ ОБМЕН ЦИФРОВЫХ ПОДАРОЧНЫХ КАРТ');
   assert.ok(item);
-  // Единица редактирования — целый блок, а не фрагмент внутри него: абзац руководства
-  // с inline-выделением <b> собирается целиком, отдельные куски до/после <b> не
-  // являются самостоятельными id.
-  const nom = list.data.texts.find((t) => t.text === 'Требования к номиналу: сумма подарочной карты должна быть кратна 10 USD.');
-  assert.ok(nom, 'абзац руководства с inline-выделением должен быть одним блоком');
-  assert.equal(list.data.texts.some((t) => t.text === 'Требования к номиналу:'), false);
+  // Единица редактирования — целый блок из нескольких абзацев: секция руководства
+  // (заголовок + абзацы + списки) собирается целиком одним id, а отдельные абзацы
+  // и пункты внутри неё не являются самостоятельными редактируемыми единицами.
+  const sec1 = list.data.texts.find((t) => t.text.startsWith('1. Поддерживаемые подарочные карты'));
+  assert.ok(sec1, 'секция 1 руководства — один блок');
+  assert.ok(sec1.text.includes('Требования к номиналу'), 'блок секции 1 включает абзац о номинале');
+  assert.ok(sec1.text.includes('Apple US'), 'блок секции 1 включает пункт списка');
+  assert.ok(sec1.text.includes('\n'), 'блок секции многострочный (несколько абзацев)');
+  assert.equal(list.data.texts.some((t) => t.text === 'Требования к номиналу: сумма подарочной карты должна быть кратна 10 USD.'), false, 'отдельный абзац не является самостоятельным блоком');
+  assert.equal(list.data.texts.some((t) => t.text === '13. Почему курс PRICELEX может быть выше рыночного?'), false, 'отдельный заголовок секции не является самостоятельным блоком');
+  const sec13 = list.data.texts.find((t) => t.text.startsWith('13. Почему курс'));
+  assert.ok(sec13, 'секция 13 — один блок');
+  assert.ok(sec13.text.includes('Минимальный цифровой след'), 'блок секции 13 включает пункт списка с <b>-вводкой');
+  const sec14 = list.data.texts.find((t) => t.text.startsWith('14. Важная информация'));
+  assert.ok(sec14, 'секция 14 — один блок');
+  assert.ok(sec14.text.includes('волатильный'), 'блок секции 14 включает абзац о волатильности');
   // Серверный info-note карты рендерится в DOM и редактируется как целый блок.
   const info = list.data.texts.find((t) => t.text.includes('Где и по какому курсу вы купили карту — нам не важно'));
   assert.ok(info, 'CARD_INFO_NOTE должен быть в каталоге целым блоком');
-  // Новые разделы руководства — тоже редактируемые целые блоки (заголовки и абзацы).
-  assert.ok(list.data.texts.find((t) => t.text === '13. Почему курс PRICELEX может быть выше рыночного?'), 'заголовок раздела о курсе — редактируемый блок');
-  assert.ok(list.data.texts.find((t) => t.text === 'Минимальный цифровой след. Мы придерживаемся принципа минимизации данных и не запрашиваем информацию, которая не требуется для проведения сделки.'), 'пункт списка с <b>-вводкой — один блок');
-  assert.ok(list.data.texts.find((t) => t.text.includes('Bitcoin — волатильный цифровой актив')), 'абзац о волатильности Bitcoin редактируется как блок');
   assert.equal((await req('GET', '/api/admin/texts', { demo: CLIENT_DEMO })).status, 403);
   assert.equal((await req('PUT', '/api/admin/texts', { demo: CLIENT_DEMO, body: { id: item.id, value: 'Новое название' } })).status, 403);
   assert.equal ( (await req('PUT', '/api/admin/texts', { body: { id: 'unknown', value: 'Текст' } })).status, 400);
@@ -408,4 +414,21 @@ test('тексты интерфейса доступны оператору, с�
   const reset = await req('PUT', '/api/admin/texts', { body: { id: item.id, value: null } });
   assert.equal(reset.status, 200);
   assert.equal(reset.data.settings.texts.some((t) => t.text === item.text), false);
+  // Секция руководства — один блок из нескольких абзацев: override сохраняется и
+  // сбрасывается как единое целое, переводы строк сохраняются.
+  const multi = 'Первая строка секции.\nВторая строка секции.\nТретья строка секции.';
+  const secSaved = await req('PUT', '/api/admin/texts', { body: { id: sec14.id, value: multi } });
+  assert.equal(secSaved.status, 200);
+  assert.equal(secSaved.data.settings.texts.find((t) => t.text === sec14.text).value, multi);
+  // Длинный блок (до 2000 символов) принимается — секция может быть длинной.
+  const longVal = 'X'.repeat(2000);
+  const longSaved = await req('PUT', '/api/admin/texts', { body: { id: sec1.id, value: longVal } });
+  assert.equal(longSaved.status, 200);
+  // Сверх лимита — отвергается.
+  const tooLong = await req('PUT', '/api/admin/texts', { body: { id: sec1.id, value: 'Y'.repeat(2001) } });
+  assert.equal(tooLong.status, 400);
+  const secReset = await req('PUT', '/api/admin/texts', { body: { id: sec14.id, value: null } });
+  assert.equal(secReset.status, 200);
+  const longReset = await req('PUT', '/api/admin/texts', { body: { id: sec1.id, value: null } });
+  assert.equal(longReset.status, 200);
 });

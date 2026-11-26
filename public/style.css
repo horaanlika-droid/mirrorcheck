@@ -579,6 +579,8 @@ body.sheet-lock { overflow: hidden; }
 .guide-consent input { width: 18px; height: 18px; margin-top: 1px; flex: none; accent-color: var(--teal); }
 .guide-consent label { font-size: 12.5px; line-height: 1.45; color: var(--txt); }
 .guide-hint { font-size: 11px; line-height: 1.4; color: var(--mut); text-align: center; margin-bottom: 8px; }
+/* Overridden text blocks render operator newlines as line breaks. */
+.copy-applied { white-space: pre-line; }
 
 /* client profile */
 .lc-head { display: flex; align-items: center; gap: 12px; }

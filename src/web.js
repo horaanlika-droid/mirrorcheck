@@ -259,7 +259,7 @@ function createApp() {
     if (!needAuth(req, res)) return;
     if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
     const { id, value } = req.body || {};
-    if (!textCatalogue().some((item) => item.id === id) || (value !== null && (typeof value !== 'string' || !value.trim() || value.length > 1000))) {
+    if (!textCatalogue().some((item) => item.id === id) || (value !== null && (typeof value !== 'string' || !value.trim() || value.length > 2000))) {
       return res.status(400).json({ error: 'Некорректный текст или идентификатор.' });
     }
     store.mutate((db) => {
