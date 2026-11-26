@@ -1,64 +1,130 @@
 <!doctype html>
-<!-- Тёмный стиль с долларом: палитра объявлена безусловно в слоях
-     style/reference/ios, переключателя тем нет, цвет хрома задан в разметке,
-     чтобы первая отрисовка сразу шла по графиту без мигания. Механика — как в Яндекс: 3 шага, топ брокеров. -->
-<html lang="ru" data-theme="dark">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#080d11" />
-  <meta name="color-scheme" content="dark" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>PRICELEX — агентство криптоброкеров</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#02070f" />
+  <title>VEGA — BTC · LTC · USDT · Gift Cards</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="/devices.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Montserrat:wght@200;300;400&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
-  <link rel="stylesheet" href="/reference.css" />
-  <link rel="stylesheet" href="/ios.css" />
-  <link rel="stylesheet" href="/devices.css" />
-  <link rel="stylesheet" href="/fix.css" />
-  <link rel="stylesheet" href="/glass.css" />
-  <link rel="stylesheet" href="/mobility.css" />
-  <link rel="preload" as="image" href="/img/logo-full.png" />
 </head>
 <body>
-  <div class="bg" aria-hidden="true">
-    <div class="bg-img"></div>
-    <div class="bg-grid"></div>
-    <div class="bg-glow"></div>
-    <div class="bg-veil"></div>
-  </div>
-
-  <!-- Прелоадер: статичный кадр — логотип, девиз и плавная линия загрузки. -->
-  <div id="preloader" class="preloader" role="status" aria-live="polite" aria-label="PRICELEX">
-    <div class="preloader-inner">
-      <img class="preloader-wordmark" src="/img/logo-full.png" alt="PRICELEX — Since 2026" width="1200" height="561" fetchpriority="high" />
-      <div class="preloader-tag">Private Crypto Brokerage</div>
-      <div class="preloader-bar"><div class="preloader-progress"></div></div>
-    </div>
-  </div>
+  <div class="bg" aria-hidden="true"></div>
 
   <div class="app">
-    <header class="hdr" id="appHeader" aria-label="PRICELEX"></header>
+    <header class="hdr">
+      <div class="hdr-star">✦</div>
+      <div class="hdr-logo">VEGA</div>
+      <div class="hdr-sub">OFFICIAL · BTC · LTC · USDT · GIFT CARDS</div>
+      <div class="hdr-status" id="hdrStatus"></div>
+    </header>
 
-    <div class="announce hidden" id="announce"></div>
+    <div class="announce" id="announce"></div>
 
-    <div class="syncbar hidden" id="syncStatus" role="status" aria-live="polite"></div>
+    <div class="announce hidden" id="syncStatus" role="status" aria-live="polite"></div>
 
     <main id="main">
       <section id="view-exchange" class="view"></section>
-      <section id="view-profile" class="view hidden"></section>
-      <section id="view-desk" class="view hidden"></section>
       <section id="view-history" class="view hidden"></section>
-      <section id="view-reviews" class="view hidden"></section>
       <section id="view-refs" class="view hidden"></section>
-      <section id="view-broker" class="view hidden"></section>
       <section id="view-support" class="view hidden"></section>
-      <section id="view-info" class="view hidden"></section>
+      <section id="view-profile" class="view hidden"></section>
     </main>
 
     <nav class="nav" id="nav"></nav>
+  </div>
+
+  <div id="assetSheet" class="sheet hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="sheetTitle">
+    <div class="sheet-overlay" id="sheetOverlay"></div>
+    <div class="sheet-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div class="sheet-title" id="sheetTitle">Криптовалюта</div>
+        <button class="sheet-close" id="sheetClose" aria-label="Закрыть">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="sheet-list" id="sheetList" role="listbox"></div>
+      <div class="sheet-foot hidden" id="sheetFoot"></div>
+    </div>
+  </div>
+
+  <div id="giftRules" class="sheet hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="giftRulesTitle">
+    <div class="sheet-overlay" id="giftRulesOverlay"></div>
+    <div class="sheet-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div class="sheet-title" id="giftRulesTitle">Правила передачи карты</div>
+        <button class="sheet-close" id="giftRulesClose" aria-label="Закрыть">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="rules-body">
+        <div class="rules-item"><b>1.</b> Карта — <b id="giftRulesBrand">Google Gift Card</b> региона США, в валюте <b>USD ($)</b>, с полным неизрасходованным балансом. Рубли и карты других регионов/валют не принимаем.</div>
+        <div class="rules-item"><b>2.</b> Сначала создаётся заявка, затем <b>подключается оператор</b> — дождитесь его сигнала. <b>Ничего не отправляйте и никому не сообщайте код до команды оператора.</b></div>
+        <div class="rules-item"><b>3.</b> Код карты вы вводите в приложении <b>только после подключения оператора</b>. После отправки оператор проверяет карту (обычно 5–15 минут).</div>
+        <div class="rules-item"><b>4.</b> Выплата — в <b>BTC</b> на указанный вами Bitcoin-кошелёк. Сумма определяется по актуальному курсу BTC/USD.</div>
+        <div class="rules-item"><b>5.</b> Поддержка VEGA никогда не просит код и деньги вне заявки. Не сообщайте код никому, кроме оператора в рамках заявки.</div>
+        <div class="rules-item"><b>6.</b> На сделку даётся <b>1 час</b> с момента создания заявки. Если карта окажется недействительной, заявка отклоняется без выплаты.</div>
+      </div>
+      <button class="btn btn-primary" id="giftRulesConfirm" style="width:100%">Понятно — создать заявку</button>
+      <button class="btn btn-ghost" id="giftRulesCancel" style="width:100%;margin-top:8px">Отмена</button>
+    </div>
+  </div>
+
+  <div id="adminSheet" class="sheet hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="adminSheetTitle">
+    <div class="sheet-overlay" id="adminSheetOverlay"></div>
+    <div class="sheet-panel adm-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div class="sheet-title" id="adminSheetTitle">🛠 Админка</div>
+        <button class="sheet-close" id="adminSheetClose" aria-label="Закрыть">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="adm-session off" id="admSession">
+        <div class="adm-session-info">
+          <span class="adm-dot" id="admSessionDot"></span>
+          <span class="adm-session-text">
+            <b id="admSessionTitle">Торги закрыты</b>
+            <small id="admSessionSub">Клиенты видят «обмен временно недоступен»</small>
+          </span>
+        </div>
+        <button class="adm-session-btn" id="admSessionBtn">🟢 Открыть торги</button>
+      </div>
+
+      <div class="adm-tabs" id="admTabs" role="tablist">
+        <button class="adm-tab on" data-tab="crypto" role="tab">₿ Валюты</button>
+        <button class="adm-tab" data-tab="gift" role="tab">🎁 Карты</button>
+        <button class="adm-tab" data-tab="chat" role="tab">💬 Чат</button>
+      </div>
+
+      <div class="adm-pane" data-pane="crypto">
+        <div class="adm-note">Включённые направления сразу видны клиентам. Курс клиентам не показывается — сумму в рублях оператор называет в заявке, клиент соглашается или отказывается. Заявки выключенного направления в работе обработайте вручную.</div>
+        <div class="adm-toggles" id="admCryptoDirs"></div>
+      </div>
+
+      <div class="adm-pane hidden" data-pane="gift">
+        <div class="adm-note">Google, iTunes, Xbox и Apple Store (карты США в USD) → BTC. Выплата пересчитывается по текущему BTC/USD и общей комиссии; оператор подтверждает её после проверки карты.</div>
+        <div class="adm-toggles" id="admGiftDirs"></div>
+        <label class="f-label" for="admGiftFee" style="margin-top:14px"><span>Общая комиссия карт, % от BTC-эквивалента</span></label>
+        <div class="f-box"><input id="admGiftFee" type="number" inputmode="decimal" min="0" max="50" step="1" placeholder="0"></div>
+        <div class="adm-preview" id="admGiftPreview">Карта $10 → BTC</div>
+        <div class="f-err" id="admGiftErr"></div>
+        <button class="btn btn-primary" style="margin-top:10px" id="admGiftSave"><span>Сохранить карты</span></button>
+      </div>
+
+      <div class="adm-pane hidden" data-pane="chat">
+        <div class="adm-note">Ссылка на чат поддержки. Сохраняется сразу и видна всем на сайте и в приложении. Та же настройка меняется в боте: ⚙️ Настройки → 💬 Чат.</div>
+        <label class="f-label" for="admChatLink"><span>Ссылка на чат</span></label>
+        <div class="f-box"><input id="admChatLink" placeholder="https://t.me/… или @юзернейм" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
+        <div class="f-err" id="admChatErr"></div>
+        <button class="btn btn-primary" style="margin-top:10px" id="admChatSave"><span>Сохранить ссылку</span></button>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="toast"></div>

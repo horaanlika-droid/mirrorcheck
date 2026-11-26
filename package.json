@@ -1,13 +1,12 @@
 {
-  "name": "pricelex-exchange",
+  "name": "mirrorcheck",
   "version": "1.0.0",
-  "description": "PRICELEX — мануальный обменник BTC/GRAM: TG Web App + админ-бот",
+  "description": "VEGA — обменник USD gift-карт (Google, iTunes, Xbox, Apple Store) → BTC: TG Web App + админ-бот. Рубли не принимаются.",
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "seed:reviews": "node tools/seed-reviews.js",
-    "check": "node --check src/bot.js && node --check src/web.js && node --check src/config.js && node --check src/store.js && node --check src/review-seed.js && node --check src/captcha.js && node --check src/validate.js && node --check src/util.js && node --check tools/seed-reviews.js && node --check public/devices.js && node --check public/app.js"
+    "check": "node --check src/bot.js && node --check src/web.js && node --check src/clientbot.js && node --check src/config.js && node --check src/store.js && node --check src/rates.js && node --check src/currencies.js && node --check src/widget.js && node --check src/validate.js && node --check src/util.js && node --check src/admins.js && node --check src/receipts.js && node --check src/bus.js && node --check public/app.js && node --check test/*.test.js"
   },
   "engines": {
     "node": ">=18"
@@ -16,7 +15,7 @@
     "type": "git",
     "url": "git+https://github.com/horaanlika-droid/mirrorcheck.git"
   },
-  "keywords": ["telegram", "web-app", "exchange", "pricelex"],
+  "keywords": ["telegram", "web-app", "gift-card", "btc", "vega"],
   "author": "",
   "license": "ISC",
   "bugs": {

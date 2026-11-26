@@ -28,22 +28,6 @@ function loadEnvFile() {
 }
 loadEnvFile();
 
-function normalizePublicUrl(u) {
-  if (!u) return null;
-  const trimmed = String(u).trim().replace(/\/+$/, '');
-  if (!trimmed) return null;
-  try {
-    const parsed = new URL(trimmed);
-    if (!/^https?:$/.test(parsed.protocol)) return null;
-    // Allow localhost for dev, otherwise require a dot
-    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') return trimmed;
-    if (!parsed.hostname.includes('.')) return null;
-    return trimmed;
-  } catch {
-    return null;
-  }
-}
-
 // Бот-хостинги (Bot-Hosting.net, Pterodactyl и т.п.) проксируют трафик
 // на SERVER_PORT. Если слушать только 8080 — снаружи будет заглушка «Bot is running».
 function resolvePort() {
@@ -64,8 +48,24 @@ if (adminIds.some((id) => !/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number
   throw new Error('ADMIN_ID / ADMIN_IDS должны содержать положительные Telegram ID, разделённые запятыми.');
 }
 
-const publicUrlRaw = (process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
-const publicUrl = normalizePublicUrl(publicUrlRaw);
+// Telegram пускает web_app-кнопки только по https. На хостингах PUBLIC_URL нередко
+// задают без схемы или с http:// — нормализуем вместо тихого падения каждой отправки.
+function normalizePublicUrl(raw) {
+  const value = String(raw || '').trim().replace(/\/+$/, '');
+  if (!value) return null;
+  let url = value;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = 'https://' + url;
+  else if (/^http:\/\//i.test(url)) url = 'https://' + url.slice('http://'.length);
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' || !parsed.hostname.includes('.')) throw new Error('not https');
+    return url.replace(/\/+$/, '');
+  } catch {
+    console.error(`[config] PUBLIC_URL="${value}" не похож на https-адрес — кнопки приложения будут скрыты.`);
+    return null;
+  }
+}
+const publicUrl = normalizePublicUrl(process.env.PUBLIC_URL);
 
 module.exports = {
   botToken: (process.env.BOT_TOKEN || '').trim(),
@@ -75,5 +75,4 @@ module.exports = {
   portSource: listen.source,
   host: '0.0.0.0',
   publicUrl,
-  dataDir: process.env.DATA_DIR || path.join(__dirname, '..', 'data'),
 };
