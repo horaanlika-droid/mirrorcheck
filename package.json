@@ -1,7 +1,7 @@
 {
   "name": "mirrorcheck",
   "version": "1.0.0",
-  "description": "Pricelex Worldwide — подарочные карты USD (Google, iTunes, Xbox, Apple Store) → BTC: Telegram Mini App и бот оператора. У каждой карты свой курс, выплаты только в BTC, всё на русском.",
+  "description": "Pricelex Worldwide — подарочные карты USD (Google, iTunes, Xbox, Apple Store) → BTC: Telegram Mini App и бот оператора. Выплаты только в BTC, всё на русском.",
   "main": "index.js",
   "scripts": {
     "start": "node server.js",

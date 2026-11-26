@@ -129,7 +129,7 @@ async function broadcast(text, options = {}) {
 const CLIENTS_ANNOUNCE_OPEN =
   '🟢 <b>Pricelex Worldwide: приём карт открыт!</b>\n\n' +
   'Снова принимаем подарочные карты Google, iTunes, Xbox и Apple Store региона США в USD 🎁\n' +
-  'У каждой карты свой курс, выплата в BTC, без документов и регистрации — в приложении и в боте.';
+  'Выплата в BTC, без документов и регистрации — в приложении и в боте.';
 
 async function announceToClients(text) {
   if (!bot) return { sent: 0, failed: 0 };

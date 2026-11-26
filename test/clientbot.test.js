@@ -97,7 +97,8 @@ test('клиентский бот показывает четыре разных
     const rates = [...String(screen.text).matchAll(/1 \$ = ([0-9.]+)/g)].map((m) => m[1]);
     assert.equal(rates.length, 4, 'в списке четыре строки с курсом');
     assert.equal(new Set(rates).size, 4, 'все курсы разные');
-    assert.ok(String(screen.text).includes('Курс у каждой карты свой'));
+    assert.ok(String(screen.text).includes('Какую карту сдаёте?'));
+    assert.ok(!/у каждой карты свой/i.test(String(screen.text)), 'не акцентируем различия курсов для клиента');
   } finally {
     store.mutate((db) => { db.settings = original; });
   }
