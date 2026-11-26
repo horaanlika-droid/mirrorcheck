@@ -738,6 +738,17 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 .token-xbox { top:32%; right:4%; transform:rotate(8deg); }
 .token-google { bottom:15%; right:16%; transform:rotate(-12deg); }
 .token-itunes { bottom:18%; left:4%; transform:rotate(10deg); }
+/* Маскот PRICELEX на первом экране */
+.hero-mascot {
+  width: min(72vw, 360px);
+  height: auto;
+  position: relative;
+  z-index: 4;
+  filter: drop-shadow(0 0 40px rgba(0,220,203,0.35));
+  margin-top: 10px;
+  animation: mascotFloat 4s ease-in-out infinite;
+}
+@keyframes mascotFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
 .supported-head { display:flex; align-items:end; justify-content:space-between; gap:12px; margin:10px 4px 13px; padding-top:5px; border-top:1px solid rgba(24,56,68,.72); }
 .section-overline { display:block; margin-top:13px; color:#8299a9; font-size:8px; letter-spacing:.2em; }
 .supported-head h2 { margin-top:3px; color:#f1f7fa; font-size:18px; font-weight:500; letter-spacing:-.02em; }

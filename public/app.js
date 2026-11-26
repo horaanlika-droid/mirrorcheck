@@ -481,6 +481,7 @@
               <div class="hero-orbit orbit-two"></div>
               <div class="hero-orbit orbit-three"></div>
               <div class="hero-core"><span>₿</span></div>
+              <img class="hero-mascot" src="/mascot.png" alt="PRICELEX mascot" aria-hidden="true" />
               ${[['APPLE_STORE_USD','token-apple'],['XBOX_USD','token-xbox'],['GOOGLE_USD','token-google'],['ITUNES_USD','token-itunes']].map(([key, placement]) => { const d = dirs().find((x) => x.key === key); return d ? `<div class="hero-token ${placement}"><span class="coin-ic ${esc(d.coin)}">${coinInner(d)}</span></div>` : ''; }).join('')}
             </div>
           </section>
