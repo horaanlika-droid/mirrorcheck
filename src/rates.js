@@ -29,7 +29,7 @@ async function fetchJson(url, timeoutMs = 12000) {
   try {
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: { 'user-agent': 'PRICELEX-exchange/1.0', accept: 'application/json' },
+      headers: { 'user-agent': 'PricelexWorldwide-exchange/1.0', accept: 'application/json' },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();

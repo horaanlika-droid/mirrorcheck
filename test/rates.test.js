@@ -1,4 +1,4 @@
-// Курсы PRICELEX: gift cards → BTC по прямому BTC/USD споту. Тесты не требуют сети.
+// Курсы Pricelex Worldwide: gift cards → BTC по прямому BTC/USD споту. Тесты не требуют сети.
 const { test, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

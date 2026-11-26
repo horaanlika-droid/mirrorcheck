@@ -26,7 +26,7 @@ body {
   min-height: 100vh;
 }
 
-/* ---------- фон: глубокий чёрный, без изображений ---------- */
+/* ---------- background: deep black, no images ---------- */
 .bg {
   position: fixed; inset: 0; z-index: -1;
   background: var(--bg0);
@@ -44,7 +44,7 @@ body {
 
 .hidden { display: none !important; }
 
-/* ---------- шапка ---------- */
+/* ---------- header ---------- */
 .hdr { text-align: center; padding: calc(14px + env(safe-area-inset-top)) 0 6px; }
 .hdr-star {
   font-size: 15px; color: #bffcf0;
@@ -57,16 +57,10 @@ body {
   margin: 6px auto 1px;
   filter: drop-shadow(0 0 26px rgba(142, 223, 235, 0.22));
 }
-.hdr-sub { font-size: 8.5px; letter-spacing: .4em; margin-left: .4em; color: var(--mut); margin-top: 3px; font-weight: 600; }
 .hdr-info {
-  font-size: 8.5px; letter-spacing: .14em; color: #8edfeb; margin-top: 2px; font-weight: 600;
+  font-size: 8.5px; letter-spacing: .14em; color: #8edfeb; margin-top: 4px; font-weight: 600;
   text-shadow: 0 0 10px rgba(142, 223, 235, 0.35);
 }
-#announce {
-  font-size: 11px; line-height: 1.45; color: #f1f7fa; margin-top: 8px; letter-spacing: .02em;
-  text-align: center;
-}
-#announce b { color: #8edfeb; }
 .hdr-status { margin-top: 10px; }
 .pill {
   display: inline-flex; align-items: center; gap: 7px;
@@ -80,7 +74,7 @@ body {
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 .pill.demo { background: rgba(0,200,255,.1); color: var(--blue); border-color: rgba(0,200,255,.35); }
 
-/* ---------- объявление ---------- */
+/* ---------- announcement ---------- */
 .announce {
   margin: 12px 0 14px; padding: 11px 14px;
   font-size: 12.5px; line-height: 1.5; color: #f1f7fa;
@@ -89,19 +83,19 @@ body {
   backdrop-filter: blur(10px);
 }
 
-/* ---------- прелоадер: брендовый экран загрузки ---------- */
+/* ---------- preloader: branded loading screen ---------- */
 #preloader {
   position: fixed; inset: 0; z-index: 300;
   display: flex; align-items: center; justify-content: center;
   background: var(--bg0);
-  transition: opacity .7s ease, visibility .7s ease;
+  transition: opacity .35s ease, visibility .35s ease;
 }
 #preloader.done { opacity: 0; visibility: hidden; pointer-events: none; }
 .pl-inner { display: flex; flex-direction: column; align-items: center; padding: 0 24px; }
 .pl-logo {
   width: min(64vw, 310px); height: auto;
   opacity: 0; transform: translateY(7px);
-  animation: plIn 1.3s ease .1s forwards;
+  animation: plIn .65s ease .05s forwards;
   filter: drop-shadow(0 0 30px rgba(142, 223, 235, .22));
 }
 .pl-bar {
@@ -113,17 +107,17 @@ body {
   background: linear-gradient(90deg, #00dccb, #8edfeb);
   box-shadow: 0 0 12px rgba(0, 220, 203, .65);
   transform: scaleX(0); transform-origin: left center;
-  animation: plFill 5.6s cubic-bezier(.25, .6, .3, 1) .15s forwards;
+  animation: plFill 2.8s cubic-bezier(.25, .6, .3, 1) .075s forwards;
 }
 @keyframes plIn { to { opacity: 1; transform: none; } }
 @keyframes plFill { to { transform: scaleX(1); } }
 .pl-hint {
   margin: 17px 0 0 .42em; color: #52717e;
   font-size: 8px; letter-spacing: .42em; font-weight: 600;
-  opacity: 0; animation: plIn 1.1s ease .7s forwards;
+  opacity: 0; animation: plIn .55s ease .35s forwards;
 }
 
-/* ---------- карточки ---------- */
+/* ---------- cards ---------- */
 .card {
   background: linear-gradient(165deg, var(--card), var(--card2));
   border: 1px solid var(--line); border-radius: 20px;
@@ -134,7 +128,7 @@ body {
 .card + .card { margin-top: 12px; }
 .card-title { font-size: 12px; font-weight: 800; letter-spacing: .12em; color: var(--mut); text-transform: uppercase; margin-bottom: 12px; }
 
-/* ---------- форма обмена ---------- */
+/* ---------- exchange form ---------- */
 .f-label { font-size: 11px; font-weight: 700; color: var(--mut); letter-spacing: .05em; margin-bottom: 7px; display: flex; justify-content: space-between; }
 .f-box {
   display: flex; align-items: center; gap: 10px;
@@ -170,12 +164,12 @@ body {
   box-shadow: 0 0 18px rgba(0, 220, 203, 0.25);
 }
 
-/* Быстрые номиналы подарочных карт */
+/* Quick gift-card denominations */
 .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: rgba(9, 12, 14, 0.78); border: 1px solid var(--line); border-radius: 15px; padding: 5px; }
 .seg.gift-nom { grid-template-columns: repeat(4, 1fr); }
 .seg.gift-nom button { font-size: 12.5px; padding: 9px 0; }
 input[readonly] { color: #9fe8d6 !important; }
-/* Сноски-подсказки в форме (маркетплейсы, валюта карты, срок сделки) */
+/* Footnote hints in the form (marketplaces, card currency, deal time limit) */
 .info-note {
   font-size: 11.5px; line-height: 1.55; color: var(--mut);
   background: rgba(142, 223, 235, 0.06); border: 1px solid rgba(142, 223, 235, 0.16);
@@ -210,7 +204,7 @@ input[readonly] { color: #9fe8d6 !important; }
 
 .f-hint { margin-top: 10px; font-size: 11.5px; color: var(--mut); text-align: center; }
 
-/* Убираем стрелки у числовых полей — на мобильных они только мешают. */
+/* Remove spinners on number inputs — they only get in the way on mobile. */
 .f-box input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 .f-box input::-webkit-outer-spin-button, .f-box input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
@@ -222,7 +216,7 @@ input[readonly] { color: #9fe8d6 !important; }
 
 .mt { margin-top: 14px; }
 
-/* ---------- кнопки ---------- */
+/* ---------- buttons ---------- */
 .btn {
   width: 100%; border: none; border-radius: 16px; padding: 16px 18px;
   font: 800 15px 'Manrope', sans-serif; letter-spacing: .03em; cursor: pointer;
@@ -242,7 +236,7 @@ input[readonly] { color: #9fe8d6 !important; }
 .btn-danger { background: rgba(255, 84, 112, 0.12); border: 1px solid rgba(255, 84, 112, 0.3); color: var(--danger); }
 .btn-sm { padding: 11px 14px; border-radius: 12px; font-size: 13px; width: auto; }
 
-/* ---------- статус заявки / загрузка ---------- */
+/* ---------- order status / loading ---------- */
 .stage { text-align: center; padding: 26px 18px 22px; }
 .spinner-wrap { position: relative; width: 86px; height: 86px; margin: 0 auto 18px; }
 .spinner {
@@ -265,7 +259,7 @@ input[readonly] { color: #9fe8d6 !important; }
 
 .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; padding: 5px 11px; border-radius: 999px; letter-spacing: .04em; }
 
-/* ---------- оплата ---------- */
+/* ---------- payment ---------- */
 .pay-amount { margin: 14px 0 4px; text-align: center; }
 .pay-amount .v {
   font-size: 34px; font-weight: 800; letter-spacing: .01em;
@@ -284,7 +278,7 @@ input[readonly] { color: #9fe8d6 !important; }
 .copy-row .btn { flex: 1; }
 .note { margin-top: 12px; font-size: 11.5px; color: var(--mut); line-height: 1.55; }
 
-/* ---------- чек PDF ---------- */
+/* ---------- PDF receipt ---------- */
 .file-box {
   margin-top: 14px; padding: 12px;
   display: flex; flex-direction: column; gap: 10px; align-items: stretch;
@@ -295,13 +289,13 @@ input[readonly] { color: #9fe8d6 !important; }
 .file-name { font-size: 12px; color: var(--mut); text-align: center; word-break: break-all; line-height: 1.5; }
 .file-name.ok { color: var(--ok); font-weight: 700; }
 
-/* ---------- успех ---------- */
+/* ---------- success ---------- */
 .okmark { width: 64px; height: 64px; margin: 0 auto 16px; display: block; }
 .okmark circle { stroke: var(--ok); stroke-width: 2.5; fill: rgba(127, 176, 155, 0.08); stroke-dasharray: 260; stroke-dashoffset: 260; animation: draw 0.9s ease forwards; }
 .okmark path { stroke: var(--ok); stroke-width: 4; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 60; stroke-dashoffset: 60; animation: draw 0.5s 0.55s ease forwards; }
 @keyframes draw { to { stroke-dashoffset: 0; } }
 
-/* ---------- история ---------- */
+/* ---------- history ---------- */
 .h-item { display: flex; align-items: center; gap: 12px; padding: 13px 14px; }
 .h-item + .h-item { margin-top: 10px; }
 .h-ic { width: 40px; height: 40px; border-radius: 13px; flex: none; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; }
@@ -321,25 +315,14 @@ input[readonly] { color: #9fe8d6 !important; }
 .empty { text-align: center; padding: 34px 10px; color: var(--mut); font-size: 13px; line-height: 1.6; }
 .empty .e-ic { font-size: 24px; margin-bottom: 8px; opacity: .8; }
 
-/* ---------- рефералка ---------- */
+/* ---------- referrals ---------- */
 .ref-link {
   display: flex; align-items: center; gap: 10px;
   background: rgba(9, 12, 14, 0.84); border: 1px solid var(--line); border-radius: 13px;
   padding: 12px 13px; font-size: 12px; color: #00dccb; word-break: break-all;
 }
-.ref-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
-.ref-stat { background: rgba(9, 12, 14, 0.72); border: 1px solid var(--line); border-radius: 14px; padding: 13px; text-align: center; }
-.ref-stat .v { font-size: 22px; font-weight: 800; color: var(--teal); }
-.ref-stat .l { margin-top: 3px; font-size: 10.5px; color: var(--mut); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.steps { margin-top: 12px; display: flex; flex-direction: column; gap: 9px; }
-.step { display: flex; gap: 11px; align-items: flex-start; font-size: 12.5px; color: #f1f7fa; line-height: 1.5; }
-.step .n {
-  flex: none; width: 22px; height: 22px; border-radius: 50%;
-  background: linear-gradient(135deg, var(--blue), var(--teal)); color: #031014;
-  font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center;
-}
 
-/* ---------- инфо ---------- */
+/* ---------- info ---------- */
 .about { font-size: 13px; line-height: 1.65; color: #f1f7fa; }
 .about b { color: #fff; }
 .feat { margin-top: 12px; display: flex; flex-direction: column; gap: 9px; }
@@ -354,7 +337,7 @@ input[readonly] { color: #9fe8d6 !important; }
 .contact .ci { width: 34px; height: 34px; border-radius: 11px; background: rgba(142, 223, 235, 0.1); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; }
 .contact small { display: block; color: var(--mut); font-weight: 600; font-size: 11px; margin-top: 1px; }
 
-/* ---------- нижняя навигация ---------- */
+/* ---------- bottom navigation ---------- */
 .nav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
   max-width: 520px; margin: 0 auto;
@@ -380,7 +363,7 @@ input[readonly] { color: #9fe8d6 !important; }
   box-shadow: 0 2px 8px rgba(23,233,192,0.5);
 }
 
-/* ---------- демо-пульт ---------- */
+/* ---------- demo console ---------- */
 .demo-admin {
   position: fixed; right: 14px; z-index: 60;
   bottom: calc(var(--nav-h) + 16px + env(safe-area-inset-bottom));
@@ -404,7 +387,7 @@ input[readonly] { color: #9fe8d6 !important; }
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-/* ---------- tx блокчейн ---------- */
+/* ---------- blockchain tx ---------- */
 .tx-box {
   margin-top: 16px; text-align: left;
   background: rgba(0, 220, 203, 0.08); border: 1px solid rgba(0, 220, 203, 0.28);
@@ -417,7 +400,7 @@ input[readonly] { color: #9fe8d6 !important; }
 }
 .tx-link:hover { color: var(--teal); }
 
-/* ---------- чат поддержки ---------- */
+/* ---------- support chat ---------- */
 .chat-box {
   margin-top: 12px; max-height: 380px; min-height: 180px;
   overflow-y: auto; background: rgba(9, 12, 14, 0.78);
@@ -460,7 +443,7 @@ input[readonly] { color: #9fe8d6 !important; }
 .view { animation: fadein .28s ease; }
 @keyframes fadein { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
 
-/* ---------- Выбор активов: экран выбора и нижние шторки ---------- */
+/* ---------- asset selection: picker screen and bottom sheets ---------- */
 .picker-head { padding: 4px 2px 2px; }
 .picker-title { font-size: 19px; font-weight: 800; letter-spacing: .01em; }
 .picker-sub { margin-top: 4px; font-size: 11.5px; color: var(--mut); line-height: 1.5; }
@@ -485,7 +468,7 @@ input[readonly] { color: #9fe8d6 !important; }
 .group-chev { margin-left: auto; color: var(--mut); display: flex; flex: none; }
 .picker-empty { margin-top: 18px; text-align: center; font-size: 12.5px; line-height: 1.6; color: var(--mut); border: 1px dashed var(--line); border-radius: 16px; padding: 26px 18px; }
 
-/* Верхняя полоса формы: назад к выбору активов + чип текущего актива */
+/* Top form bar: back to asset selection + current asset chip */
 .form-topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 12px; }
 .back-btn {
   display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
@@ -510,7 +493,7 @@ input[readonly] { color: #9fe8d6 !important; }
 .asset-chip-label { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asset-chip svg { color: var(--mut); flex: none; }
 
-/* Нижняя шторка (выбор криптовалюты / подарочных карт) */
+/* Bottom sheet (crypto / gift-card selection) */
 .sheet { position: fixed; inset: 0; z-index: 80; }
 .sheet-overlay {
   position: absolute; inset: 0;
@@ -560,14 +543,14 @@ input[readonly] { color: #9fe8d6 !important; }
 .sheet-check { margin-left: auto; color: var(--teal); display: flex; flex: none; opacity: 0; }
 .sheet-row.on .sheet-check { opacity: 1; }
 .sheet-empty { padding: 26px 12px; text-align: center; font-size: 12.5px; color: var(--mut); }
-/* Выключенный оператором актив: полупрозрачный, в ч/б, выбрать нельзя */
+/* Asset disabled by the operator: semi-transparent, grayscale, not selectable */
 .sheet-row.off { opacity: .45; filter: grayscale(1); cursor: default; }
 .sheet-row.off:active { background: transparent; }
 .sheet-row.off .sheet-check { display: none; }
 .sheet-foot { margin-top: 12px; padding: 9px 12px; text-align: center; font-size: 10.5px; line-height: 1.5; color: var(--mut); border: 1px dashed var(--line); border-radius: 12px; }
 body.sheet-lock { overflow: hidden; }
 
-/* Диалог «Правила передачи карты» */
+/* “Card transfer rules” dialog */
 .rules-body { display: flex; flex-direction: column; gap: 9px; margin-bottom: 14px; }
 .rules-item {
   font-size: 12.5px; line-height: 1.5; color: var(--txt);
@@ -576,7 +559,7 @@ body.sheet-lock { overflow: hidden; }
 }
 .rules-item b { color: #8edfeb; }
 
-/* ЛК клиента */
+/* client profile */
 .lc-head { display: flex; align-items: center; gap: 12px; }
 .lc-id { min-width: 0; }
 .lc-name { font-size: 17px; font-weight: 800; letter-spacing: .01em; }
@@ -590,7 +573,7 @@ body.sheet-lock { overflow: hidden; }
 .lc-stat b { display: block; font-size: 15px; font-weight: 800; color: #dff4ff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lc-stat span { display: block; font-size: 10px; color: var(--mut); margin-top: 4px; letter-spacing: .02em; }
 
-/* Админка */
+/* admin panel */
 .adm-panel { max-height: 88vh; }
 .adm-tabs {
   display: flex; gap: 6px; padding: 4px; margin-bottom: 12px;
@@ -634,7 +617,7 @@ body.sheet-lock { overflow: hidden; }
 }
 .lc-admin-btn:active { background: rgba(3, 10, 15, 0.55); }
 
-/* Торги: статус и кнопка открытия/закрытия в админке */
+/* Trading: status and open/close button in the admin panel */
 .adm-session {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   border-radius: 14px; padding: 10px 12px; margin: -2px 0 12px;
@@ -659,7 +642,7 @@ body.sheet-lock { overflow: hidden; }
 .adm-session-btn:active { transform: scale(0.96); }
 .adm-session-btn:disabled { opacity: .6; }
 
-/* Направления: выключенные — чёрно-белые, включённые при открытой сессии — подсвечены */
+/* Directions: disabled ones are grayscale, enabled ones highlighted while session is open */
 .adm-dir { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .adm-coin { flex: none; }
 .adm-dir-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; }
@@ -674,12 +657,12 @@ body.sheet-lock { overflow: hidden; }
 }
 #adminSheet:not(.trading-on) .adm-toggle.on { border-color: var(--line); box-shadow: none; }
 
-/* Клиент: плитки направлений чёрно-белые, когда торги закрыты */
+/* Client: direction tiles are grayscale while trading is closed */
 .group-card.off { filter: grayscale(1) brightness(.68); opacity: .55; }
 .group-card.off .group-chev { color: var(--mut); }
 .group-card:not(.off) { box-shadow: 0 0 0 1px rgba(0, 220, 203, 0.3), 0 10px 34px rgba(0, 0, 0, 0.35); }
 
-/* PRICELEX — deep black canvas, teal accents, precise mobile-first surfaces. */
+/* Pricelex Worldwide — deep black canvas, teal accents, precise mobile-first surfaces. */
 body { background: #000; font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif; }
 .bg {
   background-color: #000;
@@ -701,7 +684,6 @@ body { background: #000; font-family: 'Inter', -apple-system, 'Segoe UI', Roboto
   height: 24px; margin: 8px auto 2px;
   filter: drop-shadow(0 5px 22px rgba(0, 220, 203, .16));
 }
-.hdr-sub { letter-spacing: .25em; color: #8299a9; }
 .card, .sheet-panel, .nav, .announce { backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
 .btn-primary {
   color: #031014;
@@ -768,7 +750,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 .telegram-cta small { margin-top:4px; color:#8299a9; font-size:10px; }
 .telegram-cta-mark { display:grid; place-items:center; width:34px; height:34px; border:1px solid rgba(142,223,235,.36); border-radius:50%; color:#8edfeb; font-size:18px; }
 
-/* ---------- инфо-сноска: приём оплаты подарочными картами ---------- */
+/* ---------- footnote: accepting gift-card payments ---------- */
 .gain-note {
   margin: 6px 0 18px; padding: 15px 16px 13px;
   border: 1px dashed rgba(24, 56, 68, .95);
@@ -790,11 +772,6 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 }
 .gain-item p { color: #a9bdc7; font-size: 11.5px; line-height: 1.55; }
 .gain-item b { color: #e6f2f5; font-weight: 700; }
-/* Преимущества: вертикальный столбец внизу первого экрана */
-.advantages { margin: 16px 0 6px; }
-.advantages-title { font-size: 10px; font-weight: 800; color: var(--mut); letter-spacing: .16em; text-transform: uppercase; margin-bottom: 8px; }
-.advantages-item { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.5; color: #f1f7fa; padding: 7px 0; border-bottom: 1px solid rgba(24, 56, 68, .45); }
-.advantages-item b { color: var(--teal); font-weight: 700; }
 .buy-note { margin-top: 10px; }
 .trade-layout { display:grid; grid-template-columns:220px minmax(0,1fr); gap:28px; align-items:start; }
 .trade-steps { display:flex; flex-direction:column; gap:0; padding:25px 0 10px 18px; }
@@ -838,9 +815,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
   .hdr { position:relative; height:auto; padding:10px 44px 10px; text-align:left; display:flex; flex-direction:column; gap:5px; }
   .hdr-star { position:static; font-size:8px; margin:0; }
   .hdr-logo { position:static; margin:0; height:18px; width:auto; display:block; }
-  .hdr-sub { position:static; margin:0; font-size:7px; letter-spacing:.23em; }
   .hdr-info { position:static; margin:0; font-size:7px; letter-spacing:.16em; color:#8edfeb; }
-  #announce { position:static; margin:6px 0 0; font-size:10px; line-height:1.4; color:#f1f7fa; text-align:left; }
   .hdr-status { position:static; align-self:flex-end; margin-top:6px; }
   .nav { position:fixed; z-index:25; left:50%; right:auto; top:24px; bottom:auto; transform:translateX(-50%); width:max-content; max-width:none; display:flex; gap:23px; padding:0; border:0; background:transparent; box-shadow:none; }
   .nav button { flex-direction:row; gap:7px; padding:7px 0; font-size:10px; color:#9ab0ba; }
@@ -853,4 +828,92 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 @media (prefers-reduced-motion: reduce) {
   .hdr-star { animation:none; }
   .hero-cta,.supported-card { transition:none; }
+}
+
+/* ---------- reviews ---------- */
+.stars { position: relative; display: inline-block; line-height: 0; vertical-align: middle; }
+.stars-bg, .stars-fg { display: inline-flex; gap: 2px; white-space: nowrap; }
+.stars-bg { color: rgba(255, 255, 255, 0.14); }
+.stars-fg { position: absolute; left: 0; top: 0; overflow: hidden; color: #ffcf5c; }
+.stars svg { width: 18px; height: 18px; }
+.stars.small svg { width: 13px; height: 13px; }
+
+.rev-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 34px 18px; }
+.rev-loading .spinner { position: static; width: 44px; height: 44px; animation: spin 1.05s linear infinite; }
+.rev-loading-text { font-size: 12px; color: var(--mut); letter-spacing: .02em; }
+
+.rev-summary { display: flex; align-items: center; gap: 22px; }
+.rev-score { flex: none; text-align: center; min-width: 108px; }
+.rev-avg { font-size: 46px; line-height: 1; font-weight: 800; color: var(--txt); margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+.rev-count { margin-top: 7px; font-size: 10px; color: var(--mut); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.rev-dist { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.rev-dist-row { display: grid; grid-template-columns: 30px 1fr 24px; align-items: center; gap: 8px; font-size: 10.5px; color: var(--mut); font-variant-numeric: tabular-nums; }
+.rev-dist-bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
+.rev-dist-bar i { display: block; height: 100%; background: linear-gradient(90deg, #00dccb, #8edfeb); border-radius: 3px; }
+.rev-dist-c { text-align: right; }
+
+.rev-cta { width: 100%; margin: 2px 0 14px; }
+.rev-cta svg { width: 17px; height: 17px; }
+.rev-list-title { font-size: 10.5px; font-weight: 800; color: var(--mut); letter-spacing: .14em; text-transform: uppercase; padding: 4px 4px 10px; }
+.rev-list { display: flex; flex-direction: column; gap: 10px; }
+.rev-item { padding: 13px 14px; }
+.rev-head { display: flex; align-items: center; gap: 10px; }
+.rev-avatar { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; color: #031014; background: linear-gradient(135deg, #00dccb, #8edfeb); }
+.rev-meta { flex: 1; min-width: 0; }
+.rev-name { font-size: 13px; font-weight: 700; color: #eaf6fa; }
+.rev-date { font-size: 10.5px; color: var(--mut); margin-top: 1px; }
+.rev-text { margin-top: 9px; font-size: 12.5px; line-height: 1.55; color: #dbe7ec; overflow-wrap: break-word; }
+
+/* star rating: review sheet + admin panel */
+.star-input { display: flex; gap: 2px; justify-content: center; margin: 12px 0 4px; }
+.star-btn { background: none; border: 0; padding: 6px; cursor: pointer; color: rgba(255, 255, 255, 0.16); transition: transform .12s ease, color .15s ease; -webkit-tap-highlight-color: transparent; }
+.star-btn svg { width: 38px; height: 38px; display: block; }
+.star-btn.on { color: #ffcf5c; filter: drop-shadow(0 0 10px rgba(255, 207, 92, 0.35)); }
+.star-btn:active { transform: scale(1.18); }
+.star-input.compact { justify-content: flex-start; margin: 4px 0 0; }
+.star-input.compact .star-btn { padding: 3px; }
+.star-input.compact .star-btn svg { width: 26px; height: 26px; }
+
+.review-order { text-align: center; font-size: 12.5px; color: var(--mut); line-height: 1.5; padding: 2px 10px 0; }
+.review-order b { color: #eaf6fa; font-weight: 700; }
+.review-order span { display: block; font-size: 10.5px; margin-top: 2px; letter-spacing: .04em; }
+.review-textarea {
+  width: 100%; box-sizing: border-box; resize: none; margin-top: 10px;
+  background: rgba(9, 12, 14, 0.72); border: 1px solid var(--line); border-radius: 14px;
+  color: var(--txt); font: 400 13px/1.55 'Inter', sans-serif; padding: 12px 13px; outline: none;
+  transition: border-color .2s;
+}
+.review-textarea:focus { border-color: rgba(0, 220, 203, 0.45); }
+.note-ok { color: var(--ok); }
+
+.h-review { margin-top: 8px; display: flex; }
+.h-review-done { font-size: 11px; font-weight: 700; color: var(--ok); }
+.h-review-btn {
+  background: none; border: 1px solid rgba(255, 207, 92, 0.35); color: #ffcf5c;
+  font: 700 11px 'Manrope', sans-serif; padding: 5px 12px; border-radius: 999px; cursor: pointer;
+  transition: transform .12s ease;
+}
+.h-review-btn:active { transform: scale(.96); }
+
+/* admin: reviews */
+.adm-rev-summary { margin: 12px 0 8px; font-size: 11px; color: var(--mut); letter-spacing: .02em; }
+.adm-revlist { display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.adm-rev-item { background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.adm-rev-top { display: flex; align-items: center; gap: 8px; }
+.adm-rev-top b { font-size: 12px; color: #eaf6fa; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-rev-stars { color: #ffcf5c; font-size: 11px; letter-spacing: .05em; flex: none; }
+.adm-rev-del { flex: none; width: 26px; height: 26px; border-radius: 8px; border: 1px solid rgba(255, 84, 112, 0.35); background: rgba(255, 84, 112, 0.08); color: #ff7e87; cursor: pointer; font-size: 12px; line-height: 1; transition: background .15s; }
+.adm-rev-del:active { background: rgba(255, 84, 112, 0.2); }
+.adm-rev-text { margin-top: 7px; font-size: 12px; line-height: 1.5; color: #c9d6dc; overflow-wrap: break-word; }
+.adm-rev-date { margin-top: 6px; font-size: 10px; color: var(--mut); }
+.adm-rev-empty { font-size: 11.5px; color: var(--mut); text-align: center; padding: 14px 8px; }
+.f-box textarea {
+  flex: 1; width: 100%; min-width: 0; background: none; border: none; outline: none; resize: none;
+  color: var(--txt); font: 400 13px/1.55 'Inter', sans-serif;
+}
+.f-box textarea::placeholder { color: #52717e; }
+@media (max-width: 400px) {
+  .rev-summary { flex-direction: column; gap: 14px; text-align: center; }
+  .rev-dist { width: 100%; }
+  .adm-tab { font-size: 10.5px; padding: 10px 2px; }
 }

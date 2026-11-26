@@ -127,9 +127,9 @@ async function broadcast(text, options = {}) {
 
 // Объявление всем клиентам, которые когда-либо открывали бота/приложение.
 const CLIENTS_ANNOUNCE_OPEN =
-  '🟢 <b>PRICELEX: выкуп карт открыт!</b>\n\n' +
-  'Снова принимаем заявки на выкуп USD gift-карт Google, iTunes, Xbox и Apple Store 🎁\n' +
-  'Выплата в BTC без документов и регистрации — в приложении и в боте.';
+  '🟢 <b>Pricelex Worldwide: gift cards are open!</b>\n\n' +
+  'We are accepting USD gift card redemption orders again — Google, iTunes, Xbox and Apple Store 🎁\n' +
+  'BTC payouts, no documents or registration — in the app and in the bot.';
 
 async function announceToClients(text) {
   if (!bot) return { sent: 0, failed: 0 };
@@ -139,7 +139,7 @@ async function announceToClients(text) {
     try { await bot.api.sendMessage(id, text, { parse_mode: 'HTML' }); sent += 1; }
     catch (e) { failed += 1; console.error(`[bot] announce → ${id}:`, e.message); }
   }));
-  console.log(`[PRICELEX] объявление клиентам: отправлено ${sent}, не доставлено ${failed}`);
+  console.log(`[Pricelex Worldwide] объявление клиентам: отправлено ${sent}, не доставлено ${failed}`);
   return { sent, failed };
 }
 
@@ -153,7 +153,7 @@ async function sendReceiptTo(adminId, o) {
   }
   try {
     await bot.api.sendDocument(adminId, new InputFile(file, `check-${o.id}.pdf`), {
-      caption: `🧾 PRICELEX · заявка #${o.id} · $${o.units || 0} → ${fmtCrypto(o.crypto, 'BTC', 8)} · ${o.receipt.name} (${fmtSize(o.receipt.size)})`,
+      caption: `🧾 Pricelex Worldwide · заявка #${o.id} · $${o.units || 0} → ${fmtCrypto(o.crypto, 'BTC', 8)} · ${o.receipt.name} (${fmtSize(o.receipt.size)})`,
     });
     return true;
   } catch (e) {
@@ -170,10 +170,10 @@ async function sendReceiptToAdmins(o) {
 async function notifyClientConnected(o) {
   try {
     await bot.api.sendMessage(o.userId,
-      `🤝 <b>Оператор на связи по заявке #${o.id}</b>\n\n` +
-      `Теперь можно отправить код карты ${dirLabel(o)} (номиналом $${giftUnits(o)}) — в приложении или здесь, ответив на это сообщение /menu → 📦 Мои заявки.\n` +
-      `После отправки кода оператор проверит карту и выплатит <b>${payoutText(o)}</b> на кошелёк <code>${esc(o.wallet)}</code>.\n\n` +
-      `Не сообщайте код карты никому, кроме оператора PRICELEX.`,
+      `🤝 <b>The operator is online for order #${o.id}</b>\n\n` +
+      `You can now send the ${dirLabel(o)} card code (face value $${giftUnits(o)}) — in the app or right here, via /menu → 📦 My orders.\n` +
+      `After you send the code, the operator will verify the card and pay out <b>${payoutText(o)}</b> to the wallet <code>${esc(o.wallet)}</code>.\n\n` +
+      `Don't share the card code with anyone except the Pricelex Worldwide operator.`,
       { parse_mode: 'HTML' });
     return true;
   } catch (e) {
@@ -185,7 +185,7 @@ async function notifyClientConnected(o) {
 async function notifyClientTx(o) {
   try {
     await bot.api.sendMessage(o.userId,
-      `🔗 <b>Транзакция по заявке #${o.id} отправлена</b>\n\n${esc(o.txUrl)}\n\nПроверьте поступление ${payoutText(o)} на кошелёк:\n<code>${esc(o.wallet)}</code>`,
+      `🔗 <b>The transaction for order #${o.id} has been sent</b>\n\n${esc(o.txUrl)}\n\nCheck the incoming ${payoutText(o)} at the wallet:\n<code>${esc(o.wallet)}</code>`,
       { parse_mode: 'HTML' });
     return true;
   } catch (e) {
@@ -239,7 +239,7 @@ async function onSupportMessage({ message, user }) {
     // admin reply -> try to notify client via bot
     try {
       await bot.api.sendMessage(message.userId,
-        `💬 <b>Поддержка PRICELEX:</b>\n${esc(message.text)}`,
+        `💬 <b>Pricelex Worldwide Support:</b>\n${esc(message.text)}`,
         { parse_mode: 'HTML' });
     } catch (e) {
       console.error(`[bot] support reply → client ${message.userId}:`, e.message);
@@ -322,7 +322,7 @@ async function mainMenu(ctx, edit = false) {
     .text(`💬 Поддержка${supportCount ? ` (${supportCount})` : ''}`, 'm:support')
     .text('👥 Админы', 'm:admins');
   const text = [
-    '🌌 <b>PRICELEX | Official</b> — пульт оператора',
+    '🌌 <b>Pricelex Worldwide | Official</b> — пульт оператора',
     s.online ? '🟢 Обменник <b>ОНЛАЙН</b>' : '🔴 Обменник <b>ОФФЛАЙН</b>',
     rateLine(s),
     s.rateUpdatedAt ? 'Официальный курс от ' + fmtDate(s.rateUpdatedAt) + ' (' + esc(s.rateSource || '?') + ')' : 'ещё не подтянут — действует сохранённая цена BTC/USD',
@@ -370,7 +370,6 @@ function settingsKb(s) {
     .text(s.online ? '🟢 Онлайн' : '🔴 Оффлайн', 's:online')
     .text('🎁 Реф. %', 's:ref')
     .row()
-    .text('📢 Объявление', 's:ann')
     .text('📇 Оператор', 's:op')
     .row()
     .text('📣 Канал', 's:ch')
@@ -392,7 +391,6 @@ function settingsText(s) {
     `🕹 Карты: ${currencies.list().map((p) => `${p.label} ${currencies.isEnabled(s, p.key) ? '✅' : '⛔'}`).join(' · ')}\n` +
     `🎁 Реферальный процент: <b>${s.refPercent}%</b>\n` +
     `Статус: ${s.online ? '🟢 Онлайн' : '🔴 Оффлайн'}\n` +
-    `📢 ${esc(s.announcement)}\n` +
     `📇 ${esc(s.operator)} · 📣 ${esc(s.channel)}\n💬 ${esc(s.chat)}`
   );
 }
@@ -442,7 +440,6 @@ const SET_FIELDS = {
     discount: true,
   },
   ref: { label: 'реферальный процент (например 1)', num: true, key: 'refPercent' },
-  ann: { label: 'текст объявления для сайта' },
   op: { label: 'юзернейм оператора (например @operator)' },
   ch: { label: 'ссылку на канал' },
   chat: { label: 'ссылку на чат' },
@@ -579,7 +576,7 @@ function register() {
         flows.delete(ctx.from.id);
         await ctx.reply(changed ? '✅ Список обновлён.' : 'Список не изменился.');
         if (changed && command === 'addadmin') {
-          await bot.api.sendMessage(id, 'Вы добавлены как оператор PRICELEX. /start — пульт оператора.')
+          await bot.api.sendMessage(id, 'Вы добавлены как оператор Pricelex Worldwide. /start — пульт оператора.')
             .catch(() => ctx.reply('Попросите нового админа открыть бота и нажать /start.'));
         }
         return adminsMenu(ctx);
@@ -759,7 +756,7 @@ function createBot(options = {}) {
 
 async function startBot() {
   if (!config.botToken) {
-    console.log('[PRICELEX] BOT_TOKEN не задан → сайт работает в ДЕМО-режиме, бот отключён.');
+    console.log('[Pricelex Worldwide] BOT_TOKEN не задан → сайт работает в ДЕМО-режиме, бот отключён.');
     return;
   }
   createBot();
@@ -776,13 +773,13 @@ async function startBot() {
     .catch(() => {});
 
   if (!admins.all().length) {
-    console.warn('[PRICELEX] ВНИМАНИЕ: ADMIN_ID / ADMIN_IDS не заданы — нет администраторов.');
+    console.warn('[Pricelex Worldwide] ВНИМАНИЕ: ADMIN_ID / ADMIN_IDS не заданы — нет администраторов.');
   }
   await Promise.all(admins.all().map(async (id) => {
     if (store.get().flags.onboardedAdmins?.[id]) return;
     try {
       await bot.api.sendMessage(id,
-        `🚀 <b>PRICELEX запущен!</b>\n🤖 @${esc(bot.botInfo.username)}\n/start — пульт оператора\n/admins — список админов\n/support — чаты поддержки\nНовые заявки будут приходить всем операторам.`,
+        `🚀 <b>Pricelex Worldwide запущен!</b>\n🤖 @${esc(bot.botInfo.username)}\n/start — пульт оператора\n/admins — список админов\n/support — чаты поддержки\nНовые заявки будут приходить всем операторам.`,
         { parse_mode: 'HTML' });
       store.mutate((db) => { (db.flags.onboardedAdmins ||= {})[id] = true; });
     } catch (e) { console.error(`[bot] onboarding ${id}:`, e.message); }
@@ -791,14 +788,14 @@ async function startBot() {
 
   const applyPublicUrl = async (url, notifyAdmin = true) => {
     if (!/^https:\/\//i.test(String(url || ''))) {
-      console.error('[PRICELEX] publicUrl не https — кнопка меню Telegram не установлена:', url);
+      console.error('[Pricelex Worldwide] publicUrl не https — кнопка меню Telegram не установлена:', url);
       return;
     }
     try {
       await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Открыть обменник', web_app: { url } } });
-      console.log('[PRICELEX] кнопка меню Telegram настроена на', url);
+      console.log('[Pricelex Worldwide] кнопка меню Telegram настроена на', url);
     } catch (e) {
-      console.error('[PRICELEX] setChatMenuButton:', e.message);
+      console.error('[Pricelex Worldwide] setChatMenuButton:', e.message);
     }
     if (notifyAdmin) await broadcast(`🔗 Публичный адрес обменника:\n${url}`);
   };
@@ -809,7 +806,7 @@ async function startBot() {
 
   bot.catch((e) => console.error('[bot error]', e.message));
   bot.start();
-  console.log('[PRICELEX] бот запущен: @' + bot.botInfo.username);
+  console.log('[Pricelex Worldwide] бот запущен: @' + bot.botInfo.username);
 }
 
 module.exports = { startBot, createBot };

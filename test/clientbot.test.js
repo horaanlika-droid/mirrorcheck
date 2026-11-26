@@ -1,5 +1,5 @@
-// Клиентский флоу бота: /start → меню, обмен и гифт-карта прямо в чате, «Я оплатил»,
-// виджеты за флагом WIDGETS=1 с откатом на обычное сообщение.
+// Client-bot flow: /start → menu, exchange and gift card right in chat, "I paid",
+// widgets behind the WIDGETS=1 flag with fallback to a plain message.
 const { test, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -46,7 +46,7 @@ const lastCall = (method) => [...calls].reverse().find((c) => c.method === metho
 
 beforeEach(() => { calls = []; });
 after(async () => {
-  // На всякий случай возвращаем «живую» среду.
+  // Restore the "live" environment just in case.
   delete process.env.WIDGETS;
   widget.__setFetch(globalThis.fetch);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -55,17 +55,17 @@ after(async () => {
 test('non-admin /start opens the client menu with c: callbacks', async () => {
   await text(999, '/start');
   const send = lastCall('sendMessage');
-  assert.ok(send, 'бот отвечает сообщением');
-  assert.ok(String(send.text).includes('PRICELEX'));
+  assert.ok(send, 'bot replies with a message');
+  assert.ok(String(send.text).includes('Pricelex Worldwide'));
   const cb = markupCallbacks(send);
   assert.ok(cb.includes('c:exchange') && cb.includes('c:orders') && cb.includes('c:support'));
-  assert.ok(store.getUser(999), 'пользователь добавлен в базу');
+  assert.ok(store.getUser(999), 'user added to the store');
 });
 
 test('admin /start still opens the operator console, not the client menu', async () => {
   await text(111, '/start');
   const send = lastCall('sendMessage');
-  assert.ok(String(send.text).includes('пульт оператор'));
+  assert.ok(String(send.text).includes('пульт оператор')); // operator bot stays Russian
   const cb = markupCallbacks(send);
   assert.ok(cb.includes('m:orders') && !cb.some((d) => d.startsWith('c:')));
 });
@@ -79,15 +79,15 @@ test('info, referrals and support screens render; support message reaches the op
   const client = 1011;
   await text(client, '/start');
   await click(client, 'c:info');
-  assert.ok(String((lastCall('editMessageText') || {}).text).includes('PRICELEX'));
+  assert.ok(String((lastCall('editMessageText') || {}).text).includes('Pricelex Worldwide'));
   await click(client, 'c:refs');
-  assert.ok(String((lastCall('editMessageText') || {}).text).includes('Реферальная'));
+  assert.ok(String((lastCall('editMessageText') || {}).text).includes('Referral'));
   calls = [];
   await click(client, 'c:support');
   await text(client, 'Где моя заявка?');
   const support = store.get().support.find((m) => String(m.userId) === String(client));
   assert.ok(support && support.text === 'Где моя заявка?');
-  assert.ok(calls.some((c) => c.method === 'sendMessage' && String(c.chat_id) === '111' && String(c.text).includes('поддержки')));
+  assert.ok(calls.some((c) => c.method === 'sendMessage' && String(c.chat_id) === '111' && String(c.text).includes('поддержки'))); // operator bot stays Russian
 });
 
 test('gift flow end-to-end: menu → exchange → Google Gift Card → paid → operator notified', async () => {
@@ -100,47 +100,47 @@ test('gift flow end-to-end: menu → exchange → Google Gift Card → paid → 
   await click(client, 'c:buy:GOOGLE_USD');
   screen = lastCall('editMessageText');
   assert.ok(String(screen.text).includes('Google Gift Card'));
-  assert.ok(String(screen.text).includes('Правила передачи карты'), 'первым открывается диалог с правилами');
-  assert.ok(String(screen.text).includes('Минимальный цифровой след'), 'цифровой след упомянут в карточке подарка');
-  assert.ok(String(screen.text).includes('Ничего не отправляйте'));
-  assert.doesNotMatch(String(screen.text), /комисси/i, 'клиенту не показываем комиссию');
+  assert.ok(String(screen.text).includes('Card transfer rules'), 'the rules dialog opens first');
+  assert.ok(String(screen.text).includes('Minimal digital footprint'), 'digital footprint mentioned in the gift card');
+  assert.ok(String(screen.text).includes("Don't send anything"));
+  assert.doesNotMatch(String(screen.text), /commission|fee/i, 'client never sees the fee');
 
-  // Правила → номинал. Код при создании заявки НЕ спрашивают.
+  // Rules → amount. The code is NOT asked at order creation.
   await click(client, 'c:giftnom:GOOGLE_USD');
   screen = lastCall('editMessageText');
   assert.ok(markupCallbacks(screen).includes('c:units:GOOGLE_USD:10'));
-  assert.doesNotMatch(String(screen.text), /комисси/i, 'курс показа не раскрывает комиссию');
+  assert.doesNotMatch(String(screen.text), /commission|fee/i, 'the displayed rate does not reveal the fee');
   await click(client, 'c:units:GOOGLE_USD:10');
   const askWallet = lastCall('editMessageText');
-  assert.match(String(askWallet.text), /кошельк/i, 'после номинала спрашивают только кошелёк');
-  assert.ok(!String(askWallet.text).includes('Код карты'), 'код до создания заявки не запрашивают');
-  // Bitcoin-адрес.
+  assert.match(String(askWallet.text), /wallet/i, 'after the amount only the wallet is asked');
+  assert.ok(!/code/i.test(String(askWallet.text)), 'the code is not asked before order creation');
+  // Bitcoin address.
   await text(client, 'bc1' + 'a'.repeat(30));
   const created = store.get().orders.find((o) => String(o.userId) === String(client));
-  assert.ok(created, 'заявка создана');
+  assert.ok(created, 'order created');
   assert.equal(created.direction, 'sell');
   assert.equal(created.units, 10);
   assert.equal(created.currency, 'GOOGLE_USD');
   assert.equal(created.payoutCurrency, 'BTC');
-  assert.equal(created.crypto, Math.floor(10 * created.rate * 1e8 + 1e-6) / 1e8, 'BTC-выплата рассчитывается по общему курсу');
+  assert.equal(created.crypto, Math.floor(10 * created.rate * 1e8 + 1e-6) / 1e8, 'BTC payout is computed from the shared rate');
   assert.equal(created.network, null);
-  assert.equal(created.giftCode ?? null, null, 'заявка без кода — код только после подключения оператора');
+  assert.equal(created.giftCode ?? null, null, 'order has no code — the code comes only after the operator joins');
   assert.equal(created.status, 'new');
 
-  // До подключения оператора код отправить нельзя.
+  // The code cannot be sent before the operator joins.
   await click(client, `c:sendcode:${created.id}`);
-  assert.match(String(lastCall('editMessageText').text), /после подключения оператора/i);
+  assert.match(String(lastCall('editMessageText').text), /after the operator joins/i);
   assert.equal(store.getOrder(created.id).status, 'new');
   assert.equal(store.getOrder(created.id).giftCode ?? null, null);
 
-  // Оператор подключается (в проде — кнопка «🤝 Подключить» в боте оператора).
+  // The operator joins (in production — the "🤝 Connect" button in the operator bot).
   store.updateOrder(created.id, { status: 'details' });
   await click(client, `c:sendcode:${created.id}`);
-  assert.match(String(lastCall('editMessageText').text), /Оператор в заявке/);
+  assert.match(String(lastCall('editMessageText').text), /The operator is in the order/);
   await text(client, 'XXXX-YYYY-ZZZZ-0001');
   assert.equal(store.getOrder(created.id).status, 'paid');
   assert.equal(store.getOrder(created.id).giftCode, 'XXXX-YYYY-ZZZZ-0001');
-  // Оператору улетело уведомление с кодом.
+  // The operator was notified with the code.
   assert.ok(calls.some((c) => c.method === 'sendMessage' && String(c.chat_id) === '111' && String(c.text).includes(`#${created.id}`)));
 });
 
@@ -177,7 +177,7 @@ test('expired gift link and unknown order do not crash the client', async () => 
   await text(1002, '/start');
   await click(1002, 'c:order:999999');
   const screen = lastCall('editMessageText') || lastCall('sendMessage');
-  assert.ok(String(screen.text).includes('не найдена'));
+  assert.ok(String(screen.text).includes('Order not found'));
 });
 
 test('widget send is attempted when WIDGETS=1 and falls back to text on Telegram error', async () => {
@@ -191,23 +191,23 @@ test('widget send is attempted when WIDGETS=1 and falls back to text on Telegram
   const order = store.get().orders.find((o) => String(o.userId) === String(client));
   assert.ok(order);
 
-  // 1) WIDGETS не задан — виджет не пробуем вообще.
+  // 1) WIDGETS is not set — the widget is not attempted at all.
   delete process.env.WIDGETS;
   let widgetSends = 0;
   widget.__setFetch(async () => { widgetSends += 1; return { ok: true, json: async () => ({ ok: true, result: { message_id: 1 } }) }; });
   calls = [];
   await click(client, `c:order:${order.id}`);
-  assert.equal(widgetSends, 0, 'виджеты по умолчанию выключены');
+  assert.equal(widgetSends, 0, 'widgets are off by default');
   assert.ok(calls.some((c) => (c.method === 'editMessageText' || c.method === 'sendMessage') && String(c.text).includes(`#${order.id}`)));
 
-  // 2) WIDGETS=1, Telegram отвечает INPUT_MEDIA_WIDGET_NOT_ALLOWED — откат на обычную карточку.
+  // 2) WIDGETS=1, Telegram replies INPUT_MEDIA_WIDGET_NOT_ALLOWED — fall back to the plain card.
   process.env.WIDGETS = '1';
   widget.__setFetch(async () => ({ ok: true, json: async () => ({ ok: false, error_code: 403, description: 'Bad Request: INPUT_MEDIA_WIDGET_NOT_ALLOWED' }) }));
   calls = [];
   await click(client, `c:order:${order.id}`);
-  assert.ok(calls.some((c) => (c.method === 'editMessageText' || c.method === 'sendMessage') && String(c.text).includes(`#${order.id}`)), 'откат на обычное сообщение');
+  assert.ok(calls.some((c) => (c.method === 'editMessageText' || c.method === 'sendMessage') && String(c.text).includes(`#${order.id}`)), 'falls back to a plain message');
 
-  // 3) WIDGETS=1, виджет принят — текстовая карточка не отправляется.
+  // 3) WIDGETS=1, the widget is accepted — the text card is not sent.
   const sentPayloads = [];
   widget.__setFetch(async (url, opts) => {
     sentPayloads.push({ url, body: JSON.parse(opts.body) });
@@ -217,11 +217,11 @@ test('widget send is attempted when WIDGETS=1 and falls back to text on Telegram
   await click(client, `c:order:${order.id}`);
   assert.equal(sentPayloads.length, 1);
   assert.ok(String(sentPayloads[0].url).includes('sendWidget'));
-  assert.equal(sentPayloads[0].body.allow_queries, true, 'иначе тапы не дойдут до бота');
-  assert.ok(String(sentPayloads[0].body.html).includes('PRICELEX'));
+  assert.equal(sentPayloads[0].body.allow_queries, true, 'otherwise taps will not reach the bot');
+  assert.ok(String(sentPayloads[0].body.html).includes('Pricelex Worldwide'));
   assert.ok(Buffer.byteLength(sentPayloads[0].body.html, 'utf8') <= 32768);
   assert.ok(Buffer.byteLength(sentPayloads[0].body.chat_data, 'utf8') <= 1024);
-  assert.ok(!calls.some((c) => (c.method === 'editMessageText' || c.method === 'sendMessage') && String(c.text).includes(`Заявка #${order.id}`)));
+  assert.ok(!calls.some((c) => (c.method === 'editMessageText' || c.method === 'sendMessage') && String(c.text).includes(`Order #${order.id}`)));
   delete process.env.WIDGETS;
 });
 
@@ -235,8 +235,8 @@ test('widget_query is answered and message state refreshed via editMessageWidget
   await text(client, 'bc1' + 'c'.repeat(30));
   const order = store.get().orders.find((o) => String(o.userId) === String(client));
   assert.ok(order);
-  // «Я оплатил» в виджете работает для заявки с кодом (совместимость со старыми клиентами):
-  // в двухфазной схеме без кода кнопка оплаты не показывается и тап отклоняется.
+  // "I paid" in the widget works for an order with a code (compatibility with legacy clients):
+  // in the two-phase scheme without a code the pay button is not shown and the tap is rejected.
   store.updateOrder(order.id, { giftCode: 'WQ-CODE-0003' });
 
   const widgetCalls = [];
@@ -255,11 +255,11 @@ test('widget_query is answered and message state refreshed via editMessageWidget
 
   assert.ok(widgetCalls.some((c) => String(c.url).includes('answerWidgetQuery') && c.body.widget_query_id === 'wq-1'));
   const edit = widgetCalls.find((c) => String(c.url).includes('editMessageWidgetData'));
-  assert.ok(edit, 'состояние кнопки/текста обновлено в сообщении');
+  assert.ok(edit, 'button/text state refreshed in the message');
   assert.equal(edit.body.chat_id, client);
   assert.equal(edit.body.message_id, 777);
   assert.ok(String(edit.body.chat_data).includes(`"id":${order.id}`));
-  // «Я оплатил» прямо из виджета переводит заявку в paid.
+  // "I paid" straight from the widget moves the order to paid.
   await bot.handleUpdate({ update_id: ++seq + 1000, widget_query: {
     id: 'wq-2', type: { type: 'data' }, data: `paid:${order.id}`,
     from: { id: client, first_name: 'Client', is_bot: false },
@@ -281,7 +281,7 @@ test('widget «paid» is rejected for someone else’s order', async () => {
   const order = store.get().orders.find((o) => String(o.userId) === String(owner));
 
   const res = await (async () => {
-    // Напрямую через обработчик виджета: чужой userId → not_found.
+    // Directly through the widget handler: someone else's userId → not_found.
     const clientbot = require('../src/clientbot');
     return clientbot.clientPaidWidget({ from: { id: stranger, first_name: 'Mallory' } }, order.id);
   })();
