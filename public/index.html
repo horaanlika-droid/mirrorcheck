@@ -295,6 +295,7 @@
 
       <div class="adm-pane hidden" data-pane="texts">
         <div class="adm-note">Здесь можно изменить постоянные надписи приложения. Редактируется целый блок целиком: для руководства — целая секция (несколько абзацев сразу), для остального — заголовок, подпись кнопки или info-note. Отдельные предложения внутри блока не редактируются. Одинаковые исходные блоки меняются во всех местах. Числа, статусы, сообщения бота, отзывы и другие данные пользователей здесь не редактируются.</div>
+        <button class="btn btn-ghost" id="admInlineToggle" style="width:100%;margin-bottom:12px">✏️ Редактировать тексты прямо в интерфейсе</button>
         <label class="f-label" for="admTextSearch">Поиск по исходному тексту</label>
         <div class="f-box"><input id="admTextSearch" type="search" placeholder="Найти текст"></div>
         <div id="admTextStatus" class="adm-field-hint" role="status"></div>
@@ -382,6 +383,7 @@
   </div>
 
   <div id="toast" class="toast"></div>
+  <button class="adm-inline-done hidden" id="admInlineDone" type="button">✓ Готово</button>
   <script src="/app.js"></script>
 </body>
 </html>
