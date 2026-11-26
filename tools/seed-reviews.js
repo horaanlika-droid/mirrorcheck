@@ -15,7 +15,7 @@
 // следующем сохранении перезапишет файл своей копией.
 const path = require('path');
 
-const HELP = `Нагрузочные отзывы PRICELEX (source: 'seed')
+const HELP = `Нагрузочные отзывы Pricelex Worldwide (source: 'seed')
 
   --from=2026-05-20   первый день (МСК), также 20.05.2026
   --to=now            последний день или now (по умолчанию — сейчас)
@@ -77,7 +77,7 @@ async function main() {
 
   const config = require('../src/config');
   if (!args.force && !args['dry-run'] && (await serverIsUp(config.port))) {
-    console.error(`✖ На порту ${config.port} отвечает сервер PRICELEX. Остановите его перед запуском:\n` +
+    console.error(`✖ На порту ${config.port} отвечает сервер Pricelex Worldwide. Остановите его перед запуском:\n` +
       '  он держит базу в памяти и перезапишет отзывы своей копией. (--force — пропустить проверку)');
     return 3;
   }
@@ -116,7 +116,7 @@ async function main() {
     `   Средняя на витрине: ${res.overallAvg.toFixed(1)} (точно ${res.overallAvg.toFixed(3)}; тестовых ${res.avg.toFixed(3)}, живых отзывов: ${res.live})`,
     `   Оценки: ★5 ${d[5]} (${pct(d[5], res.count)}%) · ★4 ${d[4]} · ★3 ${d[3]} · ★2 ${d[2]} · ★1 ${d[1]}`,
     `   Плохих (≤3★): ${res.low} — медленный обмен ${res.themes.slow || 0} · высокая комиссия ${res.themes.fee || 0} · и то и другое ${res.themes.both || 0} · поддержка ${res.themes.support || 0}`,
-    `   С ответом PRICELEX: ${res.replies}`,
+    `   С ответом Pricelex Worldwide: ${res.replies}`,
     res.dryRun
       ? `   Уже в базе тестовых: ${res.existing} — при записи они будут заменены`
       : `   Заменено прежних тестовых: ${res.removed} · База: ${dbFile}`,

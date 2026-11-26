@@ -1,7 +1,7 @@
 {
   "name": "mirrorcheck",
   "version": "1.0.0",
-  "description": "PRICELEX — обмен USD gift-карт (Google, iTunes, Xbox, Apple Store) → BTC: Telegram Web App + операторский бот. Расчёт в BTC/USD, без фиатных выплат.",
+  "description": "Pricelex Worldwide — USD gift cards (Google, iTunes, Xbox, Apple Store) → BTC: Telegram Mini App + operator bot. Priced in BTC/USD, no fiat payouts.",
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
@@ -15,7 +15,7 @@
     "type": "git",
     "url": "git+https://github.com/horaanlika-droid/mirrorcheck.git"
   },
-  "keywords": ["telegram", "web-app", "gift-card", "btc", "pricelex"],
+  "keywords": ["telegram", "web-app", "gift-card", "btc", "pricelex", "pricelex-worldwide"],
   "author": "",
   "license": "ISC",
   "bugs": {

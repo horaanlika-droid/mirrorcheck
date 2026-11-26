@@ -1,31 +1,31 @@
-// Виджеты Telegram Bot API 10.4 (HTML-виджеты внутри сообщений бота).
-// Важно: с 13–15.11.2026 Telegram закрыл sendWidget для обычных ботов даже в личке
-// (INPUT_MEDIA_WIDGET_NOT_ALLOWED — подтверждено в репозитории Bot API).
-// Поэтому виджет за флагом WIDGETS=1 и с безопасным откатом на обычное сообщение:
-// пока Telegram не откроет доступ, бот работает как обычно.
+// Telegram Bot API 10.4 widgets (HTML widgets inside bot messages).
+// Important: since 13–15.11.2026 Telegram closed sendWidget for regular bots even in private chats
+// (INPUT_MEDIA_WIDGET_NOT_ALLOWED — confirmed in the Bot API repository).
+// So the widget ships behind the WIDGETS=1 flag with a safe fallback to a plain message:
+// until Telegram opens access, the bot works as usual.
 //
-// Протокол (Bot API 10.4, проверено по core.telegram.org/bots/widgets, 25.11.2026):
-// • Сообщение несёт html (≤ 32 КБ сырьём, ≤ 4096 байт после zlib level 9) + chat_data (JSON-строка ≤ 1024 байт).
-// • allow_queries: true обязателен — без него тапы не доходят до бота.
-// • Страница читает TelegramWidget.chatData (СТРОКА, нужен JSON.parse), тап → TelegramWidget.request(data ≤ 64 Б).
-// • Бот получает update widget_query: { id, from, chat?, message_id?, data, type: { type: 'data' } } —
-//   поля chat/message_id лежат на верхнем уровне, а НЕ внутри message.
-// • На каждый запрос надо ответить answerWidgetQuery(widget_query_id, data ≤ 1024 Б) в течение 15 с.
-// • Состояние меняется только через editMessageWidgetData(chat_id, message_id, chat_data) → событие chatDataChanged.
-// • fetch/XHR/WebSocket в виджете запрещены; только TelegramWidget.request().
+// Protocol (Bot API 10.4, verified against core.telegram.org/bots/widgets, 25.11.2026):
+// • The message carries html (≤ 32 KB raw, ≤ 4096 bytes after zlib level 9) + chat_data (JSON string ≤ 1024 bytes).
+// • allow_queries: true is mandatory — without it taps never reach the bot.
+// • The page reads TelegramWidget.chatData (a STRING, needs JSON.parse), tap → TelegramWidget.request(data ≤ 64 B).
+// • The bot receives an update widget_query: { id, from, chat?, message_id?, data, type: { type: 'data' } } —
+//   the chat/message_id fields live at the top level, NOT inside message.
+// • Every request must be answered with answerWidgetQuery(widget_query_id, data ≤ 1024 B) within 15 s.
+// • State changes only via editMessageWidgetData(chat_id, message_id, chat_data) → chatDataChanged event.
+// • fetch/XHR/WebSocket are forbidden inside the widget; only TelegramWidget.request().
 const zlib = require('zlib');
 const config = require('./config');
 const store = require('./store');
 const currencies = require('./currencies');
 
-// Инъекция для тестов: по умолчанию — глобальный fetch.
+// Test injection point: defaults to the global fetch.
 let fetchImpl = (...args) => globalThis.fetch(...args);
 const __setFetch = (fn) => { fetchImpl = fn; };
 
 const widgetsEnabled = () => process.env.WIDGETS === '1';
 const MAX_RAW = 32 * 1024;
-const MAX_ZLIB = 4000; // запас от лимита 4096 — оставим ~96 байт на рост
-const MAX_CHAT_DATA = 1000; // лимит 1024, держим запас
+const MAX_ZLIB = 4000; // headroom from the 4096 limit — leave ~96 bytes for growth
+const MAX_CHAT_DATA = 1000; // the limit is 1024, keep headroom
 
 const apiCall = async (method, payload) => {
   const res = await fetchImpl(`https://api.telegram.org/bot${config.botToken}/${method}`, {
@@ -44,7 +44,7 @@ const apiCall = async (method, payload) => {
 
 const zlibSize = (html) => zlib.deflateSync(Buffer.from(html, 'utf8'), { level: 9 }).length;
 
-// Проверяем бюджеты ДО отправки; не влезаем — отдаём null, вызывающий уйдёт на fallback.
+// Budgets are checked BEFORE sending; if we don't fit — return null and the caller falls back.
 const buildWidget = (html, chatData) => {
   const cd = JSON.stringify(chatData);
   if (Buffer.byteLength(cd, 'utf8') > MAX_CHAT_DATA) return null;
@@ -53,7 +53,7 @@ const buildWidget = (html, chatData) => {
   return { html, chatData: cd };
 };
 
-/* ---------- общие стили (компактная тёмная карточка PRICELEX) ---------- */
+/* ---------- shared styles (compact dark Pricelex Worldwide card) ---------- */
 
 const SHELL_CSS =
   'body{margin:0;background:transparent;font-family:system-ui,sans-serif}' +
@@ -68,30 +68,30 @@ const SHELL_CSS =
   '.row{display:flex;gap:8px;margin-top:8px}.row .bt{margin-top:0}' +
   '.gg{display:inline-block;width:12px;height:12px;border-radius:50%;background:#4285F4;color:#fff;font:800 9px/12px system-ui;text-align:center;vertical-align:-1px}';
 
-// Общий JS-помощник форматирования чисел в стиле «1 234 567» (без toLocaleString — в QuickJS может не быть ICU).
+// Shared number-formatting JS helper in the "1 234 567" style (no toLocaleString — QuickJS may lack ICU).
 const GRP =
   'function g(n){n=Math.round(Number(n)||0);var s=String(Math.abs(n)),r="";while(s.length>3){r=" "+s.slice(-3)+r;s=s.slice(0,-3)}return (n<0?"-":"")+s+r}';
 
-// chatData передаётся и парсится виджетом в рантайме (TelegramWidget.chatData → JSON.parse),
-// поэтому весь внутренний JS статичен — нет подстановок на момент сборки.
+// chatData is passed to and parsed by the widget at runtime (TelegramWidget.chatData → JSON.parse),
+// so all inner JS is static — no substitutions at build time.
 const ratesHtml = () => `<!doctype html><meta charset="utf-8"><style>${SHELL_CSS}</style>
-<div class="c"><div class="h">✦ PRICELEX · КУРСЫ</div><div id="r"></div>
-<button class="bt" id="ex">💱 Выкупить карту</button></div>
+<div class="c"><div class="h">✦ Pricelex Worldwide · RATES</div><div id="r"></div>
+<button class="bt" id="ex">💱 Sell a gift card</button></div>
 <script>var W=window.TelegramWidget,d={};try{d=JSON.parse(W.chatData||"{}" )}catch(e){}
 function g(n){n=Math.round(Number(n)||0);var s=String(Math.abs(n)),r="";while(s.length>3){r=" "+s.slice(-3)+r;s=s.slice(0,-3)}return (n<0?"-":"")+s+r}
-document.getElementById("r").innerHTML='<div class="r"><span>🎁 USD gift-карты</span><b>1 $ = '+(Number(d.g)||0).toFixed(8)+' BTC</b></div>'+
-'<div class="r"><span>Бренды</span><b>Google · iTunes · Xbox · Apple Store</b></div>'+
-'<div class="s">'+(d.on?"🟢 Онлайн":"🔴 Оффлайн")+'</div>';
+document.getElementById("r").innerHTML='<div class="r"><span>🎁 USD gift cards</span><b>1 $ = '+(Number(d.g)||0).toFixed(8)+' BTC</b></div>'+
+'<div class="r"><span>Brands</span><b>Google · iTunes · Xbox · Apple Store</b></div>'+
+'<div class="s">'+(d.on?"🟢 Online":"🔴 Offline")+'</div>';
 document.getElementById("ex").addEventListener("click",function(){W.request("ex")});</script>`;
 
 const orderHtml = () => `<!doctype html><meta charset="utf-8"><style>${SHELL_CSS}</style>
-<div class="c"><div class="h">✦ PRICELEX · ЗАЯВКА <span id="i"></span></div>
+<div class="c"><div class="h">✦ Pricelex Worldwide · ORDER <span id="i"></span></div>
 <div class="st" id="st"></div><div class="s" id="sub"></div>
-<button class="bt" id="paid">✅ Я оплатил</button>
-<button class="bt w" id="ref">🔄 Обновить</button>
-<button class="bt w" id="cancel">❌ Отменить заявку</button></div>
+<button class="bt" id="paid">✅ I paid</button>
+<button class="bt w" id="ref">🔄 Refresh</button>
+<button class="bt w" id="cancel">❌ Cancel order</button></div>
 <script>var W=window.TelegramWidget,d={};try{d=JSON.parse(W.chatData||"{}" )}catch(e){}
-var L={new:"🕐 Ожидаем оператора",details:"🤝 Ожидает код карты",paid:"⏳ Карта на проверке",completed:"🟢 Завершена",rejected:"🔴 Отклонена",cancelled:"⚪ Отменена"};
+var L={new:"🕐 Waiting for operator",details:"🤝 Awaiting card code",paid:"⏳ Card under review",completed:"🟢 Completed",rejected:"🔴 Rejected",cancelled:"⚪ Cancelled"};
 document.getElementById("i").textContent="#" + (d.id || "");
 document.getElementById("st").textContent = L[d.st] || d.st || "";
 document.getElementById("sub").textContent = "$" + (d.un || 0) + " → " + (d.cr || 0) + " BTC";
@@ -102,7 +102,7 @@ p.addEventListener("click", function(){ W.request("paid:" + d.id) });
 document.getElementById("ref").addEventListener("click", function(){ W.request("ref:" + d.id) });
 document.getElementById("cancel").addEventListener("click", function(){ W.request("cancel:" + d.id) });</script>`;
 
-/* ---------- отправка с безопасным откатом ---------- */
+/* ---------- sending with a safe fallback ---------- */
 
 const chatIdOf = (ctx) => ctx.chat?.id ?? ctx.callbackQuery?.message?.chat?.id ?? ctx.from?.id;
 
@@ -113,36 +113,36 @@ const trySend = async (chatId, built, caption) => {
       chat_id: chatId,
       html: built.html,
       chat_data: built.chatData,
-      allow_queries: true, // без него тапы не доходят до бота
+      allow_queries: true, // without it taps never reach the bot
     };
     if (caption) payload.caption = caption;
     await apiCall('sendWidget', payload);
     return true;
   } catch (e) {
-    // INPUT_MEDIA_WIDGET_NOT_ALLOWED (обычным ботам закрыли доступ) и всё остальное — на обычное сообщение.
-    console.warn('[widget] отправка недоступна, используем обычное сообщение:', e.message);
+    // INPUT_MEDIA_WIDGET_NOT_ALLOWED (sendWidget closed for regular bots) and everything else — fall back to a plain message.
+    console.warn('[widget] sending unavailable, falling back to a plain message:', e.message);
     return false;
   }
 };
 
-// Виджет «Курсы PRICELEX». Возвращает false → вызывающий показывает обычное меню.
+// The "Pricelex Worldwide rates" widget. Returns false → the caller shows the plain menu.
 const trySendRatesWidget = async (ctx) => {
   if (!widgetsEnabled()) return false;
   const built = buildWidget(ratesHtml(), ratesChatData());
   return trySend(chatIdOf(ctx), built, null);
 };
 
-// Виджет «Заявка». Возвращает false → вызывающий показывает обычную карточку заявки.
+// The "Order" widget. Returns false → the caller shows the plain order card.
 const trySendOrderWidget = async (ctx, o) => {
   if (!widgetsEnabled()) return false;
   if (['completed', 'rejected', 'cancelled'].includes(o.status)) return false;
   const built = buildWidget(orderHtml(), orderChatData(o));
-  return trySend(chatIdOf(ctx), built, `✦ PRICELEX · Заявка #${o.id}`);
+  return trySend(chatIdOf(ctx), built, `✦ Pricelex Worldwide · Order #${o.id}`);
 };
 
-/* ---------- обработка widget_query ---------- */
+/* ---------- widget_query handling ---------- */
 
-// Отвечаем на запрос ВСЕГДА (иначе TIMEOUT у клиента), потом, если есть, пушим свежее состояние.
+// ALWAYS answer the query (otherwise the client gets a TIMEOUT), then push the fresh state if any.
 async function handleWidgetQuery(ctx, wq, clientbot) {
   const qid = wq.id || null;
   const data = String(wq.data || '').slice(0, 64);
@@ -154,7 +154,7 @@ async function handleWidgetQuery(ctx, wq, clientbot) {
   const editState = (fresh) => {
     if (!fresh || !chatId || !messageId) return Promise.resolve();
     return apiCall('editMessageWidgetData', { chat_id: chatId, message_id: messageId, chat_data: JSON.stringify(fresh) })
-      .catch((e) => console.error('[widget] edit:', e.message)); // «not modified» тоже не страшно
+      .catch((e) => console.error('[widget] edit:', e.message)); // "not modified" is fine too
   };
   const sendMenuShim = () => clientbot.sendClientMenu({
     chat: { id: chatId, type: 'private' },
@@ -205,7 +205,7 @@ module.exports = {
   trySendRatesWidget,
   trySendOrderWidget,
   handleWidgetQuery,
-  // экспорт для тестов/отладки размеров:
+  // exports for tests/size debugging:
   _buildWidget: buildWidget,
   _ratesHtml: ratesHtml,
   _orderHtml: orderHtml,

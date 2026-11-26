@@ -5,27 +5,19 @@ const currencies = require('./currencies');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
-// Объявление сверху на сайте и в ботах. Старый текст «официально начинает работу»
-// автоматически заменяется на новый при загрузке существующей базы.
-const ANNOUNCE_DEFAULT =
-  '🎁 Принимаете оплату подарочными картами? Быстро и с прозрачным расчётом обменяем их на Bitcoin: без блокировок счетов, с минимальным цифровым следом и моментальным выводом на ваш кошелёк.';
-const ANNOUNCE_LEGACY =
-  '🚀 PRICELEX официально начинает работу! Выкупаем USD gift-карты Google, iTunes, Xbox и Apple Store с выплатой в BTC. Карты региона США, номинал от $10 и кратно $10.';
-
 const defaults = () => {
   const settings = {
     // Direct BTC/USD spot price; gift-card payout is calculated without fiat conversion.
     btcUsd: 100000, // fallback until the first live market update
-    // Все USD gift-карты используют общий BTC-курс за $1 и общую комиссию.
-    giftPercent: 0, // комиссия обменника по картам, % от BTC-эквивалента номинала (0–50)
-    rateGOOGLEUSD: null, // BTC за $1 номинала (пересчитывается из курсов и комиссии)
+    // All USD gift cards share the same BTC rate per $1 and the same fee.
+    giftPercent: 0, // exchange fee for cards, % of the BTC equivalent of the face value (0–50)
+    rateGOOGLEUSD: null, // BTC per $1 of face value (recalculated from rates and fee)
     enabled: {
       GOOGLE_USD: true, ITUNES_USD: true, XBOX_USD: true, APPLE_STORE_USD: true,
     },
     rateUpdatedAt: null,
     rateSource: 'manual',
     online: true,
-    announcement: ANNOUNCE_DEFAULT,
     refPercent: 1,
     operator: '@VEGA_obmen',
     channel: 'https://t.me/VEGA_Official_65',
@@ -38,11 +30,13 @@ const defaults = () => {
     seq: 1,
     supportSeq: 1,
     settings,
-    admins: [], // дополнительные операторы; владельцы задаются через окружение
+    admins: [], // additional operators; owners are set via the environment
     users: {},
     orders: [],
     flags: {},
-    support: [], // чат поддержки: { id, userId, from: 'user'|'admin', text, at }
+    support: [], // support chat: { id, userId, from: 'user'|'admin', text, at }
+    reviews: [], // reviews: { id, userId, orderId, name, rating, text, at, source }
+    reviewSeq: 1,
   };
 };
 
@@ -56,11 +50,13 @@ function load() {
       const raw = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
       db = Object.assign(defaults(), raw);
       db.settings = Object.assign(defaults().settings, raw.settings || {});
-      // Миграция старых баз
+      // Migration of old databases
       if (!Array.isArray(db.support)) db.support = [];
-      if (db.settings.announcement === ANNOUNCE_LEGACY) {
-        db.settings.announcement = ANNOUNCE_DEFAULT;
+      if (!Array.isArray(db.reviews)) db.reviews = [];
+      if (!Number.isFinite(db.reviewSeq)) {
+        db.reviewSeq = db.reviews.reduce((m, r) => Math.max(m, Number(r && r.id) || 0), 0) + 1;
       }
+      delete db.settings.announcement; // the site announcement was removed
       if (!db.settings.enabled || typeof db.settings.enabled !== 'object') {
         db.settings.enabled = defaults().settings.enabled;
       } else {
@@ -107,12 +103,11 @@ const mutate = (fn) => {
 
 function publicSettings() {
   const s = db.settings;
-  // Клиенту доступны только направления gift-карт и итоговая выплата в BTC за $1 номинала.
+  // The client only sees gift-card directions and the final BTC payout per $1 of face value.
   return {
     rates: currencies.publicRates(s).map((r) => ({ ...r, rate: r.direction === 'sell' ? r.rate : null })),
     rateUpdatedAt: s.rateUpdatedAt,
     online: !!s.online,
-    announcement: s.announcement,
     refPercent: s.refPercent,
     operator: s.operator,
     channel: s.channel,
@@ -129,7 +124,7 @@ function touchUser(u, refParam) {
     if (!user) {
       user = d.users[id] = {
         id,
-        name: u.first_name || u.name || 'Клиент',
+        name: u.first_name || u.name || 'Client',
         username: u.username || null,
         referrer: null,
         referredCount: 0,
@@ -172,23 +167,23 @@ function createOrder(o) {
     const order = {
       id: d.seq++,
       userId: o.userId,
-      userName: o.userName || 'Клиент',
+      userName: o.userName || 'Client',
       userUsername: o.userUsername || null,
-      direction: 'sell', // только продажа gift-карты за BTC
+      direction: 'sell', // gift card sale for BTC only
       payoutCurrency: 'BTC',
-      currency: o.currency || null, // валюта/ключ подарочной карты (GOOGLE_USD и т.п.)
-      network: o.network || null,   // у гифт-карт всегда null
-      expiresAt: o.expiresAt ?? null, // срок на сделку (гифт-карты — 1 час)
-      paidAt: null, // когда клиент нажал «Я оплатил»
-      units: o.units ?? null, // номинал подарочной карты, $
-      giftCode: o.giftCode || null, // код карты (виден только клиенту и оператору)
+      currency: o.currency || null, // gift-card currency/key (e.g. GOOGLE_USD)
+      network: o.network || null,   // always null for gift cards
+      expiresAt: o.expiresAt ?? null, // deal time limit (gift cards — 1 hour)
+      paidAt: null, // when the client tapped "I paid"
+      units: o.units ?? null, // gift card face value, $
+      giftCode: o.giftCode || null, // card code (visible only to the client and the operator)
       wallet: o.wallet || '',
       rate: o.rate,
       crypto: o.crypto,
-      status: 'new', // новые заявки ждут подключения оператора
+      status: 'new', // new orders wait for the operator to join
       requisites: null,
       receipt: null,
-      txUrl: null, // ссылка на блокчейн транзакцию (опционально после подтверждения)
+      txUrl: null, // blockchain transaction link (optional, after confirmation)
       referrer: o.referrer || null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -202,9 +197,10 @@ function createOrder(o) {
 
 const getOrder = (id) => db.orders.find((o) => o.id === Number(id)) || null;
 
-// Заявка с истёкшим сроком переводится в «отменена» и больше не принимает действий.
-// Отметка «Я оплатил» фиксирует сделку: дальше срок не действует, оператор проверяет вручную.
-const EXPIRED = 'Срок на сделку истёк';
+// An order whose time limit expired is moved to "cancelled" and no longer accepts actions.
+// An "I paid" mark finalizes the deal: the limit no longer applies, the operator verifies manually.
+const EXPIRED = 'expired';
+const EXPIRED_LEGACY = 'Срок на сделку истёк'; // rows written before the stable reason code was introduced
 function expireIfNeeded(order) {
   if (!order || !order.expiresAt) return order;
   if (['completed', 'rejected', 'cancelled', 'paid'].includes(order.status)) return order;
@@ -212,7 +208,7 @@ function expireIfNeeded(order) {
   return updateOrder(order.id, { status: 'cancelled', cancelReason: EXPIRED });
 }
 
-// Чек не используется по gift-заявкам — оставлено для совместимости структуры заявки.
+// Receipts are unused for gift orders — kept for order-structure compatibility.
 function setReceipt(id, receipt) {
   return mutate((d) => {
     const o = d.orders.find((x) => x.id === Number(id));
@@ -268,9 +264,9 @@ function createSupportMessage(userId, from, text) {
       at: Date.now(),
     };
     d.support.push(msg);
-    // ограничим хранение последними 5000 сообщениями
+    // keep at most the last 5000 messages
     if (d.support.length > 5000) d.support.splice(0, d.support.length - 5000);
-    // обновим lastSeen пользователя если есть
+    // refresh the user's lastSeen if present
     const u = d.users[String(userId)];
     if (u) u.lastSupportAt = msg.at;
     return msg;
@@ -296,8 +292,73 @@ function getSupportThreads() {
 }
 
 function countSupportUnread() {
-  // для простоты считаем все треды
+  // for simplicity all threads are counted
   return getSupportThreads().length;
+}
+
+/* ---------- reviews ---------- */
+// A client can leave a review after a completed deal (source 'order', one review per order),
+// or the operator adds one manually via the admin panel (source 'admin').
+const publicReview = (r) => ({
+  id: r.id,
+  name: r.name,
+  rating: r.rating,
+  text: r.text,
+  at: r.at,
+  source: r.source || 'order',
+});
+
+function reviewSummary(list) {
+  const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  let sum = 0;
+  for (const r of list) {
+    const k = Math.min(5, Math.max(1, Math.round(Number(r.rating) || 0)));
+    if (!k) continue;
+    dist[k] += 1;
+    sum += k;
+  }
+  const count = list.length;
+  return {
+    count,
+    avg: count ? sum / count : 0,
+    dist,
+  };
+}
+
+// Newest first: list for the showcase and the admin panel.
+function listReviews(limit = 500) {
+  const n = Math.min(Math.max(Number(limit) || 500, 1), 1000);
+  return [...db.reviews].sort((a, b) => (b.at || 0) - (a.at || 0) || (b.id || 0) - (a.id || 0)).slice(0, n);
+}
+
+const getReviewByOrder = (orderId) =>
+  db.reviews.find((r) => r.orderId != null && Number(r.orderId) === Number(orderId)) || null;
+
+const getReviewedOrderIds = () => new Set(db.reviews.filter((r) => r.orderId != null).map((r) => Number(r.orderId)));
+
+function createReview({ userId, orderId, name, rating, text, source }) {
+  return mutate((d) => {
+    const review = {
+      id: d.reviewSeq++,
+      userId: userId != null ? String(userId) : null,
+      orderId: orderId != null ? Number(orderId) : null,
+      name: String(name || 'Client').trim().slice(0, 60) || 'Client',
+      rating: Math.min(5, Math.max(1, Math.round(Number(rating) || 0))),
+      text: String(text || '').trim().slice(0, 1000),
+      at: Date.now(),
+      source: source === 'admin' ? 'admin' : 'order',
+    };
+    d.reviews.push(review);
+    return review;
+  });
+}
+
+function deleteReview(id) {
+  return mutate((d) => {
+    const before = d.reviews.length;
+    d.reviews = d.reviews.filter((r) => Number(r.id) !== Number(id));
+    return before - d.reviews.length;
+  });
 }
 
 load();
@@ -312,6 +373,7 @@ module.exports = {
   getOrder,
   expireIfNeeded,
   EXPIRED,
+  EXPIRED_LEGACY,
   updateOrder,
   setReceipt,
   userOrders,
@@ -321,4 +383,11 @@ module.exports = {
   getSupportMessages,
   getSupportThreads,
   countSupportUnread,
+  publicReview,
+  reviewSummary,
+  listReviews,
+  getReviewByOrder,
+  getReviewedOrderIds,
+  createReview,
+  deleteReview,
 };
