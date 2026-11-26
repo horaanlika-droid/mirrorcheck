@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#02070f" />
-  <title>VEGA — BTC · LTC · USDT · Gift Cards</title>
+  <meta name="theme-color" content="#080d11" />
+  <title>PRICELEX — Gift Cards → BTC</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Montserrat:wght@200;300;400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -16,9 +16,9 @@
 
   <div class="app">
     <header class="hdr">
-      <div class="hdr-star">✦</div>
-      <div class="hdr-logo">VEGA</div>
-      <div class="hdr-sub">OFFICIAL · BTC · LTC · USDT · GIFT CARDS</div>
+      <div class="hdr-star">PRIVATE CRYPTO BROKERAGE</div>
+      <div class="hdr-logo">PRICELEX</div>
+      <div class="hdr-sub">GIFT CARDS · USD → BTC</div>
       <div class="hdr-status" id="hdrStatus"></div>
     </header>
 
@@ -63,11 +63,11 @@
         </button>
       </div>
       <div class="rules-body">
-        <div class="rules-item"><b>1.</b> Карта — <b id="giftRulesBrand">Google Gift Card</b> региона США, в валюте <b>USD ($)</b>, с полным неизрасходованным балансом. Рубли и карты других регионов/валют не принимаем.</div>
+        <div class="rules-item"><b>1.</b> Карта — <b id="giftRulesBrand">Google Gift Card</b> региона США, в валюте <b>USD ($)</b>, с полным неизрасходованным балансом. Карты других регионов и валют не принимаем.</div>
         <div class="rules-item"><b>2.</b> Сначала создаётся заявка, затем <b>подключается оператор</b> — дождитесь его сигнала. <b>Ничего не отправляйте и никому не сообщайте код до команды оператора.</b></div>
         <div class="rules-item"><b>3.</b> Код карты вы вводите в приложении <b>только после подключения оператора</b>. После отправки оператор проверяет карту (обычно 5–15 минут).</div>
         <div class="rules-item"><b>4.</b> Выплата — в <b>BTC</b> на указанный вами Bitcoin-кошелёк. Сумма определяется по актуальному курсу BTC/USD.</div>
-        <div class="rules-item"><b>5.</b> Поддержка VEGA никогда не просит код и деньги вне заявки. Не сообщайте код никому, кроме оператора в рамках заявки.</div>
+        <div class="rules-item"><b>5.</b> Поддержка PRICELEX никогда не просит код и деньги вне заявки. Не сообщайте код никому, кроме оператора в рамках заявки.</div>
         <div class="rules-item"><b>6.</b> На сделку даётся <b>1 час</b> с момента создания заявки. Если карта окажется недействительной, заявка отклоняется без выплаты.</div>
       </div>
       <button class="btn btn-primary" id="giftRulesConfirm" style="width:100%">Понятно — создать заявку</button>
@@ -97,14 +97,8 @@
       </div>
 
       <div class="adm-tabs" id="admTabs" role="tablist">
-        <button class="adm-tab on" data-tab="crypto" role="tab">₿ Валюты</button>
-        <button class="adm-tab" data-tab="gift" role="tab">🎁 Карты</button>
+        <button class="adm-tab on" data-tab="gift" role="tab">🎁 Карты</button>
         <button class="adm-tab" data-tab="chat" role="tab">💬 Чат</button>
-      </div>
-
-      <div class="adm-pane" data-pane="crypto">
-        <div class="adm-note">Включённые направления сразу видны клиентам. Курс клиентам не показывается — сумму в рублях оператор называет в заявке, клиент соглашается или отказывается. Заявки выключенного направления в работе обработайте вручную.</div>
-        <div class="adm-toggles" id="admCryptoDirs"></div>
       </div>
 
       <div class="adm-pane hidden" data-pane="gift">

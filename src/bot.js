@@ -6,7 +6,7 @@ const admins = require('./admins');
 const rates = require('./rates');
 const receipts = require('./receipts');
 const currencies = require('./currencies');
-const { esc, fmtRub, fmtCrypto, fmtDate, fmtSize, parseNum } = require('./util');
+const { esc, fmtCrypto, fmtDate, fmtSize, parseNum } = require('./util');
 const clientbot = require('./clientbot');
 const widget = require('./widget');
 
@@ -127,7 +127,7 @@ async function broadcast(text, options = {}) {
 
 // Объявление всем клиентам, которые когда-либо открывали бота/приложение.
 const CLIENTS_ANNOUNCE_OPEN =
-  '🟢 <b>VEGA: выкуп карт открыт!</b>\n\n' +
+  '🟢 <b>PRICELEX: выкуп карт открыт!</b>\n\n' +
   'Снова принимаем заявки на выкуп USD gift-карт Google, iTunes, Xbox и Apple Store 🎁\n' +
   'Выплата в BTC без документов и регистрации — в приложении и в боте.';
 
@@ -139,7 +139,7 @@ async function announceToClients(text) {
     try { await bot.api.sendMessage(id, text, { parse_mode: 'HTML' }); sent += 1; }
     catch (e) { failed += 1; console.error(`[bot] announce → ${id}:`, e.message); }
   }));
-  console.log(`[VEGA] объявление клиентам: отправлено ${sent}, не доставлено ${failed}`);
+  console.log(`[PRICELEX] объявление клиентам: отправлено ${sent}, не доставлено ${failed}`);
   return { sent, failed };
 }
 
@@ -153,7 +153,7 @@ async function sendReceiptTo(adminId, o) {
   }
   try {
     await bot.api.sendDocument(adminId, new InputFile(file, `check-${o.id}.pdf`), {
-      caption: `🧾 Чек по заявке #${o.id} · ${fmtRub(o.payRub || o.rub)} · ${o.receipt.name} (${fmtSize(o.receipt.size)})`,
+      caption: `🧾 PRICELEX · заявка #${o.id} · $${o.units || 0} → ${fmtCrypto(o.crypto, 'BTC', 8)} · ${o.receipt.name} (${fmtSize(o.receipt.size)})`,
     });
     return true;
   } catch (e) {
@@ -173,7 +173,7 @@ async function notifyClientConnected(o) {
       `🤝 <b>Оператор на связи по заявке #${o.id}</b>\n\n` +
       `Теперь можно отправить код карты ${dirLabel(o)} (номиналом $${giftUnits(o)}) — в приложении или здесь, ответив на это сообщение /menu → 📦 Мои заявки.\n` +
       `После отправки кода оператор проверит карту и выплатит <b>${payoutText(o)}</b> на кошелёк <code>${esc(o.wallet)}</code>.\n\n` +
-      `Не сообщайте код карты никому, кроме оператора VEGA.`,
+      `Не сообщайте код карты никому, кроме оператора PRICELEX.`,
       { parse_mode: 'HTML' });
     return true;
   } catch (e) {
@@ -239,7 +239,7 @@ async function onSupportMessage({ message, user }) {
     // admin reply -> try to notify client via bot
     try {
       await bot.api.sendMessage(message.userId,
-        `💬 <b>Поддержка VEGA:</b>\n${esc(message.text)}`,
+        `💬 <b>Поддержка PRICELEX:</b>\n${esc(message.text)}`,
         { parse_mode: 'HTML' });
     } catch (e) {
       console.error(`[bot] support reply → client ${message.userId}:`, e.message);
@@ -322,10 +322,10 @@ async function mainMenu(ctx, edit = false) {
     .text(`💬 Поддержка${supportCount ? ` (${supportCount})` : ''}`, 'm:support')
     .text('👥 Админы', 'm:admins');
   const text = [
-    '🌌 <b>VEGA | Official</b> — пульт оператора',
+    '🌌 <b>PRICELEX | Official</b> — пульт оператора',
     s.online ? '🟢 Обменник <b>ОНЛАЙН</b>' : '🔴 Обменник <b>ОФФЛАЙН</b>',
     rateLine(s),
-    s.rateUpdatedAt ? 'Официальный курс от ' + fmtDate(s.rateUpdatedAt) + ' (' + esc(s.rateSource || '?') + ')' : 'ещё не подтянут — действуют стартовые курсы',
+    s.rateUpdatedAt ? 'Официальный курс от ' + fmtDate(s.rateUpdatedAt) + ' (' + esc(s.rateSource || '?') + ')' : 'ещё не подтянут — действует сохранённая цена BTC/USD',
     'Активных заявок: ' + active + ' · 💬 Чатов: ' + supportCount,
   ].join('\n');
   if (edit) await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
@@ -380,12 +380,12 @@ function settingsKb(s) {
 }
 
 function settingsText(s) {
-  const base = s.baseRateBTC ? `₿ ${fmtRub(s.baseRateBTC)}` : 'ещё не подтянут';
+  const base = Number(s.btcUsd) > 0 ? `$${Number(s.btcUsd).toLocaleString('en-US', { maximumFractionDigits: 2 })} за BTC` : 'ещё не подтянут';
   const giftRate = Number(s.rateGOOGLEUSD) > 0 ? fmtCrypto(s.rateGOOGLEUSD, 'BTC', 8) : '—';
   const giftExample = currencies.giftPayout(s, 10);
   return (
     `⚙️ <b>Настройки</b> (применяются мгновенно)\n\n` +
-    `📊 Официальный курс (авто): <b>${base}</b> · $ ${(Number(s.baseRateUSD) > 0 ? fmtRub(s.baseRateUSD) : '—')}\n` +
+    `📊 Спотовый курс BTC/USD: <b>${base}</b>\n` +
     (s.rateUpdatedAt ? `Обновлён: ${fmtDate(s.rateUpdatedAt)} (${esc(s.rateSource || '?')})\n` : '') +
     `🎁 Gift-карты: <b>${giftRate} за $1</b> номинала ` +
     `(комиссия ${s.giftPercent ?? 0}% · карта $10 = ${giftExample ? fmtCrypto(giftExample.crypto, 'BTC', 8) : '—'})\n` +
@@ -443,7 +443,7 @@ const SET_FIELDS = {
   },
   ref: { label: 'реферальный процент (например 1)', num: true, key: 'refPercent' },
   ann: { label: 'текст объявления для сайта' },
-  op: { label: 'юзернейм оператора (например @VEGA_obmen)' },
+  op: { label: 'юзернейм оператора (например @operator)' },
   ch: { label: 'ссылку на канал' },
   chat: { label: 'ссылку на чат' },
 };
@@ -579,7 +579,7 @@ function register() {
         flows.delete(ctx.from.id);
         await ctx.reply(changed ? '✅ Список обновлён.' : 'Список не изменился.');
         if (changed && command === 'addadmin') {
-          await bot.api.sendMessage(id, 'Вы добавлены как оператор VEGA. /start — пульт оператора.')
+          await bot.api.sendMessage(id, 'Вы добавлены как оператор PRICELEX. /start — пульт оператора.')
             .catch(() => ctx.reply('Попросите нового админа открыть бота и нажать /start.'));
         }
         return adminsMenu(ctx);
@@ -759,7 +759,7 @@ function createBot(options = {}) {
 
 async function startBot() {
   if (!config.botToken) {
-    console.log('[VEGA] BOT_TOKEN не задан → сайт работает в ДЕМО-режиме, бот отключён.');
+    console.log('[PRICELEX] BOT_TOKEN не задан → сайт работает в ДЕМО-режиме, бот отключён.');
     return;
   }
   createBot();
@@ -776,13 +776,13 @@ async function startBot() {
     .catch(() => {});
 
   if (!admins.all().length) {
-    console.warn('[VEGA] ВНИМАНИЕ: ADMIN_ID / ADMIN_IDS не заданы — нет администраторов.');
+    console.warn('[PRICELEX] ВНИМАНИЕ: ADMIN_ID / ADMIN_IDS не заданы — нет администраторов.');
   }
   await Promise.all(admins.all().map(async (id) => {
     if (store.get().flags.onboardedAdmins?.[id]) return;
     try {
       await bot.api.sendMessage(id,
-        `🚀 <b>VEGA запущен!</b>\n🤖 @${esc(bot.botInfo.username)}\n/start — пульт оператора\n/admins — список админов\n/support — чаты поддержки\nНовые заявки будут приходить всем операторам.`,
+        `🚀 <b>PRICELEX запущен!</b>\n🤖 @${esc(bot.botInfo.username)}\n/start — пульт оператора\n/admins — список админов\n/support — чаты поддержки\nНовые заявки будут приходить всем операторам.`,
         { parse_mode: 'HTML' });
       store.mutate((db) => { (db.flags.onboardedAdmins ||= {})[id] = true; });
     } catch (e) { console.error(`[bot] onboarding ${id}:`, e.message); }
@@ -791,14 +791,14 @@ async function startBot() {
 
   const applyPublicUrl = async (url, notifyAdmin = true) => {
     if (!/^https:\/\//i.test(String(url || ''))) {
-      console.error('[VEGA] publicUrl не https — кнопка меню Telegram не установлена:', url);
+      console.error('[PRICELEX] publicUrl не https — кнопка меню Telegram не установлена:', url);
       return;
     }
     try {
       await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Открыть обменник', web_app: { url } } });
-      console.log('[VEGA] кнопка меню Telegram настроена на', url);
+      console.log('[PRICELEX] кнопка меню Telegram настроена на', url);
     } catch (e) {
-      console.error('[VEGA] setChatMenuButton:', e.message);
+      console.error('[PRICELEX] setChatMenuButton:', e.message);
     }
     if (notifyAdmin) await broadcast(`🔗 Публичный адрес обменника:\n${url}`);
   };
@@ -809,7 +809,7 @@ async function startBot() {
 
   bot.catch((e) => console.error('[bot error]', e.message));
   bot.start();
-  console.log('[VEGA] бот запущен: @' + bot.botInfo.username);
+  console.log('[PRICELEX] бот запущен: @' + bot.botInfo.username);
 }
 
 module.exports = { startBot, createBot };

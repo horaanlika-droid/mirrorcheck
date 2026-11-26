@@ -7,12 +7,8 @@ const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 const defaults = () => {
   const settings = {
-    // Официальные курсы: BTC → ₽ (биржи) и USD → ₽ (ЦБ РФ). Итоговая выплата за
-    // карту считается по кроссу USD/RUB ÷ BTC/RUB с учётом giftPercent.
-    baseRateBTC: null, // официальный курс BTC → ₽ (авто)
-    baseRateUSD: null, // официальный курс USD → ₽ (авто, ЦБ РФ)
-    rateBTC: 10250000, // стартовый курс BTC → ₽ (fallback, до первого автообновления)
-    rateUSD: 95, // стартовый курс USD → ₽ (fallback)
+    // Direct BTC/USD spot price; gift-card payout is calculated without fiat conversion.
+    btcUsd: 100000, // fallback until the first live market update
     // Все USD gift-карты используют общий BTC-курс за $1 и общую комиссию.
     giftPercent: 0, // комиссия обменника по картам, % от BTC-эквивалента номинала (0–50)
     rateGOOGLEUSD: null, // BTC за $1 номинала (пересчитывается из курсов и комиссии)
@@ -23,7 +19,7 @@ const defaults = () => {
     rateSource: 'manual',
     online: true,
     announcement:
-      '🚀 VEGA официально начинает работу! Выкупаем USD gift-карты Google, iTunes, Xbox и Apple Store с выплатой в BTC. Карты региона США, номинал от $10 и кратно $10.',
+      '🚀 PRICELEX официально начинает работу! Выкупаем USD gift-карты Google, iTunes, Xbox и Apple Store с выплатой в BTC. Карты региона США, номинал от $10 и кратно $10.',
     refPercent: 1,
     operator: '@VEGA_obmen',
     channel: 'https://t.me/VEGA_Official_65',
@@ -64,7 +60,6 @@ function load() {
         }
       }
       if (!Number.isFinite(db.supportSeq)) db.supportSeq = (db.support?.length || 0) + 1;
-      // Курс карты всегда пересчитывается из BTC/USD и комиссии giftPercent.
       db.settings.rateGOOGLEUSD = currencies.giftRateFromPercent(db.settings.giftPercent, db.settings);
       for (const o of db.orders || []) {
         if (o.txUrl === undefined) o.txUrl = null;
@@ -103,10 +98,8 @@ const mutate = (fn) => {
 
 function publicSettings() {
   const s = db.settings;
-  // Клиенту не светим официальные курсы и комиссии — только итоговый курс выплаты
-  // за $1 номинала карты. Рубли клиент не вводит: выплата только в BTC.
+  // Клиенту доступны только направления gift-карт и итоговая выплата в BTC за $1 номинала.
   return {
-    rateBTC: null,
     rates: currencies.publicRates(s).map((r) => ({ ...r, rate: r.direction === 'sell' ? r.rate : null })),
     rateUpdatedAt: s.rateUpdatedAt,
     online: !!s.online,
@@ -178,7 +171,6 @@ function createOrder(o) {
       network: o.network || null,   // у гифт-карт всегда null
       expiresAt: o.expiresAt ?? null, // срок на сделку (гифт-карты — 1 час)
       paidAt: null, // когда клиент нажал «Я оплатил»
-      rub: o.rub ?? null, // справочная стоимость выплаты в ₽
       units: o.units ?? null, // номинал подарочной карты, $
       giftCode: o.giftCode || null, // код карты (виден только клиенту и оператору)
       wallet: o.wallet || '',
@@ -250,7 +242,7 @@ function stats() {
     paid: by('paid').length,
     completed: done.length,
     rejected: by('rejected').length + by('cancelled').length,
-    volumeDone: done.reduce((s, o) => s + (o.payRub || o.rub), 0),
+    volumeDoneUsd: done.reduce((s, o) => s + (Number(o.units) || 0), 0),
     users: Object.keys(db.users).length,
     refs: Object.values(db.users).filter((u) => u.referrer).length,
   };

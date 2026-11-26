@@ -1,4 +1,4 @@
-// Курсы gift-карт (VEGA-меchanics, только продажа gift → BTC). Тесты не требуют сети.
+// Курсы PRICELEX: gift cards → BTC по прямому BTC/USD споту. Тесты не требуют сети.
 const { test, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -16,8 +16,7 @@ const rates = require('../src/rates');
 
 const settings = {
   giftPercent: 5,
-  baseRateBTC: 3_500_000,   // 1 BTC = 3 500 000 ₽
-  baseRateUSD: 92.50,        // 1 USD = 92.50 ₽
+  btcUsd: 35_000,            // direct BTC/USD spot
   rateGOOGLEUSD: null,
   rateUpdatedAt: null,
   rateSource: null,
@@ -34,8 +33,8 @@ beforeEach(() => {
   });
 });
 
-test('giftRateFromPercent: спот = baseRateUSD / baseRateBTC, затем скидка комиссии', () => {
-  const spot = settings.baseRateUSD / settings.baseRateBTC; // ~2.64e-8 BTC за $1
+test('giftRateFromPercent: spot = 1 / BTCUSD, then applies the discount', () => {
+  const spot = 1 / settings.btcUsd;
   const expected = Math.round((spot * 0.95) * 1e12) / 1e12;
   const got = currencies.giftRateFromPercent(5, settings);
   assert.ok(got > 0);
@@ -43,15 +42,15 @@ test('giftRateFromPercent: спот = baseRateUSD / baseRateBTC, затем ск
 });
 
 test('giftRateFromPercent при комиссии 0 равен споту (округлённому)', () => {
-  const spot = settings.baseRateUSD / settings.baseRateBTC;
+  const spot = 1 / settings.btcUsd;
   assert.equal(currencies.giftRateFromPercent(0, settings), Math.round(spot * 1e12) / 1e12);
 });
 
 test('giftRateFromPercent возвращает null, если спот не задан', () => {
-  assert.equal(currencies.giftRateFromPercent(5, { baseRateBTC: 0, baseRateUSD: 0 }), null);
+  assert.equal(currencies.giftRateFromPercent(5, { btcUsd: 0 }), null);
 });
 
-test('giftPayout: выплата округляется вниз до сатоши, rub = crypto * btcRub', () => {
+test('giftPayout: rounds down to satoshis and exposes direct BTC/USD only', () => {
   const s = { ...settings, rateGOOGLEUSD: currencies.giftRateFromPercent(5, settings) };
   const rate = s.rateGOOGLEUSD;
   const payout = currencies.giftPayout(s, 10, 'GOOGLE_USD');
@@ -60,8 +59,8 @@ test('giftPayout: выплата округляется вниз до сатош
   assert.equal(payout.cardRate, rate);
   const expectedCrypto = Math.floor(10 * rate * 1e8 + 1e-6) / 1e8;
   assert.equal(payout.crypto, expectedCrypto);
-  assert.equal(payout.btcRub, s.baseRateBTC);
-  assert.equal(payout.rub, Math.round(expectedCrypto * s.baseRateBTC));
+  assert.equal(payout.btcUsd, s.btcUsd);
+  assert.equal('rub' in payout, false);
 });
 
 test('giftPayout для несуществующей валюты возвращает null', () => {
@@ -73,27 +72,25 @@ test('giftPayout при нулевом курсе возвращает null', ()
   assert.equal(currencies.giftPayout(empty, 10, 'GOOGLE_USD'), null);
 });
 
-test('applyRates сохраняет официальные курсы и пересчитывает gift-курс', () => {
-  const official = { btc: 3_600_000, usd: 95.0, source: 'cbr' };
+test('applyRates сохраняет BTC/USD и пересчитывает курс карты', () => {
+  const official = { btcUsd: 36_000, source: 'kraken+coinbase' };
   const res = rates.applyRates(official);
-  assert.equal(res.baseRateBTC, 3_600_000);
-  assert.equal(res.baseRateUSD, 95);
-  assert.equal(res.rateSource, 'cbr');
+  assert.equal(res.btcUsd, 36_000);
+  assert.equal(res.rateSource, 'kraken+coinbase');
   assert.ok(res.rateUpdatedAt > 0);
-  const spot = 95 / 3_600_000;
+  const spot = 1 / 36_000;
   const expected = Math.round((spot * 0.95) * 1e12) / 1e12;
   assert.equal(res.rateGOOGLEUSD, expected);
 });
 
 test('recomputeGiftRate пересчитывает только gift-курс по текущей комиссии', () => {
   store.mutate((db) => {
-    db.settings.baseRateBTC = 3_500_000;
-    db.settings.baseRateUSD = 92.50;
+    db.settings.btcUsd = 35_000;
     db.settings.giftPercent = 10;
   });
   const before = store.get().settings.rateGOOGLEUSD;
   const after = rates.recomputeGiftRate();
-  const spot = 92.50 / 3_500_000;
+  const spot = 1 / 35_000;
   const expected = Math.round((spot * 0.9) * 1e12) / 1e12;
   assert.equal(after, expected);
   assert.notEqual(after, before);

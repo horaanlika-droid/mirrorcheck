@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vega-clientbot-'));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pricelex-clientbot-'));
 process.env.DATA_DIR = dir;
 process.env.BOT_TOKEN = '123456:test-token';
 process.env.ADMIN_ID = '111';
@@ -16,7 +16,7 @@ delete process.env.WIDGETS;
 const store = require('../src/store');
 const { createBot } = require('../src/bot');
 const widget = require('../src/widget');
-const botInfo = { id: 123456, is_bot: true, first_name: 'Test', username: 'vega_test_bot' };
+const botInfo = { id: 123456, is_bot: true, first_name: 'Test', username: 'pricelex_test_bot' };
 const bot = createBot({ botInfo });
 
 let seq = 1000;
@@ -56,7 +56,7 @@ test('non-admin /start opens the client menu with c: callbacks', async () => {
   await text(999, '/start');
   const send = lastCall('sendMessage');
   assert.ok(send, 'бот отвечает сообщением');
-  assert.ok(String(send.text).includes('VEGA'));
+  assert.ok(String(send.text).includes('PRICELEX'));
   const cb = markupCallbacks(send);
   assert.ok(cb.includes('c:exchange') && cb.includes('c:orders') && cb.includes('c:support'));
   assert.ok(store.getUser(999), 'пользователь добавлен в базу');
@@ -79,7 +79,7 @@ test('info, referrals and support screens render; support message reaches the op
   const client = 1011;
   await text(client, '/start');
   await click(client, 'c:info');
-  assert.ok(String((lastCall('editMessageText') || {}).text).includes('VEGA'));
+  assert.ok(String((lastCall('editMessageText') || {}).text).includes('PRICELEX'));
   await click(client, 'c:refs');
   assert.ok(String((lastCall('editMessageText') || {}).text).includes('Реферальная'));
   calls = [];
@@ -218,7 +218,7 @@ test('widget send is attempted when WIDGETS=1 and falls back to text on Telegram
   assert.equal(sentPayloads.length, 1);
   assert.ok(String(sentPayloads[0].url).includes('sendWidget'));
   assert.equal(sentPayloads[0].body.allow_queries, true, 'иначе тапы не дойдут до бота');
-  assert.ok(String(sentPayloads[0].body.html).includes('VEGA'));
+  assert.ok(String(sentPayloads[0].body.html).includes('PRICELEX'));
   assert.ok(Buffer.byteLength(sentPayloads[0].body.html, 'utf8') <= 32768);
   assert.ok(Buffer.byteLength(sentPayloads[0].body.chat_data, 'utf8') <= 1024);
   assert.ok(!calls.some((c) => (c.method === 'editMessageText' || c.method === 'sendMessage') && String(c.text).includes(`Заявка #${order.id}`)));

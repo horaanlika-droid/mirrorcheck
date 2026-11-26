@@ -1,4 +1,4 @@
-/* VEGA | Official — клиентское Web App (BTC / LTC / USDT TRC20 / USDT ERC20 + поддержка + tx) */
+/* PRICELEX — Web App for USD gift cards → BTC. */
 (() => {
   'use strict';
 
@@ -10,18 +10,18 @@
     try {
       tg.ready();
       tg.expand();
-      tg.setHeaderColor && tg.setHeaderColor('#02070f');
-      tg.setBackgroundColor && tg.setBackgroundColor('#02070f');
+      tg.setHeaderColor && tg.setHeaderColor('#080d11');
+      tg.setBackgroundColor && tg.setBackgroundColor('#080d11');
     } catch (e) {}
     initData = tg.initData || '';
     startParam = tg.startParam || '';
   }
   if (!initData) {
     try {
-      demo = JSON.parse(localStorage.getItem('vega_demo') || 'null');
+      demo = JSON.parse(localStorage.getItem('pricelex_demo') || 'null');
       if (!demo) {
         demo = { id: 900000 + Math.floor(Math.random() * 99999), name: 'Гость' };
-        localStorage.setItem('vega_demo', JSON.stringify(demo));
+        localStorage.setItem('pricelex_demo', JSON.stringify(demo));
       }
     } catch (e) {
       demo = { id: 900001, name: 'Гость' };
@@ -53,22 +53,18 @@
     giftFallback('APPLE_STORE_USD', 'Apple Store Gift Card', '🍎', 'apple'),
   ];
 
-  // Все направления с итоговым курсом; старый формат settings.rateBTC/LTC тоже поддерживается.
+  // Only USD gift cards are enabled as sell → BTC directions.
   function dirs() {
     const s = S.settings;
     if (!s) return [];
     if (Array.isArray(s.rates) && s.rates.length) return s.rates;
-    return FALLBACK_DIRS.map((d) => ({
-      ...d,
-      rate: d.key === 'BTC' ? s.rateBTC : d.key === 'LTC' ? s.rateLTC : null,
-    }));
+    return FALLBACK_DIRS;
   }
   const isGiftDir = (d) => !!d && (d.kind === 'gift' || d.direction === 'sell');
-  // Покупка крипты не показывает курс и не зависит от него — нужна лишь включённость направления.
-  // Карта (продажа) клиенту видна только с настроенным курсом.
+  // A card direction is shown only when its BTC payout rate is available.
   const eligible = (d) => d.enabled !== false && (isGiftDir(d) ? Number(d.rate) > 0 : true);
   const available = () => dirs().filter(eligible);
-  // Только продажа гифт-карт → BTC (рубли не принимаются).
+  // Gift cards are sold for BTC; there is no fiat payment flow.
   const sellDirs = () => available().filter(isGiftDir);
   const currentSellDir = () => sellDirs()[0] || dirs().find(isGiftDir) || FALLBACK_DIRS.find(isGiftDir);
 
@@ -228,7 +224,7 @@
     '<path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 30.08 2 24 2 15.4 2 7.96 6.93 4.34 12.12l7.34 5.7c1.73-5.2 6.59-9.07 12.32-9.07z"/>' +
     '</svg>';
   // Брендовые SVG: iTunes, Xbox и Apple адаптированы из Font Awesome Free Brands 7.3.1
-  // (Fonticons, Inc., CC BY 4.0; https://fontawesome.com/license/free), с currentColor для темы VEGA.
+  // (Fonticons, Inc., CC BY 4.0; https://fontawesome.com/license/free), с currentColor для темы PRICELEX.
   const brandMark = (label, viewBox, path) =>
     `<svg viewBox="${viewBox}" style="width:66%;height:66%;display:block" role="img" aria-label="${label}" focusable="false"><path fill="currentColor" d="${path}"/></svg>`;
   const BRAND_MARKS = {
@@ -316,7 +312,7 @@
     const rows = sheetRowsFor(kind);
     const cur = currentDir();
     const $title = $('#sheetTitle');
-    if ($title) $title.textContent = kind === 'gift' ? 'Подарочные карты' : 'Криптовалюта';
+    if ($title) $title.textContent = 'Подарочные карты';
     const list = $('#sheetList');
     if (!list) return;
     list.innerHTML = rows.length
@@ -328,7 +324,7 @@
               ? 'Временно недоступно'
               : kind === 'gift'
                 ? `1 $ = ${fmtCrypto(d.rate, 'BTC', 8)} · выплата в BTC`
-                : (d.network ? `Сеть ${d.network} · комиссию назовёт оператор` : 'Стоимость назовёт оператор после заявки');
+                : 'Подарочная карта в USD'
             return `<button class="sheet-row${on ? ' on' : ''}${off ? ' off' : ''}" data-key="${esc(d.key)}" role="option" aria-selected="${on ? 'true' : 'false'}"${off ? ' aria-disabled="true"' : ''}>
               <span class="coin-ic ${esc(d.coin)}">${coinInner(d)}</span>
               <span class="sheet-row-text"><b>${esc(d.label)}</b><i>${esc(sub)}</i></span>
@@ -455,7 +451,7 @@
         <div id="assetPicker" role="region" aria-label="Выбор активов для обмена">
           <div class="picker-head">
             <div class="picker-title">Выбор активов для обмена</div>
-            <div class="picker-sub">Выберите, чем торгуем: криптовалюта или подарочная карта — откроется форма обмена.</div>
+            <div class="picker-sub">Выберите подарочную карту для продажи за BTC.</div>
           </div>
           <div class="picker-group">
             <div class="picker-group-label">ПОДАРОЧНЫЕ КАРТЫ</div>
@@ -476,22 +472,6 @@
               ${ICONS.chevDown}
             </button>
           </div>
-          <div id="buyForm">
-          <div class="card">
-            <div class="card-title">Направление обмена</div>
-            <div class="f-label"><span>Вы получаете (точное количество)</span></div>
-            <div id="netPick"></div>
-            <div class="f-box" style="margin-top:10px"><div class="coin-ic" id="getIc">${coinInner(dir)}</div><input id="inCrypto" type="number" inputmode="decimal" placeholder="0.0005" min="0" step="any"></div>
-            <div class="f-hint">Стоимость в рублях назовёт оператор после заявки. Вы ничего не переводите, пока не согласитесь с суммой.</div>
-          </div>
-          <div class="card">
-            <div class="card-title">Кошелёк получателя</div>
-            <div class="f-box"><div class="coin-ic" id="walIc">${coinInner(dir)}</div><input id="inWallet" placeholder="${esc(dir.walletHint)}" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
-            <div class="f-hint" id="walHint"></div>
-            <div class="f-err" id="fErr"></div>
-          </div>
-          <button class="btn btn-primary" style="margin-top:14px" id="btnGo">${ICONS.bolt}<span>Отправить заявку</span></button>
-        </div>
         <div id="giftForm" class="hidden">
           <div class="card">
             <div class="card-title" id="giftTitle">${esc(sell.label)}</div>
@@ -524,7 +504,7 @@
       <div id="exOrder" class="${S.order ? '' : 'hidden'}"></div>
     `;
 
-    // Выбор актива: группы на экране выбора → нижние шторки (криптовалюта / подарочные карты).
+    // Выбор поддерживаемой подарочной карты в нижней шторке.
     $('#assetPicker').querySelectorAll('[data-group]').forEach((b) =>
       b.addEventListener('click', () => {
         haptic('light');
@@ -536,8 +516,6 @@
       haptic('light');
       openAssetSheet(isGiftDir(currentDir()) ? 'gift' : 'crypto');
     });
-    $('#inCrypto').addEventListener('input', renderFormMeta);
-    $('#btnGo').addEventListener('click', submitOrder);
 
     if (giftOn) {
       $('#segNom').innerHTML = [10, 20, 50, 100]
@@ -578,43 +556,8 @@
     const dir = currentDir();
     const all = available();
     syncPickerAvailability();
-    // Гифт-карта — отдельная форма: номинал в $ → BTC, без полей рублей и курса.
-    const giftMode = isGiftDir(dir);
-    if ($('#buyForm')) $('#buyForm').classList.toggle('hidden', giftMode);
-    if ($('#giftForm')) $('#giftForm').classList.toggle('hidden', !giftMode);
-    if (giftMode) return renderGiftMeta();
-    // Выбранное направление выключили — переключаемся на доступное.
-    if (dir.enabled === false) {
-      if (all.length) {
-        S.dir = all[0].key;
-        return renderFormMeta();
-      }
-      const btn0 = $('#btnGo');
-      if (btn0) {
-        btn0.disabled = true;
-        btn0.querySelector('span').textContent = '⛔ Направления временно недоступны';
-      }
-      return;
-    }
-    const ic = $('#getIc');
-    if (ic) { ic.className = 'coin-ic ' + dir.coin; ic.innerHTML = coinInner(dir); }
-    const wi = $('#walIc');
-    if (wi) { wi.className = 'coin-ic ' + dir.coin; wi.innerHTML = coinInner(dir); }
-    const w = $('#inWallet');
-    if (w) w.placeholder = dir.walletHint;
-    const np = $('#netPick');
-    if (np) {
-      np.innerHTML = dir.network && dir.networkHint
-        ? `<div class="net-note"><b>${esc(dir.label)}</b> · ${esc(dir.networkHint)}</div>`
-        : '';
-    }
-    const wh = $('#walHint');
-    if (wh) wh.textContent = dir.network
-      ? `⚠️ Выплата только в сети ${dir.network}. Адрес из другой сети приведёт к потере средств.`
-      : '';
-    const btn = $('#btnGo');
-    btn.disabled = !s.online;
-    btn.querySelector('span').textContent = s.online ? 'Отправить заявку' : '⛔ Обмен временно недоступен';
+    if ($('#giftForm')) $('#giftForm').classList.remove('hidden');
+    renderGiftMeta();
   }
 
   // Гифт-карта: номинал в $ → выплата BTC по текущему курсу BTC/USD.
@@ -757,43 +700,6 @@
     }
   }
 
-  async function submitOrder() {
-    const s = S.settings;
-    const err = $('#fErr');
-    err.textContent = '';
-    const dir = currentDir();
-    if (dir.enabled === false) return (err.textContent = 'Это направление сейчас недоступно — выберите другое.');
-    const rawCrypto = parseFloat($('#inCrypto').value);
-    const cryptoAmount = isFinite(rawCrypto) && rawCrypto > 0 ? rawCrypto : null;
-    const wallet = ($('#inWallet').value || '').trim();
-    if (!s.online) return (err.textContent = '⛔ Обмен временно недоступен — загляните позже.');
-    if (!cryptoAmount) return (err.textContent = 'Укажите количество крипты — сколько хотите получить (например 0.001).');
-    let re = null;
-    try { re = new RegExp(dir.walletPattern); } catch (e) { re = null; }
-    if (re ? !re.test(wallet) : !/^[a-zA-Z0-9]{26,90}$/.test(wallet)) {
-      return (err.textContent = dir.walletError || 'Проверьте адрес кошелька — он выглядит некорректно.');
-    }
-    const btn = $('#btnGo');
-    btn.disabled = true;
-    haptic('medium');
-    try {
-      const body = { cryptoAmount, currency: dir.currency, network: dir.network || undefined, wallet, startParam };
-      const r = await api('/api/orders', { method: 'POST', body });
-      S.order = r.order;
-      S.orders.unshift(r.order);
-      haptic('heavy');
-      $('#exForm').classList.add('hidden');
-      $('#exOrder').classList.remove('hidden');
-      renderOrderStage();
-    } catch (e) {
-      err.textContent = e.message;
-      toast(e.message);
-    } finally {
-      btn.disabled = !S.settings.online;
-      const span = btn.querySelector('span');
-      if (span) span.textContent = S.settings.online ? 'Отправить заявку' : '⛔ Обмен временно недоступен';
-    }
-  }
 
   function chip(st, label) {
     const m = STATUS[st] || { label: st, color: '#8aa0b8' };
@@ -914,7 +820,7 @@
           <div class="stage-title">Карта на проверке</div>
           <div class="stage-sub">Оператор проверяет ${esc(giftLabelOf(o))} на <b>$${giftNominal(o)}</b>, регион (<b>США</b>) и валюту (<b>USD</b>).<br>Как только всё подтвердится — пришлём ${payout} на ваш кошелёк. Обычно 5–15 минут.</div>
           <div class="req-box">Код карты: ${esc(o.giftCode || '—')}</div>
-          <div class="note">Не передавайте код никому, кроме поддержки VEGA. Если карта окажется недействительной — заявка будет отклонена.</div>
+          <div class="note">Не передавайте код никому, кроме поддержки PRICELEX. Если карта окажется недействительной — заявка будет отклонена.</div>
         </div>`;
       return true;
     }
@@ -923,7 +829,7 @@
         <div class="card stage">
           <svg class="okmark" viewBox="0 0 100 100"><circle cx="50" cy="50" r="41"/><path d="M32 51l13 13 24-27"/></svg>
           <div class="stage-title">Карта принята — ${esc(giftCurrencyOf(o))} выплачен</div>
-          <div class="stage-sub">${esc(giftLabelOf(o))} $${giftNominal(o)} → <b>${payout}</b><br>отправлены на ваш кошелёк. Спасибо, что выбираете VEGA ✦</div>
+          <div class="stage-sub">${esc(giftLabelOf(o))} $${giftNominal(o)} → <b>${payout}</b><br>отправлены на ваш кошелёк. Спасибо, что выбираете PRICELEX ✦</div>
           ${o.txUrl ? `
             <div class="tx-box">
               <div class="tx-label">🔗 Транзакция в блокчейне</div>
@@ -968,151 +874,13 @@
     if (!box) return;
     if (!o) { box.innerHTML = ''; return; }
     if (isGiftOrder(o) && renderGiftStage(o)) return;
-    if (o.status === 'quote') {
-      box.innerHTML = `
-        <div class="card stage">
-          ${chip('quote', 'Согласование суммы')}
-          <div class="pay-dir">${ICONS.swap}<span>₽ → <b>${esc(dirLabel(o))}</b> · ${cryptoOf(o)}</span></div>
-          <div class="pay-amount"><div class="l">Оператор назвал сумму</div><div class="v">${fmtRub(o.payRub || o.rub)}</div></div>
-          <div class="note">Продолжить сделку можно только с вашего согласия. Если сумма не подходит — откажитесь, заявка отменится.</div>
-          <button class="btn btn-primary" style="margin-top:14px" id="btnQuoteYes">${ICONS.check}<span>Согласен, продолжить</span></button>
-          <button class="btn btn-ghost" style="margin-top:8px" id="btnQuoteNo">❌ Отказаться</button>
-        </div>`;
-      const respond = async (action, btnId) => {
-        const b = $(btnId);
-        b.disabled = true;
-        haptic(action === 'quote-accept' ? 'heavy' : 'medium');
-        try {
-          const r = await api(`/api/order/${o.id}/${action}`, { method: 'POST' });
-          S.order = r.order;
-          syncStatus();
-          renderOrderStage();
-          toast(action === 'quote-accept' ? 'Сумма согласована — ждём реквизиты ✅' : 'Заявка отменена');
-        } catch (e) {
-          b.disabled = false;
-          toast(e.message || 'Не удалось отправить ответ');
-        }
-      };
-      $('#btnQuoteYes').addEventListener('click', () => respond('quote-accept', '#btnQuoteYes'));
-      $('#btnQuoteNo').addEventListener('click', () => respond('quote-decline', '#btnQuoteNo'));
-    } else if (o.status === 'new' && !isGiftOrder(o) && !(o.payRub || o.rub)) {
-      box.innerHTML = `
-        <div class="card stage">
-          <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">💰</div></div>
-          <div class="stage-title">Оператор изучает заявку</div>
-          <div class="stage-sub">Заявка <b>#${o.id}</b> передана оператору.<br>Скоро он назовёт стоимость <b>${cryptoOf(o)}</b> в рублях — вы увидите сумму и согласитесь или откажетесь.</div>
-          <button class="btn btn-ghost" style="margin-top:18px" id="btnCancel">Отменить заявку</button>
-        </div>`;
-      $('#btnCancel').addEventListener('click', async () => { haptic('light'); await changeOrder(o, 'cancel'); });
-    } else if (o.status === 'new') {
-      box.innerHTML = `
-        <div class="card stage">
-          <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🔍</div></div>
-          <div class="stage-title">Сумма согласована — ищем реквизиты</div>
-          <div class="stage-sub">Заявка <b>#${o.id}</b> · ${cryptoOf(o)} · <b>${fmtRub(o.payRub || o.rub)}</b><br>Обычно это занимает меньше минуты — не закрывайте приложение.</div>
-          <button class="btn btn-ghost" style="margin-top:18px" id="btnCancel">Отменить заявку</button>
-        </div>`;
-      $('#btnCancel').addEventListener('click', async () => {
-        haptic('light');
-        await changeOrder(o, 'cancel');
-      });
-    } else if (o.status === 'details') {
-      box.innerHTML = `
-        <div class="card stage">
-          ${chip('details')}
-          <div class="pay-dir">${ICONS.swap}<span>₽ → <b>${esc(dirLabel(o))}</b> · ${cryptoOf(o)}</span></div>
-          <div class="pay-amount"><div class="l">Переведите точно</div><div class="v">${fmtRub(o.payRub || o.rub)}</div></div>
-          <div class="req-box" id="reqBox">${esc(o.requisites || 'Реквизиты готовятся…')}</div>
-          <div class="copy-row">
-            <button class="btn btn-ghost btn-sm" id="cpSum">${ICONS.copy}<span>Сумма</span></button>
-            <button class="btn btn-ghost btn-sm" id="cpReq">${ICONS.copy}<span>Реквизиты</span></button>
-          </div>
-          <div class="file-box">
-            <input type="file" id="inReceipt" accept=".pdf,application/pdf" hidden>
-            <button class="btn btn-ghost btn-sm" id="btnPick">📎 <span>${o.receipt ? 'Заменить чек (PDF)' : 'Прикрепить чек (PDF)'}</span></button>
-            <div class="file-name ${o.receipt ? 'ok' : ''}" id="fileName">${o.receipt ? `✅ ${esc(o.receipt.name)} (${fmtSize(o.receipt.size)})` : 'Без чека оплата не подтвердится'}</div>
-          </div>
-          <div class="note">Переведите <b>точную сумму</b> по реквизитам выше, прикрепите <b>чек в PDF</b>, затем нажмите кнопку ниже. После подтверждения оператор отправит ${cryptoOf(o)} на ваш кошелёк.</div>
-          <button class="btn btn-primary" style="margin-top:14px" id="btnPaid">${ICONS.check}<span>Я оплатил</span></button>
-          <button class="btn btn-ghost" style="margin-top:8px" id="btnCancel">Отменить заявку</button>
-        </div>`;
-      $('#cpSum').addEventListener('click', () => copyText(String(Math.round(o.payRub || o.rub)), 'Сумма скопирована'));
-      $('#cpReq').addEventListener('click', () => copyText(o.requisites || '', 'Реквизиты скопированы'));
-      wireReceiptPicker(o);
-      $('#btnPaid').addEventListener('click', async () => {
-        haptic('medium');
-        await confirmPaidWithReceipt(o);
-      });
-      $('#btnCancel').addEventListener('click', async () => {
-        haptic('light');
-        await changeOrder(o, 'cancel');
-      });
-    } else if (o.status === 'paid') {
-      box.innerHTML = `
-        <div class="card stage">
-          <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">⏳</div></div>
-          <div class="stage-title">Подтверждаем оплату</div>
-          <div class="stage-sub">Оператор проверяет поступление ${fmtRub(o.payRub || o.rub)} по заявке <b>#${o.id}</b>.<br>Как только платёж подтвердится — мы отправим ${cryptoOf(o)}.</div>
-          ${o.receipt
-            ? `<div class="note">🧾 Чек <b>${esc(o.receipt.name)}</b> отправлен оператору ✅</div>`
-            : `<div class="file-box">
-                 <input type="file" id="inReceipt" accept=".pdf,application/pdf" hidden>
-                 <button class="btn btn-ghost btn-sm" id="btnPick">📎 <span>Выбрать чек (PDF)</span></button>
-                 <div class="file-name" id="fileName">⚠️ Чек не прикреплён — без него оператор не подтвердит оплату</div>
-                 <button class="btn btn-primary btn-sm" style="width:100%" id="btnSendReceipt">Отправить чек</button>
-               </div>`}
-        </div>`;
-      if (!o.receipt) {
-        wireReceiptPicker(o);
-        $('#btnSendReceipt').addEventListener('click', async () => {
-          const picked = pendingReceipt && pendingReceipt.orderId === o.id ? pendingReceipt.file : null;
-          if (!picked) return toast('📎 Сначала выберите чек в формате PDF');
-          const btn = $('#btnSendReceipt');
-          btn.disabled = true;
-          haptic('medium');
-          try {
-            const updated = await uploadReceipt(o, picked);
-            pendingReceipt = null;
-            S.order = updated;
-            const i = S.orders.findIndex((x) => x.id === updated.id);
-            if (i >= 0) S.orders[i] = updated;
-            toast('Чек отправлен оператору ✅');
-            renderOrderStage();
-          } catch (e) {
-            toast(e.message || 'Не удалось отправить чек');
-            btn.disabled = false;
-          }
-        });
-      }
-    } else if (o.status === 'completed') {
-      box.innerHTML = `
-        <div class="card stage">
-          <svg class="okmark" viewBox="0 0 100 100"><circle cx="50" cy="50" r="41"/><path d="M32 51l13 13 24-27"/></svg>
-          <div class="stage-title">Обмен завершён!</div>
-          <div class="stage-sub">${fmtRub(o.payRub || o.rub)} → <b>${cryptoOf(o)}</b> (${esc(dirLabel(o))})<br>отправлены на ваш кошелёк. Спасибо, что выбираете VEGA ✦</div>
-          ${o.txUrl ? `
-            <div class="tx-box">
-              <div class="tx-label">🔗 Транзакция в блокчейне</div>
-              <a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a>
-              <button class="btn btn-ghost btn-sm" style="margin-top:10px" id="cpTx">${ICONS.copy}<span>Копировать ссылку</span></button>
-            </div>
-          ` : `<div class="note" style="margin-top:12px">Оператор отправит средства вручную. Ссылка на блокчейн появится здесь, если оператор её добавит.</div>`}
-          <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Новый обмен</button>
-        </div>`;
-      const cpTx = $('#cpTx');
-      if (cpTx) cpTx.addEventListener('click', () => copyText(o.txUrl, 'Ссылка скопирована'));
-      $('#btnNew').addEventListener('click', resetToForm);
-    } else {
-      const rej = o.status === 'rejected';
-      box.innerHTML = `
-        <div class="card stage">
-          <div class="stage-title">${rej ? 'Заявка отклонена' : 'Заявка отменена'}</div>
-          <div class="stage-sub">${rej ? 'Оператор отклонил заявку #' + o.id + '. Если это ошибка — напишите в поддержку.' : 'Вы отменили заявку #' + o.id + '.'}</div>
-          ${o.txUrl ? `<div class="tx-box"><div class="tx-label">🔗 Блокчейн</div><a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a></div>` : ''}
-          <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Создать заявку</button>
-        </div>`;
-      $('#btnNew').addEventListener('click', resetToForm);
-    }
+    box.innerHTML = `
+      <div class="card stage">
+        <div class="stage-title">Эта заявка не поддерживается</div>
+        <div class="stage-sub">PRICELEX сейчас работает только с подарочными картами USD → BTC. Создайте новую заявку, чтобы продолжить.</div>
+        <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Новая заявка</button>
+      </div>`;
+    $('#btnNew').addEventListener('click', resetToForm);
   }
 
   function wireReceiptPicker(o) {
@@ -1221,7 +989,7 @@
           <div class="h-main">
             ${isGiftOrder(o)
               ? `<div class="h-top"><span>${esc(giftLabelOf(o))} $${giftNominal(o)} → ${esc(giftCurrencyOf(o))}</span><span>${giftPayoutText(o)}</span></div>`
-              : `<div class="h-top"><span>₽ → ${esc(dirLabel(o))}</span><span>${o.payRub || o.rub ? fmtRub(o.payRub || o.rub) : cryptoOf(o)}</span></div>`}
+              : `<div class="h-top"><span>${esc(dirLabel(o))} → BTC</span><span>${cryptoOf(o)}</span></div>`}
             <div class="h-sub"><span>#${o.id}${o.receipt ? ' 🧾' : ''}${o.txUrl ? ' 🔗' : ''} · ${fmtDate(o.createdAt)}</span>${chip(o.status)}</div>
             <div class="h-sub" style="margin-top:2px"><span>${esc(o.wallet.slice(0, 10) + '…' + o.wallet.slice(-6))}</span><b style="color:#9fd8ff">${cryptoOf(o)}</b></div>
             ${o.txUrl ? `<div class="h-sub" style="margin-top:6px"><a href="${esc(o.txUrl)}" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;word-break:break-all">🔗 ${esc(o.txUrl.slice(0,50))}…</a></div>` : ''}
@@ -1271,7 +1039,7 @@
         </div>
         <div class="steps">
           <div class="step"><div class="n">1</div>Отправьте ссылку другу — она закрепит его за вами навсегда.</div>
-          <div class="step"><div class="n">2</div>Друг совершает обмен в VEGA через ваше приложение.</div>
+          <div class="step"><div class="n">2</div>Друг совершает обмен в PRICELEX через ваше приложение.</div>
           <div class="step"><div class="n">3</div>Вы получаете ${s.refPercent}% с каждого его обмена — без лимитов.</div>
         </div>
       </div>`;
@@ -1322,7 +1090,7 @@
         </div>
         <button class="btn btn-ghost" style="margin-top:10px" id="goSupport">${ICONS.chat}<span>Открыть чат поддержки</span></button>
       </div>
-      <div class="card"><div class="about" style="text-align:center;color:var(--mut);font-size:11.5px">VEGA — быстро. Надёжно. Выгодно. ✦</div></div>`;
+      <div class="card"><div class="about" style="text-align:center;color:var(--mut);font-size:11.5px">PRICELEX — быстро. Надёжно. Выгодно. ✦</div></div>`;
     const copy = $('#lcCopyRef');
     if (copy) copy.addEventListener('click', () => copyText(link, 'Ссылка скопирована'));
     const goRefs = $('#lcGoRefs');
@@ -1333,16 +1101,12 @@
     if (openAdmin) openAdmin.addEventListener('click', () => { haptic('light'); openAdminSheet(); });
   }
 
-  /* ---------- админка в приложении (только для оператора VEGA) ---------- */
+  /* ---------- админка в приложении (только для оператора PRICELEX) ---------- */
   S.adminOpen = S.adminOpen || false;
   S.admin = S.admin || null;
   let adminSheetTimer = null;
   let adminSheetFrames = [];
-  let adminTab = S.adminTab || 'crypto';
-  const CRYPTO_DIRS = [
-    ['BTC', 'Bitcoin', 'BTC · ведущая сеть', 'btc', '₿'],
-    ['LTC', 'Litecoin', 'LTC · быстрые тройки', 'ltc', 'Ł'],
-  ];
+  let adminTab = S.adminTab || 'gift';
   const GIFT_DIR = [
     ['GOOGLE_USD', 'Google Gift Card', 'США · USD', 'google', BRAND_MARKS.google],
     ['ITUNES_USD', 'iTunes Gift Card', 'США · USD', 'itunes', BRAND_MARKS.itunes],
@@ -1442,9 +1206,7 @@
     const A = S.admin;
     if (!A) return;
     syncAdminSession();
-    // Валюты
-    renderAdminDirs($('#admCryptoDirs'), CRYPTO_DIRS);
-    // Карты
+    // Поддерживаемые gift-карты
     renderAdminDirs($('#admGiftDirs'), GIFT_DIR);
     $('#admGiftFee').value = A.giftPercent;
     $('#admGiftErr').textContent = '';
@@ -1664,21 +1426,8 @@
         toast('Оператор подключился — клиент может отправить код (демо)');
       } else if (o.status === 'details' && isGiftOrder(o)) {
         toast('Оператор на связи — ждём код карты от клиента');
-      } else if (o.status === 'new' && !(o.payRub || o.rub)) {
-        const v = prompt('Сумма к оплате в рублях (на что соглашается клиент):', '5 000');
-        const rub = v === null ? null : parseFloat(String(v).replace(/\s/g, '').replace(',', '.'));
-        if (!(rub > 0)) { toast('Сумма отменена или некорректна'); return; }
-        const r = await api(`/api/admin/order/${o.id}/quote`, { method: 'POST', body: { rub } });
-        S.order = r.order;
-        renderOrderStage();
-        toast('Сумма отправлена клиенту на согласование (демо)');
-      } else if (o.status === 'new') {
-        const r = await api(`/api/admin/order/${o.id}/req`, { method: 'POST' });
-        S.order = r.order;
-        renderOrderStage();
-        toast('Оператор выдал реквизиты (демо)');
-      } else if (o.status === 'quote') {
-        toast('Сумма у клиента на согласовании — жмём «Согласен» внизу заявки');
+      } else if (!isGiftOrder(o)) {
+        toast('Поддерживаются только заявки USD gift card → BTC');
       } else if (o.status === 'paid') {
         const r = await api(`/api/admin/order/${o.id}/confirm`, { method: 'POST' });
         S.order = r.order;
@@ -1777,7 +1526,7 @@
       if (running.has(poll)) return;
       running.add(poll);
       try { await poll(); }
-      catch (e) { console.warn('[VEGA] Обновление не удалось:', e.message); }
+      catch (e) { console.warn('[PRICELEX] Обновление не удалось:', e.message); }
       finally { running.delete(poll); }
     }));
     setInterval(refresh, 3000);
