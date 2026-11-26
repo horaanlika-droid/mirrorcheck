@@ -481,7 +481,6 @@
               <div class="hero-orbit orbit-two"></div>
               <div class="hero-orbit orbit-three"></div>
               <div class="hero-core"><span>₿</span></div>
-              <img class="hero-mascot" src="/mascot.png" alt="PRICELEX mascot" aria-hidden="true" />
               ${[['APPLE_STORE_USD','token-apple'],['XBOX_USD','token-xbox'],['GOOGLE_USD','token-google'],['ITUNES_USD','token-itunes']].map(([key, placement]) => { const d = dirs().find((x) => x.key === key); return d ? `<div class="hero-token ${placement}"><span class="coin-ic ${esc(d.coin)}">${coinInner(d)}</span></div>` : ''; }).join('')}
             </div>
           </section>
@@ -507,18 +506,13 @@
             <div class="advantages-item"><b>Выплата в Bitcoin</b> — на указанный вами кошелёк, без банков и посредников.</div>
             <div class="advantages-item"><b>Без блокировок</b> — обмен картами не блокирует счета и минимизирует цифровой след.</div>
           </div>
-          <div class="gain-note" role="note">
-            <div class="gain-note-title"><span class="gain-note-ic" aria-hidden="true">🎁</span> Почему принимать оплату подарочными картами выгодно</div>
-            <div class="gain-item"><span class="gain-num">1</span><p><b>Быстро и прозрачно.</b> Мы быстро и с прозрачным расчётом обменяем ваши карты на Bitcoin — сумма видна до создания заявки.</p></div>
-            <div class="gain-item"><span class="gain-num">2</span><p><b>Без блокировок счетов.</b> Обмен через подарочные карты не блокирует счета и минимизирует цифровой след.</p></div>
-            <div class="gain-item"><span class="gain-num">3</span><p><b>Моментальный вывод.</b> BTC приходит на ваш кошелёк после проверки карты оператором, обычно за 5–15 минут.</p></div>
-          </div>
           <div class="buy-note" role="note">
             <div class="gain-note-title"><span class="gain-note-ic" aria-hidden="true">🛒</span>Где купить подарочные карты</div>
-            <div class="gain-item"><span class="gain-num">1</span><p><b>Google Play</b> — play.google.com, карта региона США, номинал в USD.</p></div>
-            <div class="gain-item"><span class="gain-num">2</span><p><b>iTunes / Apple Store</b> — apple.com и App Store, регион США, валюта USD.</p></div>
-            <div class="gain-item"><span class="gain-num">3</span><p><b>Xbox</b> — microsoft.com / магазин Xbox, регион США, номинал в USD.</p></div>
-            <div class="gain-item"><span class="gain-num">4</span><p>Карта должна быть неиспользованной, с полным балансом. Карты других регионов и валют не принимаются.</p></div>
+            <div class="gain-item"><span class="gain-num">1</span><p><b>Ozon</b> — ozon.ru, подарочные карты Google Play, iTunes, Xbox, Apple Store.</p></div>
+            <div class="gain-item"><span class="gain-num">2</span><p><b>Wildberries</b> — wildberries.ru, раздел подарочных карт и сертификатов.</p></div>
+            <div class="gain-item"><span class="gain-num">3</span><p><b>Яндекс Маркет</b> — market.yandex.ru, подарочные карты иностранных сервисов.</p></div>
+            <div class="gain-item"><span class="gain-num">4</span><p><b>Kupikod</b> — <a href="https://kupikod.com/shop/podarocnye-karty/google-play" target="_blank" rel="noopener">kupikod.com/shop/podarocnye-karty</a> и другие сервисы цифровых кодов.</p></div>
+            <div class="gain-item"><span class="gain-num">5</span><p>Важно: карта должна быть региона <b>США</b>, номинал в <b>USD ($)</b>, неиспользованная. Карты других регионов и валют не принимаются.</p></div>
           </div>
         </div>
         <div id="assetForm" class="hidden">
