@@ -353,3 +353,20 @@ test('HTML админ-панели содержит вкладку промок�
     assert.ok(doc.getElementById(id), `элемент #${id} присутствует`);
   }
 });
+
+test('тексты интерфейса доступны оператору, сохраняются и сбрасываются; клиент менять их не может', async () => {
+  const list = await req('GET', '/api/admin/texts');
+  assert.equal(list.status, 200);
+  const item = list.data.texts.find((t) => t.text === 'ПРИВАТНЫЙ ОБМЕН ЦИФРОВЫХ ПОДАРОЧНЫХ КАРТ');
+  assert.ok(item);
+  assert.equal((await req('GET', '/api/admin/texts', { demo: CLIENT_DEMO })).status, 403);
+  assert.equal((await req('PUT', '/api/admin/texts', { demo: CLIENT_DEMO, body: { id: item.id, value: 'Новое название' } })).status, 403);
+  assert.equal ( (await req('PUT', '/api/admin/texts', { body: { id: 'unknown', value: 'Текст' } })).status, 400);
+  assert.equal((await req('PUT', '/api/admin/texts', { body: { id: item.id, value: '' } })).status, 400);
+  const saved = await req('PUT', '/api/admin/texts', { body: { id: item.id, value: '<b>Новое название</b>' } });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.data.settings.texts.find((t) => t.text === item.text), { text: item.text, value: '<b>Новое название</b>' });
+  const reset = await req('PUT', '/api/admin/texts', { body: { id: item.id, value: null } });
+  assert.equal(reset.status, 200);
+  assert.equal(reset.data.settings.texts.some((t) => t.text === item.text), false);
+});

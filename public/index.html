@@ -141,8 +141,16 @@
         <button class="adm-tab" data-tab="promos" role="tab">🏷 Промо</button>
         <button class="adm-tab" data-tab="chat" role="tab">💬 Чат</button>
         <button class="adm-tab" data-tab="reviews" role="tab">⭐ Отзывы</button>
+        <button class="adm-tab" data-tab="texts" role="tab">✏️ Тексты</button>
       </div>
 
+      <div class="adm-pane hidden" data-pane="texts">
+        <div class="adm-note">Здесь можно изменить постоянные надписи приложения. Одинаковые исходные фразы меняются во всех местах. Числа, статусы, сообщения бота, отзывы и другие данные пользователей здесь не редактируются.</div>
+        <label class="f-label" for="admTextSearch">Поиск по исходному тексту</label>
+        <div class="f-box"><input id="admTextSearch" type="search" placeholder="Найти текст"></div>
+        <div id="admTextStatus" class="adm-field-hint" role="status"></div>
+        <div id="admTextList"></div>
+      </div>
       <div class="adm-pane hidden" data-pane="gift">
         <div class="adm-note">Google, iTunes, Xbox и Apple Store (карты США в USD) → BTC. У каждой карты свой курс: он считается из общего спота BTC/USD и индивидуальной скидки карты. Оператор подтверждает выплату после проверки карты.</div>
         <div class="adm-toggles" id="admGiftDirs"></div>
