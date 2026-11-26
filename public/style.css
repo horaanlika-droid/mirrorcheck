@@ -53,11 +53,15 @@ body {
 }
 @keyframes twinkle { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .55; transform: scale(.82); } }
 .hdr-logo {
-  display: block; height: 26px; width: auto;
-  margin: 7px auto 1px;
+  display: block; height: 20px; width: auto;
+  margin: 6px auto 1px;
   filter: drop-shadow(0 0 26px rgba(142, 223, 235, 0.22));
 }
 .hdr-sub { font-size: 8.5px; letter-spacing: .4em; margin-left: .4em; color: var(--mut); margin-top: 3px; font-weight: 600; }
+.hdr-info {
+  font-size: 8.5px; letter-spacing: .14em; color: #8edfeb; margin-top: 2px; font-weight: 600;
+  text-shadow: 0 0 10px rgba(142, 223, 235, 0.35);
+}
 .hdr-status { margin-top: 10px; }
 .pill {
   display: inline-flex; align-items: center; gap: 7px;
@@ -734,6 +738,17 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 .token-xbox { top:32%; right:4%; transform:rotate(8deg); }
 .token-google { bottom:15%; right:16%; transform:rotate(-12deg); }
 .token-itunes { bottom:18%; left:4%; transform:rotate(10deg); }
+/* Маскот PRICELEX на первом экране */
+.hero-mascot {
+  width: min(72vw, 360px);
+  height: auto;
+  position: relative;
+  z-index: 4;
+  filter: drop-shadow(0 0 40px rgba(0,220,203,0.35));
+  margin-top: 10px;
+  animation: mascotFloat 4s ease-in-out infinite;
+}
+@keyframes mascotFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
 .supported-head { display:flex; align-items:end; justify-content:space-between; gap:12px; margin:10px 4px 13px; padding-top:5px; border-top:1px solid rgba(24,56,68,.72); }
 .section-overline { display:block; margin-top:13px; color:#8299a9; font-size:8px; letter-spacing:.2em; }
 .supported-head h2 { margin-top:3px; color:#f1f7fa; font-size:18px; font-weight:500; letter-spacing:-.02em; }
@@ -781,6 +796,12 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 }
 .gain-item p { color: #a9bdc7; font-size: 11.5px; line-height: 1.55; }
 .gain-item b { color: #e6f2f5; font-weight: 700; }
+/* Преимущества: вертикальный столбец внизу первого экрана */
+.advantages { margin: 16px 0 6px; }
+.advantages-title { font-size: 10px; font-weight: 800; color: var(--mut); letter-spacing: .16em; text-transform: uppercase; margin-bottom: 8px; }
+.advantages-item { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.5; color: #f1f7fa; padding: 7px 0; border-bottom: 1px solid rgba(24, 56, 68, .45); }
+.advantages-item b { color: var(--teal); font-weight: 700; }
+.buy-note { margin-top: 10px; }
 .trade-layout { display:grid; grid-template-columns:220px minmax(0,1fr); gap:28px; align-items:start; }
 .trade-steps { display:flex; flex-direction:column; gap:0; padding:25px 0 10px 18px; }
 .trade-step { position:relative; display:flex; align-items:center; gap:13px; min-height:58px; color:#8299a9; font-size:12px; line-height:1.35; }
@@ -824,6 +845,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
   .hdr-star { position:absolute; left:0; top:12px; font-size:8px; }
   .hdr-logo { position:absolute; left:0; top:30px; margin:0; height:18px; }
   .hdr-sub { position:absolute; left:0; top:56px; margin:0; font-size:7px; letter-spacing:.23em; }
+  .hdr-info { position:absolute; left:0; top:70px; margin:0; font-size:7px; letter-spacing:.16em; color:#8edfeb; }
   .hdr-status { position:absolute; top:25px; right:0; margin:0; }
   .nav { position:fixed; z-index:25; left:50%; right:auto; top:24px; bottom:auto; transform:translateX(-50%); width:max-content; max-width:none; display:flex; gap:23px; padding:0; border:0; background:transparent; box-shadow:none; }
   .nav button { flex-direction:row; gap:7px; padding:7px 0; font-size:10px; color:#9ab0ba; }

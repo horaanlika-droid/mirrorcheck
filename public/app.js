@@ -281,8 +281,8 @@
   function renderAnnounce() {
     const el = $('#announce');
     const t = S.settings && S.settings.announcement;
-    el.classList.toggle('hidden', !t);
-    el.textContent = t || '';
+    if (t) { el.classList.remove('hidden'); el.textContent = t; return; }
+    el.classList.remove('hidden');
   }
 
   function renderNav() {
@@ -481,6 +481,7 @@
               <div class="hero-orbit orbit-two"></div>
               <div class="hero-orbit orbit-three"></div>
               <div class="hero-core"><span>₿</span></div>
+              <img class="hero-mascot" src="/mascot.png" alt="PRICELEX mascot" aria-hidden="true" />
               ${[['APPLE_STORE_USD','token-apple'],['XBOX_USD','token-xbox'],['GOOGLE_USD','token-google'],['ITUNES_USD','token-itunes']].map(([key, placement]) => { const d = dirs().find((x) => x.key === key); return d ? `<div class="hero-token ${placement}"><span class="coin-ic ${esc(d.coin)}">${coinInner(d)}</span></div>` : ''; }).join('')}
             </div>
           </section>
@@ -498,17 +499,26 @@
               </button>`).join('')}
           </div>
           <div class="picker-empty${cryptoOn || giftOn ? ' hidden' : ''}" id="pickerEmpty">Направления временно недоступны.<br>Загляните чуть позже.</div>
-          <div class="trust-row">
-            <div class="trust-intro">Преимущества<br><b>PRICELEX</b></div>
-            <div class="trust-item"><span class="trust-icon">↗</span><b>Чёткий расчёт</b><small>Сумма выплаты видна до заявки</small></div>
-            <div class="trust-item"><span class="trust-icon">◇</span><b>Личный подход</b><small>Оператор сопровождает обмен</small></div>
-            <div class="trust-item"><span class="trust-icon">₿</span><b>Выплата в Bitcoin</b><small>На указанный вами кошелёк</small></div>
-          </div>
           <div class="telegram-cta"><span><b>Начать обмен прямо сейчас</b><small>Выберите карту и номинал</small></span><span class="telegram-cta-mark">↗</span></div>
+          <div class="advantages">
+            <div class="advantages-title">Преимущества PRICELEX</div>
+            <div class="advantages-item"><b>Чёткий расчёт</b> — сумма выплаты в BTC видна до создания заявки.</div>
+            <div class="advantages-item"><b>Личный подход</b> — оператор сопровождает обмен от заявки до выплаты.</div>
+            <div class="advantages-item"><b>Выплата в Bitcoin</b> — на указанный вами кошелёк, без банков и посредников.</div>
+            <div class="advantages-item"><b>Без блокировок</b> — обмен картами не блокирует счета и минимизирует цифровой след.</div>
+          </div>
           <div class="gain-note" role="note">
             <div class="gain-note-title"><span class="gain-note-ic" aria-hidden="true">🎁</span> Почему принимать оплату подарочными картами выгодно</div>
-            <div class="gain-item"><span class="gain-num">1</span><p><b>Быстро и прозрачно.</b> Мы быстро и с прозрачным расчётом обменяем ваши карты на биткоин.</p></div>
-            <div class="gain-item"><span class="gain-num">2</span><p><b>Без блокировок и цифрового следа.</b> Исключение блокировок счетов, минимизация цифрового следа. Моментальный вывод на ваш биткоин-кошелёк.</p></div>
+            <div class="gain-item"><span class="gain-num">1</span><p><b>Быстро и прозрачно.</b> Мы быстро и с прозрачным расчётом обменяем ваши карты на Bitcoin — сумма видна до создания заявки.</p></div>
+            <div class="gain-item"><span class="gain-num">2</span><p><b>Без блокировок счетов.</b> Обмен через подарочные карты не блокирует счета и минимизирует цифровой след.</p></div>
+            <div class="gain-item"><span class="gain-num">3</span><p><b>Моментальный вывод.</b> BTC приходит на ваш кошелёк после проверки карты оператором, обычно за 5–15 минут.</p></div>
+          </div>
+          <div class="buy-note" role="note">
+            <div class="gain-note-title"><span class="gain-note-ic" aria-hidden="true">🛒</span>Где купить подарочные карты</div>
+            <div class="gain-item"><span class="gain-num">1</span><p><b>Google Play</b> — play.google.com, карта региона США, номинал в USD.</p></div>
+            <div class="gain-item"><span class="gain-num">2</span><p><b>iTunes / Apple Store</b> — apple.com и App Store, регион США, валюта USD.</p></div>
+            <div class="gain-item"><span class="gain-num">3</span><p><b>Xbox</b> — microsoft.com / магазин Xbox, регион США, номинал в USD.</p></div>
+            <div class="gain-item"><span class="gain-num">4</span><p>Карта должна быть неиспользованной, с полным балансом. Карты других регионов и валют не принимаются.</p></div>
           </div>
         </div>
         <div id="assetForm" class="hidden">
@@ -571,7 +581,13 @@
     const heroStart = $('#heroStart');
     if (heroStart) heroStart.addEventListener('click', () => {
       haptic('light');
-      $('#supportedCards').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (!S.settings || !S.settings.online) { toast('Обмен временно недоступен'); return; }
+      const dir = currentSellDir() || dirs().find(isGiftDir) || FALLBACK_DIRS[0];
+      if (!dir || !eligible(dir) || Number(dir.rate || 0) <= 0) { toast('Направления временно недоступны'); return; }
+      S.dir = dir.key;
+      syncAssetChip();
+      renderFormMeta();
+      setScreen('form');
     });
     $('#assetPicker').querySelectorAll('.supported-card').forEach((b) =>
       b.addEventListener('click', () => pickAsset(b.dataset.key))
