@@ -449,10 +449,6 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
   const indexFile = path.join(publicDir, 'index.html');
 
   app.get('/health', (_req, res) => res.json({ ok: true, name: 'PRICELEX' }));
-  // Reuse the original dollar-note artwork already tracked in the repository.
-  app.get('/dollar-background.jpeg', (_req, res) =>
-    res.sendFile(path.join(__dirname, '..', 'IMG_1211.jpeg'))
-  );
   app.use(express.static(publicDir));
   app.use((req, res) => res.sendFile(indexFile));
 
