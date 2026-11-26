@@ -1,4 +1,4 @@
-/* PRICELEX — агентство криптоброкеров: клиентское Web App (обмен BTC & GRAM, отзывы, поддержка) */
+/* VEGA | Official — клиентское Web App (BTC / LTC / USDT TRC20 / USDT ERC20 + поддержка + tx) */
 (() => {
   'use strict';
 
@@ -6,27 +6,22 @@
   let initData = '';
   let startParam = '';
   let demo = null;
-  // Единственная тема — тёмная: хром Telegram красится в её цвет здесь же,
-  // где Web App становится ready() (до ready() цвета не принимаются).
-  const CHROME_COLOR = '#080d11';
   if (tg) {
     try {
       tg.ready();
       tg.expand();
-      try {
-        if (typeof tg.setHeaderColor === 'function') tg.setHeaderColor(CHROME_COLOR);
-        if (typeof tg.setBackgroundColor === 'function') tg.setBackgroundColor(CHROME_COLOR);
-      } catch (e) { /* старые версии Web App без управления цветом */ }
+      tg.setHeaderColor && tg.setHeaderColor('#02070f');
+      tg.setBackgroundColor && tg.setBackgroundColor('#02070f');
     } catch (e) {}
     initData = tg.initData || '';
     startParam = tg.startParam || '';
   }
   if (!initData) {
     try {
-      demo = JSON.parse(localStorage.getItem('pricelex_demo') || 'null');
+      demo = JSON.parse(localStorage.getItem('vega_demo') || 'null');
       if (!demo) {
         demo = { id: 900000 + Math.floor(Math.random() * 99999), name: 'Гость' };
-        localStorage.setItem('pricelex_demo', JSON.stringify(demo));
+        localStorage.setItem('vega_demo', JSON.stringify(demo));
       }
     } catch (e) {
       demo = { id: 900001, name: 'Гость' };
@@ -35,273 +30,138 @@
 
   const $ = (s) => document.querySelector(s);
   const TERMINAL = ['completed', 'rejected', 'cancelled'];
-  // jsdom в тестах медиа не проигрывает: звук там не заводим вовсе.
-  const isTestEnv = typeof navigator !== 'undefined' && (/jsdom/i.test(navigator.userAgent) || navigator.userAgent === '');
-  // «Дзынь» кассы на прелоадере и виброотклик на нажатия всегда включены:
-  // переключатели «Звук кассы» и «Виброотклик» из профиля убраны. Выбор,
-  // сохранённый ими когда-то, больше ни на что не влияет — стираем его.
-  try {
-    localStorage.removeItem('pricelex_sound');
-    localStorage.removeItem('pricelex_haptics');
-  } catch (e) { /* приватный режим */ }
-  // Штаб-квартира. Адрес — часть юридических данных, поэтому он живёт константой
-  // в коде, а не настройкой: разъехаться с тем, что написано в правилах, дороже,
-  // чем неудобство менять его через админ-меню. Показывается в контактах «Инфо»
-  // и повторяется в общих положениях; ссылка ведёт на карту по нормализованному
-  // запросу (латиницей), а не по тому тексту, что видит человек.
-  const HQ_ADDRESS = 'Street 11B 243/3 — Umm Al Sheif — Dubai — ОАЭ';
-  const HQ_MAPS = 'https://www.google.com/maps/search/?api=1&query='
-    + encodeURIComponent('Street 11B 243/3, Umm Al Sheif, Dubai, United Arab Emirates');
-  const S = {
-    settings: null, me: null, orders: [], order: null, tab: 'exchange',
-    navStack: [], // экраны, через которые пришли на текущий: куда ведёт «назад»
-    orderOpen: false,
-    currency: 'BTC', isDemo: false, calcFrom: 'rub', support: [],
-    history: { points: [], updatedFor: null },
-    access: null, // состояние доступа: бесплатные дни / подписка
-    brokerLogin: null, // логин брокера, если кабинет доступен этому пользователю
-    brokerLk: null, brokerLkErr: null,
-    bids: [], offerWindowSec: 120, marketRate: null,
-    reviews: { list: [], stats: { count: 0, avg: 0 }, loaded: false, hasMore: false, next: null },
-    reviewDraft: { orderId: null, rating: 5, text: '' },
-    offers: null, topBroker: null, offersMeta: null, claims: [],
-    brokerApp: null, // последняя заявка «стать брокером»
-    captcha: null, // { id, question } — активная математическая капча
-    rulesOpen: false, // «Правила платформы» раскрыты — состояние живёт вне перерисовки
-    supportFabReady: false, // плавающая кнопка чата показана (после паузы)
-  };
+  // dir — выбранное направление (ключ из /api/settings → rates[]).
+  // screen — на каком под-экране обмена мы находимся: «picker» (выбор активов) или «form» (форма обмена).
+  // sheet — какая шторка открыта (crypto | gift) или null.
+  const S = { settings: null, me: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null };
 
-  const ADMIN_BROKERS = [
-    { login: 'stony montana', name: 'stony montana', rating: '4.98', deals: 342 },
-    { login: 'safer', name: 'safer', rating: '4.96', deals: 289 },
-    { login: 'INGA352', name: 'INGA352', rating: '4.99', deals: 415 },
-    { login: 'user_161931', name: 'user_161931', rating: '4.95', deals: 198 },
-    { login: 'fast alberto', name: 'fast alberto', rating: '4.97', deals: 276 },
+  // Резервный реестр направлений: нужен, если сервер старой версии не прислал rates.
+  const giftFallback = (key, label, symbol, coin) => ({
+    key, direction: 'sell', currency: key, network: null, kind: 'gift', payoutCurrency: 'BTC', payoutDecimals: 8,
+    label, symbol, coin, decimals: 0, display: 0, unit: 'USD', step: 10, minUnits: 10,
+    walletHint: 'Адрес Bitcoin-кошелька (bc1… / 1… / 3…)',
+    walletPattern: '^(bc1[a-zA-HJ-NP-Z0-9]{25,62}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$',
+    walletError: 'Проверьте адрес Bitcoin-кошелька — он выглядит некорректно.',
+    infoNote: 'Принимаются только подарочные карты США в USD ($).', currencyNote: 'Нужна карта региона США в USD ($).',
+    rate: null, enabled: true,
+  });
+  const FALLBACK_DIRS = [
+
+    giftFallback('GOOGLE_USD', 'Google Gift Card', '🎁', 'google'),
+    giftFallback('ITUNES_USD', 'iTunes Gift Card', '🎵', 'itunes'),
+    giftFallback('XBOX_USD', 'Xbox Gift Card', '🎮', 'xbox'),
+    giftFallback('APPLE_STORE_USD', 'Apple Store Gift Card', '🍎', 'apple'),
   ];
-  /* ---------- живые числа интерфейса ---------- */
 
-  // Волны с несоизмеримыми периодами дают плавный, но не повторяющийся ход:
-  // цифры меняются сами, без ровных значений и без скачков через полсписка.
-  const TAU = Math.PI * 2;
-  const clamp01 = (v) => Math.min(1, Math.max(0, v));
-  const wave = (ms, periodMin, phase) => Math.sin((ms / (periodMin * 60000)) * TAU + phase);
-  function organicWave(ms, parts) {
-    const sum = parts.reduce((acc, [weight, periodMin, phase]) => acc + weight * wave(ms, periodMin, phase), 0);
-    const norm = parts.reduce((acc, [weight]) => acc + weight, 0) || 1;
-    return clamp01(0.5 + 0.5 * (sum / norm));
+  // Все направления с итоговым курсом; старый формат settings.rateBTC/LTC тоже поддерживается.
+  function dirs() {
+    const s = S.settings;
+    if (!s) return [];
+    if (Array.isArray(s.rates) && s.rates.length) return s.rates;
+    return FALLBACK_DIRS.map((d) => ({
+      ...d,
+      rate: d.key === 'BTC' ? s.rateBTC : d.key === 'LTC' ? s.rateLTC : null,
+    }));
   }
+  const isGiftDir = (d) => !!d && (d.kind === 'gift' || d.direction === 'sell');
+  // Покупка крипты не показывает курс и не зависит от него — нужна лишь включённость направления.
+  // Карта (продажа) клиенту видна только с настроенным курсом.
+  const eligible = (d) => d.enabled !== false && (isGiftDir(d) ? Number(d.rate) > 0 : true);
+  const available = () => dirs().filter(eligible);
+  // Только продажа гифт-карт → BTC (рубли не принимаются).
+  const sellDirs = () => available().filter(isGiftDir);
+  const currentSellDir = () => sellDirs()[0] || dirs().find(isGiftDir) || FALLBACK_DIRS.find(isGiftDir);
 
-  // «Брокеров в сети»: состав команды берём из настроек бота (кто отмечен онлайн),
-  // а число на линии живёт своей жизнью — шаг ±1/±2 человека, без ровных прыжков.
-  function brokerPoolBase() {
-    const list = (S.settings && S.settings.adminBrokers) || [];
-    const online = list.filter((b) => b && b.online !== false).length;
-    return Math.max(1, online || ADMIN_BROKERS.length);
+  // Сколько BTC даём за карту номиналом units $; курс в BTC за $1 приходит с сервера.
+  function giftPayout(units, product = null) {
+    const dir = product || (isGiftDir(currentDir()) ? currentDir() : currentSellDir());
+    const giftRate = Number(dir && dir.rate) || 0;
+    if (!(giftRate > 0)) return null;
+    return floorTo((Number(units) || 0) * giftRate, 8);
   }
-  function brokerCountBounds() {
-    const base = brokerPoolBase();
-    return { base, min: Math.max(1, base - 1), max: base + 2 };
+  function giftWalletValid(address, product = null) {
+    const dir = product || (isGiftDir(currentDir()) ? currentDir() : currentSellDir());
+    const pattern = dir && dir.walletPattern;
+    return !!pattern && new RegExp(pattern).test(String(address || '').trim());
   }
-  function currentBrokerCount(now = Date.now()) {
-    const { min, max } = brokerCountBounds();
-    const w = organicWave(now, [[0.5, 12.7, 0.7], [0.32, 5.3, 2.4], [0.18, 2.3, 4.1]]);
-    return min + Math.round(w * (max - min));
+  function currentDir() {
+    const all = dirs();
+    return all.find((d) => d.key === S.dir) || available()[0] || all[0] || FALLBACK_DIRS[0];
   }
-
-  /* ---------- общий гарантийный депозит брокеров ---------- */
-  // Это депозит ВСЕХ брокеров площадки — общий фонд, которым страхуется каждая
-  // сделка. Сумму задаёт оператор в боте («🤝 Брокеры → 🛡 Общий депозит клиентам»),
-  // сейчас это 0.02 BTC. Сумма показывается как задана («0.0200…»), а живут только
-  // ПОСЛЕДНИЕ ЧЕТЫРЕ знака сатоши — и живут пошагово: каждое движение это плюс или
-  // минус несколько сатоши от предыдущего значения, а не прыжок к случайному числу.
-  // Ход детерминирован по времени: у всех клиентов и после перезагрузки цифра одна и
-  // та же, поэтому она не «скачет» между открытиями приложения. Нигде это не
-  // подчёркивается: клиент видит только тихую строку-справку — мелким приглушённым
-  // текстом, без плашки, иконки и акцентного цвета.
-  const DEPOSIT_FALLBACK_BTC = 0.02;
-  const DEPOSIT_TAIL_DIGITS = 4; // живут только последние четыре знака (0000–9999 сатоши)
-  const DEPOSIT_TAIL_MOD = 10 ** DEPOSIT_TAIL_DIGITS;
-  const DEPOSIT_STEP_MS = 6000; // один шаг хода
-  const DEPOSIT_SEGMENT_STEPS = 600; // отрезок хода — час (600 шагов по 6 с)
-  const DEPOSIT_STEP_MAX = 12; // самый крупный шаг, сатоши; чаще всего шаг 1–3
-  const DEPOSIT_TAIL_EDGE = 700; // центр хода держится подальше от краёв 0000 и 9999
-  // Куда хвост дрейфует за часы: медленные волны с несоизмеримыми периодами (16 ч,
-  // 6.5 ч, 2.5 ч) — за сутки меняются все четыре знака, но не рывками.
-  const DEPOSIT_DRIFT_WAVES = [[0.5, 16 * 60, 0.6], [0.32, 6.5 * 60, 2.3], [0.18, 2.5 * 60, 4.4]];
-
-  function depositCore() {
-    const s = S.settings || {};
-    const btc = Number(s.guaranteeFundBtc) > 0 ? Number(s.guaranteeFundBtc) : DEPOSIT_FALLBACK_BTC;
-    return { btc, satoshi: Math.max(1, Math.round(btc * 1e8)) };
+  // При смене настроек оператором выбранное направление могло исчезнуть — берём доступное.
+  function selectDir(key) {
+    const all = dirs();
+    const want = all.find((d) => d.key === key);
+    const dir = want && eligible(want) ? want : available()[0] || want || all[0];
+    S.dir = dir ? dir.key : key;
+    return S.dir;
   }
-
-  // Детерминированный «бросок» для шага (отрезок, номер шага) → [0, 1): без состояния
-  // и без Math.random, чтобы одно и то же время всегда давало одну и ту же цифру.
-  function hash01(a, b) {
-    let h = (Math.imul(a | 0, 0x9E3779B1) ^ Math.imul((b | 0) + 0x7F4A7C15, 0x85EBCA77)) >>> 0;
-    h = Math.imul(h ^ (h >>> 15), 0x2C1B3C6D) >>> 0;
-    h = Math.imul(h ^ (h >>> 12), 0x297A2D39) >>> 0;
-    h ^= h >>> 15;
-    return (h >>> 0) / 4294967296;
+  // Точность хранения/округления (USDT — 6, BTC/LTC — 8).
+  function decimalsOf(dir) {
+    return Number.isFinite(Number(dir.decimals)) ? Number(dir.decimals) : 8;
   }
-
-  // Один шаг хода: знак — монетка, размер — чаще 1–3 сатоши, изредка до DEPOSIT_STEP_MAX.
-  function depositStep(segment, index) {
-    const dir = hash01(segment, index) < 0.5 ? -1 : 1;
-    const size = 1 + Math.floor(Math.pow(hash01(segment, index + 0x40000), 3) * DEPOSIT_STEP_MAX);
-    return dir * size;
+  // Точность для показа клиенту (USDT — 2 знака, BTC/LTC — 8).
+  function displayOf(dir) {
+    const d = dir.display;
+    return Number.isFinite(Number(d)) && d !== null && d !== undefined ? Number(d) : decimalsOf(dir);
   }
-
-  const depositSegmentSums = new Map();
-  function depositSegmentSum(segment) {
-    if (!depositSegmentSums.has(segment)) {
-      if (depositSegmentSums.size > 48) depositSegmentSums.clear();
-      let sum = 0;
-      for (let i = 1; i <= DEPOSIT_SEGMENT_STEPS; i += 1) sum += depositStep(segment, i);
-      depositSegmentSums.set(segment, sum);
-    }
-    return depositSegmentSums.get(segment);
+  function giftDirOfOrder(o) {
+    const currency = String(o && o.currency || '').toUpperCase();
+    return dirs().find((d) => isGiftDir(d) && d.currency === currency) ||
+      FALLBACK_DIRS.find((d) => isGiftDir(d) && d.currency === currency) ||
+      dirs().find(isGiftDir) || FALLBACK_DIRS.find(isGiftDir);
   }
-
-  // Опорная точка хвоста на границе отрезка: медленный дрейф внутри [lo, hi] с отступом
-  // от краёв, чтобы хвост не упирался в 0000 или 9999.
-  function depositDriftBase(segment, lo, hi) {
-    const ms = segment * DEPOSIT_SEGMENT_STEPS * DEPOSIT_STEP_MS;
-    const margin = Math.min(DEPOSIT_TAIL_EDGE, Math.floor((hi - lo) / 4));
-    return lo + margin + Math.round(organicWave(ms, DEPOSIT_DRIFT_WAVES) * (hi - lo - 2 * margin));
+  const giftLabelOf = (o) => giftDirOfOrder(o)?.label || o.currencyLabel || 'Gift Card';
+  function dirLabel(o) {
+    const d = dirs().find((x) => x.currency === o.currency && (x.network || null) === (o.network || null));
+    if (d) return d.label;
+    if (isGiftOrder(o)) return giftLabelOf(o);
+    return o.currencyLabel || [o.currency, o.network].filter(Boolean).join(' ');
   }
-
-  // Последние четыре знака в момент `now`: пошаговое блуждание, натянутое между
-  // опорными точками соседних отрезков (случайный «мост»). Каждый шаг — ± несколько
-  // сатоши, на стыке отрезков разрыва нет, а за часы хвост уходит вслед за дрейфом.
-  function depositTail(now, lo, hi) {
-    if (hi <= lo) return lo;
-    const step = Math.floor(now / DEPOSIT_STEP_MS);
-    const segment = Math.floor(step / DEPOSIT_SEGMENT_STEPS);
-    const k = step - segment * DEPOSIT_SEGMENT_STEPS; // 0 … DEPOSIT_SEGMENT_STEPS-1
-    let walked = 0;
-    for (let i = 1; i <= k; i += 1) walked += depositStep(segment, i);
-    const from = depositDriftBase(segment, lo, hi);
-    const to = depositDriftBase(segment + 1, lo, hi);
-    const t = k / DEPOSIT_SEGMENT_STEPS;
-    const value = walked - t * depositSegmentSum(segment) + from + t * (to - from);
-    return Math.max(lo, Math.min(hi, Math.round(value)));
+  const floorTo = (v, dec) => Math.floor(Number(v) * 10 ** dec + 1e-6) / 10 ** dec;
+  // Параметры направления по заявке (в заявке хранятся currency + network).
+  function dirOfOrder(o) {
+    const d = dirs().find((x) => x.currency === o.currency && (x.network || null) === (o.network || null));
+    if (d) return d;
+    // Старые заявки могут хранить network TRC20/ERC20; продукт определяем по currency.
+    if (isGiftOrder(o)) return giftDirOfOrder(o);
+    return FALLBACK_DIRS.find((x) => x.currency === o.currency && (x.network || null) === (o.network || null)) || { coin: String(o.currency || '').toLowerCase(), symbol: o.currency === 'BTC' ? '₿' : o.currency === 'LTC' ? 'Ł' : '₮', decimals: 8, display: o.currency === 'USDT' ? 2 : 8 };
   }
-
-  // Сатоши → строка BTC с восемью знаками, без плавающей точки: «2003412» → «0.02003412».
-  function fmtSatoshi(sat) {
-    const n = Math.max(0, Math.round(Number(sat) || 0));
-    return `${Math.floor(n / 1e8)}.${String(n % 1e8).padStart(8, '0')}`;
-  }
-
-  function depositLive(now = Date.now()) {
-    const { satoshi: coreSat } = depositCore();
-    // Голова суммы — всё, кроме последних четырёх знаков — стоит как задал оператор
-    // («0.0200»). Хвост живёт от заданного значения вверх, так что фонд никогда не
-    // показывается меньше настроенного.
-    const head = coreSat - (coreSat % DEPOSIT_TAIL_MOD);
-    const tail = depositTail(now, coreSat - head, DEPOSIT_TAIL_MOD - 1);
-    const total = head + tail;
-    return { btc: total / 1e8, satoshi: total, text: fmtSatoshi(total) };
-  }
-
-  // Сумма в том виде, в каком её читает клиент: одной цифрой одного цвета — деления
-  // на «ровную» и «живую» часть снаружи не видно.
-  function depositAmountHtml(dep = depositLive()) {
-    return esc(dep.text);
-  }
-
-  // Тихое упоминание депозита: одна строка мелким приглушённым текстом, без плашки,
-  // иконки и подложки. Одна и та же в форме обмена и в заявках.
-  function depositNoteHtml() {
-    const dep = depositLive();
-    return `<div class="dep-line">Сделка застрахована общим депозитом брокеров площадки — <span class="dep-btc">${depositAmountHtml(dep)}</span> BTC</div>`;
-  }
-
-  // Короткая фраза для текстов приложения: «0.02019784 BTC».
-  function depositInlineHtml() {
-    const dep = depositLive();
-    // Сумма и тикер — одна неразрывная связка: «0.02019784 BTC» не рвётся строкой.
-    return `<span class="dep-inline"><b class="dep-btc">${depositAmountHtml(dep)}</b> BTC</span>`;
-  }
-
-  // Метка времени не должна выглядеть нарисованной: 14:00 и 14:05 сдвигаем на 1–4
-  // минуты назад. Точки курса идут с часовым шагом, поэтому сдвиг остаётся в пределах
-  // фактического наблюдения, но время перестаёт быть ровным.
-  function fmtOrganicTime(ts) {
-    const p = (x) => String(x).padStart(2, '0');
-    const date = new Date(Number(ts) || Date.now());
-    if (date.getMinutes() % 5 !== 0) return `${p(date.getHours())}:${p(date.getMinutes())}`;
-    const shift = 1 + (Math.abs(Math.round(Number(ts) / 60000)) % 4);
-    const moved = new Date(date.getTime() - shift * 60000);
-    return `${p(moved.getHours())}:${p(moved.getMinutes())}`;
-  }
-
-  // Перерисовываем живые числа точечно: цифры успевают подрасти между опросами.
-  function tickLiveNumbers() {
-    const count = currentBrokerCount();
-    document.querySelectorAll('.broker-online-count').forEach((el) => {
-      if (el.textContent === String(count)) return;
-      el.textContent = String(count);
-      el.classList.add('pulse-number');
-      setTimeout(() => el.classList.remove('pulse-number'), 350);
-    });
-    const dep = depositLive();
-    const amount = depositAmountHtml(dep);
-    document.querySelectorAll('.dep-btc').forEach((el) => { el.innerHTML = amount; });
-  }
+  const currenciesDecimals = (o) => displayOf(dirOfOrder(o));
+  const giftCurrencyOf = (o) => o.payoutCurrency || (o.network ? 'USDT' : 'BTC');
+  const giftPayoutText = (o) => {
+    const currency = giftCurrencyOf(o);
+    const suffix = currency === 'USDT' && o.network ? ` (${o.network})` : '';
+    return `${fmtCrypto(o.crypto, currency, currency === 'USDT' ? 2 : 8)}${suffix}`;
+  };
+  // Сумма к выплате для показа клиенту.
+  const cryptoOf = (o) => (isGiftOrder(o)
+    ? giftPayoutText(o)
+    : fmtCrypto(o.crypto, o.currency, currenciesDecimals(o)));
 
   const STATUS = {
-    collecting: { label: 'Ждём отклики брокеров', cls: 'new' },
-    new: { label: 'Брокер выдаёт реквизиты', cls: 'new' },
-    details: { label: 'Ожидает оплаты', cls: 'details' },
-    paid: { label: 'Подтверждение', cls: 'paid' },
-    completed: { label: 'Завершён', cls: 'completed' },
-    rejected: { label: 'Отклонён', cls: 'rejected' },
-    cancelled: { label: 'Отменён', cls: 'cancelled' },
+    new: { label: 'Подбор реквизитов', color: '#ffb648' },
+    quote: { label: 'Согласование суммы', color: '#38bdf8' },
+    details: { label: 'Ожидает оплаты', color: '#38bdf8' },
+    paid: { label: 'Подтверждение', color: '#ffb648' },
+    completed: { label: 'Завершён', color: '#22e5a2' },
+    rejected: { label: 'Отклонён', color: '#ff5470' },
+    cancelled: { label: 'Отменён', color: '#8aa0b8' },
   };
 
   const esc = (s) => String(s ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' }[c]));
-  const fmtRub = (n) => Math.round(Number(n) || 0).toLocaleString('ru-RU') + ' ₽';
-  const fmtCrypto = (v, cur) => {
+  // dec — точность из направления (USDT — 2 знака, BTC/LTC — 8); без неё точность по величине.
+  const fmtCrypto = (v, cur, dec) => {
     const n = Number(v) || 0;
-    const dec = n >= 1000 ? 2 : n >= 1 ? 4 : 6;
-    return n.toFixed(dec) + ' ' + cur;
-  };
-  const cryptoFromRub = (rub, rate) => Math.floor(((Number(rub) || 0) / rate) * 1e8 + 1e-6) / 1e8;
-  const rubFromCrypto = (crypto, rate) => Math.ceil(Number(crypto) * rate - 1e-6);
-  const fmtTrim = (v) => {
-    const n = Number(v) || 0;
-    if (!(n > 0)) return '';
-    return n.toFixed(8).replace(/\.?0+$/, '');
+    const d = Number.isFinite(Number(dec)) && dec !== null ? Number(dec) : n >= 1000 ? 2 : n >= 1 ? 4 : 6;
+    const fixed = n.toFixed(d);
+    const trimmed = fixed.includes('.') ? fixed.replace(/\.?0+$/, '') : fixed;
+    return (trimmed || '0') + ' ' + cur;
   };
   const fmtDate = (ts) => {
     const d = new Date(ts);
     const p = (x) => String(x).padStart(2, '0');
     return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  };
-  const fmtTime = (ts) => {
-    const d = new Date(ts);
-    const p = (x) => String(x).padStart(2, '0');
-    return `${p(d.getHours())}:${p(d.getMinutes())}`;
-  };
-  const fmtDayMonth = (ts) => {
-    const d = new Date(ts);
-    const p = (x) => String(x).padStart(2, '0');
-    return `${p(d.getDate())}.${p(d.getMonth() + 1)}`;
-  };
-  const fmtAgo = (ts) => {
-    if (!Number.isFinite(Number(ts))) return '—';
-    const diff = Date.now() - Number(ts);
-    if (diff < 60000) return 'только что';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)} мин назад`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)} ч назад`;
-    return `${Math.floor(diff / 86400000)} дн назад`;
-  };
-  const spanLabel = (ms) => {
-    if (ms < 5400000) return `за ${Math.max(1, Math.round(ms / 60000))} мин`;
-    if (ms < 129600000) return `за ${Math.max(1, Math.round(ms / 3600000))} ч`;
-    return `за ${Math.max(1, Math.round(ms / 86400000))} дн`;
   };
   const fmtSize = (n) => {
     n = Number(n) || 0;
@@ -310,45 +170,7 @@
     return (n / 1024 / 1024).toFixed(1) + ' МБ';
   };
   let pendingReceipt = null;
-  let lastHapticAt = 0; // время последнего импульса — по нему гасится дубль от общего обработчика
-  const haptic = (t = 'light') => {
-    lastHapticAt = Date.now();
-    try {
-      if (tg && tg.HapticFeedback) {
-        if (t === 'success' || t === 'warning' || t === 'error') {
-          tg.HapticFeedback.notificationOccurred(t);
-        } else if (t === 'selection') {
-          tg.HapticFeedback.selectionChanged();
-        } else {
-          tg.HapticFeedback.impactOccurred(t);
-        }
-      }
-    } catch (e) {}
-    try {
-      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-        if (t === 'success') navigator.vibrate([16, 40, 24]);
-        else if (t === 'warning') navigator.vibrate([24, 30, 20]);
-        else if (t === 'error') navigator.vibrate([30, 40, 30, 40, 30]);
-        else if (t === 'heavy') navigator.vibrate(28);
-        else if (t === 'medium' || t === 'rigid') navigator.vibrate(18);
-        else if (t === 'selection') navigator.vibrate(8);
-        else navigator.vibrate(12);
-      }
-    } catch (e) {}
-  };
-
-  // Виброотклик на любое нажатие. Обработчики кнопок сами зовут haptic() с
-  // подходящей силой (выбор, отправка, ошибка); всё, что осталось без отклика —
-  // ссылки, пункты правил, чипы, строки профиля, — получает лёгкий толчок здесь.
-  // Слушатель стоит на всплытии, то есть срабатывает после обработчика кнопки:
-  // если та уже отозвалась в этом касании, второй импульс не нужен.
-  const TAP_TARGET = 'button, a[href], summary, [role="button"], label, select, input[type="checkbox"], input[type="radio"]';
-  document.addEventListener('click', (e) => {
-    const el = e.target && e.target.closest ? e.target.closest(TAP_TARGET) : null;
-    if (!el || el.disabled || el.getAttribute('aria-disabled') === 'true') return;
-    if (Date.now() - lastHapticAt < 90) return;
-    haptic(el.closest('.seg, .rv-stars, .stars') ? 'selection' : 'light');
-  });
+  const haptic = (t) => { try { tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred(t || 'light'); } catch (e) {} };
 
   let toastTimer = null;
   function toast(msg) {
@@ -360,7 +182,6 @@
   }
 
   async function copyText(t, msg) {
-    haptic('success');
     try {
       await navigator.clipboard.writeText(t);
     } catch (e) {
@@ -371,7 +192,8 @@
       document.execCommand('copy');
       ta.remove();
     }
-    toast(msg || 'Скопировано ✅');
+    haptic('light');
+    toast(msg || 'Скопировано');
   }
 
   async function api(path, opts = {}) {
@@ -390,410 +212,56 @@
         body: opts.method === 'POST' ? JSON.stringify(Object.assign({ initData, demo }, opts.body || {})) : undefined,
       });
       const data = await res.json();
-      if (!res.ok) {
-        const err = new Error(data.error || 'Ошибка сервера');
-        err.status = res.status;
-        err.payload = data;
-        throw err;
-      }
+      if (!res.ok) throw new Error(data.error || 'Ошибка сервера');
       return data;
     } finally {
       clearTimeout(timeout);
     }
   }
 
+  // Официальный знак Google «G» — логотип подарочных карт вместо эмодзи.
+  const GIFT_ICON =
+    '<svg viewBox="0 0 48 48" style="width:66%;height:66%;display:block" role="img" aria-label="Google Gift Card">' +
+    '<path fill="#4285F4" d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v9h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.16z"/>' +
+    '<path fill="#34A853" d="M24 46c5.94 0 10.92-1.97 14.56-5.34l-7.11-5.52c-1.97 1.32-4.5 2.1-7.45 2.1-5.73 0-10.59-3.87-12.32-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"/>' +
+    '<path fill="#FBBC05" d="M11.68 28.17A13.9 13.9 0 0 1 10.96 24c0-1.45.25-2.86.69-4.17v-5.7H4.34A23 23 0 0 0 2 24c0 3.72.9 7.24 2.48 10.4l7.2-6.23z"/>' +
+    '<path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 30.08 2 24 2 15.4 2 7.96 6.93 4.34 12.12l7.34 5.7c1.73-5.2 6.59-9.07 12.32-9.07z"/>' +
+    '</svg>';
+  // Брендовые SVG: iTunes, Xbox и Apple адаптированы из Font Awesome Free Brands 7.3.1
+  // (Fonticons, Inc., CC BY 4.0; https://fontawesome.com/license/free), с currentColor для темы VEGA.
+  const brandMark = (label, viewBox, path) =>
+    `<svg viewBox="${viewBox}" style="width:66%;height:66%;display:block" role="img" aria-label="${label}" focusable="false"><path fill="currentColor" d="${path}"/></svg>`;
+  const BRAND_MARKS = {
+    google: GIFT_ICON,
+    itunes: brandMark('iTunes Gift Card', '0 0 448 512', 'M223.6 80.3a171.3 171.3 0 1 0 .2 342.5 171.3 171.3 0 1 0 -.2-342.5zm79.4 240c-3.2 13.6-13.5 21.2-27.3 23.8-12.1 2.2-22.2 2.8-31.9-5-11.8-10-12-26.4-1.4-36.8 8.4-8 20.3-9.6 38-12.8 3-.5 5.6-1.2 7.7-3.7 3.2-3.6 2.2-2 2.2-80.8 0-5.6-2.7-7.1-8.4-6.1-4 .7-91.9 17.1-91.9 17.1-5 1.1-6.7 2.6-6.7 8.3 0 116.1 .5 110.8-1.2 118.5-2.1 9-7.6 15.8-14.9 19.6-8.3 4.6-23.4 6.6-31.4 5.2-21.4-4-28.9-28.7-14.4-42.9 8.4-8 20.3-9.6 38-12.8 3-.5 5.6-1.2 7.7-3.7 5-5.7 .9-127 2.6-133.7 .4-2.6 1.5-4.8 3.5-6.4 2.1-1.7 5.8-2.7 6.7-2.7 101-19 113.3-21.4 115.1-21.4 5.7-.4 9 3 9 8.7-.1 170.6 .4 161.4-1 167.6zM345.2 32L102.8 32C45.9 32 0 77.9 0 134.8L0 377.2C0 434.1 45.9 480 102.8 480l242.4 0c57 0 102.8-45.9 102.8-102.8l0-242.4C448 77.9 402.1 32 345.2 32zM223.6 59a192.5 192.5 0 1 1 0 385 192.5 192.5 0 1 1 0-385z'),
+    xbox: brandMark('Xbox Gift Card', '0 0 512 512', 'M369.9 318.2c44.3 54.3 64.7 98.8 54.4 118.7-7.9 15.1-56.7 44.6-92.6 55.9-29.6 9.3-68.4 13.3-100.4 10.2-38.2-3.7-76.9-17.4-110.1-39-27.9-18.2-34.2-25.7-34.2-40.6 0-29.9 32.9-82.3 89.2-142.1 32-33.9 76.5-73.7 81.4-72.6 9.4 2.1 84.3 75.1 112.3 109.5zM188.6 143.8c-29.7-26.9-58.1-53.9-86.4-63.4-15.2-5.1-16.3-4.8-28.7 8.1-29.2 30.4-53.5 79.7-60.3 122.4-5.4 34.2-6.1 43.8-4.2 60.5 5.6 50.5 17.3 85.4 40.5 120.9 9.5 14.6 12.1 17.3 9.3 9.9-4.2-11-.3-37.5 9.5-64 14.3-39 53.9-112.9 120.3-194.4zm311.6 63.5c-16.9-80-67.5-130.3-74.6-130.3-7.3 0-24.2 6.5-36 13.9-23.3 14.5-41 31.4-64.3 52.8 42.4 53.3 102.2 139.4 122.9 202.3 6.8 20.7 9.7 41.1 7.4 52.3-1.7 8.5-1.7 8.5 1.4 4.6 6.1-7.7 19.9-31.3 25.4-43.5 7.4-16.2 15-40.2 18.6-58.7 4.3-22.5 3.9-70.8-.8-93.4zM141.3 43c47.7-2.5 109.7 34.5 114.3 35.4 .7 .1 10.4-4.2 21.6-9.7 63.9-31.1 94-25.8 107.4-25.2-63.9-39.3-152.7-50-233.9-11.7-23.4 11.1-24 11.9-9.4 11.2z'),
+    apple: brandMark('Apple Store Gift Card', '0 0 384 512', 'M319.1 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7-55.8 .9-115.1 44.5-115.1 133.2 0 26.2 4.8 53.3 14.4 81.2 12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zM262.5 104.5c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z'),
+  };
+  // Use the official brand marks in all card pickers, forms, admin controls and order history.
+  const coinInner = (d) => BRAND_MARKS[d?.coin] || esc(d?.symbol || '');
   const ICONS = {
     swap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>',
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
     users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.4 3.4-5 6.5-5s5.7 1.6 6.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 15.2c2.6.3 4.4 1.8 5 4.8"/></svg>',
-    info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>',
-    // Поддержка: чистый силуэт вопросительного знака (дуга + ножка + точка).
-    chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8.6 7.8a3.6 3.6 0 1 1 5.3 3.17c-1.14.62-1.9 1.5-1.9 2.73v.9"/><circle cx="12" cy="18.6" r="1.3" fill="currentColor" stroke="none"/></svg>',
-    star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3.6 2.55 5.2 5.75.84-4.16 4.05.98 5.72L12 16.72 6.88 19.4l.98-5.72L3.7 9.64l5.75-.84L12 3.6Z"/></svg>',
-    starFill: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 3.6 2.55 5.2 5.75.84-4.16 4.05.98 5.72L12 16.72 6.88 19.4l.98-5.72L3.7 9.64l5.75-.84L12 3.6Z"/></svg>',
-    down: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16"/><path d="m6 14 6 6 6-6"/></svg>',
+    user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.6" width="18" height="12.4" rx="2.6"/><path d="M9.2 7.6V6.1A2.1 2.1 0 0 1 11.3 4h1.4a2.1 2.1 0 0 1 2.1 2.1v1.5"/><path d="M3 13.2h18"/><path d="M12 12v2.6"/></svg>',
+    chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.6" width="18" height="12.8" rx="4.1"/><path d="M8.4 17.4v3.9c0 .7.8 1.1 1.3.6l3.9-4.1"/><circle cx="8.6" cy="11" r="1.05" fill="currentColor" stroke="none"/><circle cx="12" cy="11" r="1.05" fill="currentColor" stroke="none"/><circle cx="15.4" cy="11" r="1.05" fill="currentColor" stroke="none"/></svg>',
+    down: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16"/><path d="m6 14 6 6 6-6"/></svg>',
     copy: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
     check: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 12.5 5 5 10-11"/></svg>',
     bolt: '<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>',
     send: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>',
-    case: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.5" width="18" height="12.5" rx="2.5"/><path d="M8.5 7.5V6a2.5 2.5 0 0 1 2.5-2.5h2A2.5 2.5 0 0 1 15.5 6v1.5"/><path d="M3 13h18"/></svg>',
-    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
-    user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c.8-3.4 3.3-5.2 7.5-5.2s6.7 1.8 7.5 5.2"/></svg>',
-    menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
-    bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>',
-    theme: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6.5 6.5 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M17 4h.01M20 8h.01"/></svg>',
-    chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
+    left: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
+    right: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
+    chevDown: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
   };
-
-  /* ---------- медные монеты валют ---------- */
-  // Сгенерированные монеты BTC и GRAM (tools/png-key.js grade --ramp=bronze).
-  // Рубли — монета из первой буквы логотипа: медный чекан с монограммой P,
-  // снятой со знака (logo-mark.png), тем же металлом, что и BTC/GRAM.
-  // Две стороны и ребро: при развороте монета читается объёмом, а не плоской
-  // картинкой. Крутится только монета выбранной валюты — правило в glass.css
-  // висит на .currency-segment button.on, поэтому оборот стартует ровно в
-  // момент выбора; монеты в полях суммы и кошелька переворачиваются один раз
-  // при смене валюты (.coin-swap).
-  const COIN_ART = {
-    BTC: '/img/coin-btc.png',
-    GRAM: '/img/coin-gram.png',
-    RUB: '/img/coin-rub.png',
-  };
-  function coinHtml(cur, size = 24) {
-    const src = COIN_ART[cur] || COIN_ART.BTC;
-    const face = (cls, s) => `<img class="${cls}" src="${s}" alt="" width="${size}" height="${size}" draggable="false">`;
-    return `<span class="coin3d" style="--coin:${size}px" aria-hidden="true"><span class="coin3d-spin">`
-      + `${face('coin3d-face', src)}${face('coin3d-face coin3d-back', src)}<span class="coin3d-edge"></span></span></span>`;
-  }
-
-  /* ---------- график (реальная история курса и сумм) ---------- */
-  let chartSeq = 0;
-
-  function smoothPath(pts, top, bottom) {
-    if (pts.length < 2) return '';
-    if (pts.length === 2) return `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)} L${pts[1].x.toFixed(1)},${pts[1].y.toFixed(1)}`;
-    const clamp = (v) => Math.min(bottom, Math.max(top, v));
-    let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
-    for (let i = 0; i < pts.length - 1; i += 1) {
-      const p0 = pts[i - 1] || pts[i];
-      const p1 = pts[i];
-      const p2 = pts[i + 1];
-      const p3 = pts[i + 2] || p2;
-      const t = 0.2;
-      const c1x = p1.x + (p2.x - p0.x) * t;
-      const c2x = p2.x - (p3.x - p1.x) * t;
-      const c1y = clamp(p1.y + (p2.y - p0.y) * t);
-      const c2y = clamp(p2.y - (p3.y - p1.y) * t);
-      d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
-    }
-    return d;
-  }
-
-  // series: [{ at, v }] — реальные наблюдения; рисуем только то, что есть.
-  function renderChart(el, series, opts = {}) {
-    if (!el) return;
-    const W = Math.max(240, Math.round(el.clientWidth || 320));
-    const H = Math.max(120, Math.round(el.clientHeight || 158));
-    const top = 18;
-    const bottom = 14;
-    const values = series.map((p) => Number(p.v)).filter((v) => Number.isFinite(v));
-    const en = values.length;
-    const lo = en ? Math.min(...values) : 0;
-    const hi = en ? Math.max(...values) : 1;
-    const span = hi - lo;
-    const mid = top + (H - top - bottom) / 2;
-    const yOf = (v) => (span > 0 ? top + (1 - (v - lo) / span) * (H - top - bottom) : mid);
-    const t0 = en ? series[0].at : 0;
-    const t1 = en ? series[series.length - 1].at : 0;
-    const ts = t1 - t0;
-    const xOf = (p, i) => {
-      if (ts > 0) return (Math.min(t1, Math.max(t0, p.at)) - t0) / ts * W;
-      return en > 1 ? (i / (en - 1)) * W : W;
-    };
-
-    const id = ++chartSeq;
-    const grid = [];
-    for (let i = 1; i <= 5; i += 1) grid.push(`<line class="grid-v" x1="${(W * i / 6).toFixed(1)}" y1="${top - 6}" x2="${(W * i / 6).toFixed(1)}" y2="${H - bottom + 4}"/>`);
-    for (let i = 1; i <= 3; i += 1) grid.push(`<line class="grid-h" x1="0" y1="${(top + (H - top - bottom) * i / 4).toFixed(1)}" x2="${W}" y2="${(top + (H - top - bottom) * i / 4).toFixed(1)}"/>`);
-
-    const pts = series.map((p, i) => ({ x: xOf(p, i), y: yOf(Number(p.v)) }));
-    const last = pts[pts.length - 1] || { x: W, y: mid };
-    const hasLine = pts.length >= 3;
-    const line = hasLine ? smoothPath(pts, top - 4, H - bottom + 4) : '';
-    const area = hasLine ? `${line} L${last.x.toFixed(1)},${H - bottom} L${pts[0].x.toFixed(1)},${H - bottom} Z` : '';
-    const guide = hasLine ? '' : `<line class="guide" x1="0" y1="${last.y.toFixed(1)}" x2="${(last.x - 12).toFixed(1)}" y2="${last.y.toFixed(1)}"/>`;
-
-    // Просадка: самая низкая фактическая точка окна — лучшая цена для покупки.
-    let dip = null;
-    if (opts.markDip && hasLine && span > 0) {
-      let mi = 0;
-      series.forEach((p, i) => { if (Number(p.v) < Number(series[mi].v)) mi = i; });
-      dip = { x: pts[mi].x, y: pts[mi].y, v: Number(series[mi].v), at: series[mi].at, isLast: mi === pts.length - 1 };
-    }
-    const dipSvg = dip ? `
-        <rect class="dip-zone" x="${Math.max(0, dip.x - 22).toFixed(1)}" y="${top - 6}" width="44" height="${H - top - bottom + 10}" rx="10" fill="url(#plDip${id})"/>
-        <line class="dip-line" x1="${dip.x.toFixed(1)}" y1="${top - 6}" x2="${dip.x.toFixed(1)}" y2="${H - bottom + 4}"/>
-        ${dip.isLast ? '' : `<path class="dip-mark" d="M${dip.x.toFixed(1)},${(dip.y - 6).toFixed(1)} L${(dip.x + 6).toFixed(1)},${dip.y.toFixed(1)} L${dip.x.toFixed(1)},${(dip.y + 6).toFixed(1)} L${(dip.x - 6).toFixed(1)},${dip.y.toFixed(1)} Z"/>`}` : '';
-
-    el.innerHTML = `
-      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
-        <defs>
-          <!-- Цвета стопов заданы классами в reference.css: график следует теме оформления. -->
-          <linearGradient id="plLine${id}" x1="0" y1="0" x2="1" y2="0">
-            <stop class="gs-line-1" offset="0%"/><stop class="gs-line-2" offset="50%"/><stop class="gs-line-3" offset="100%"/>
-          </linearGradient>
-          <linearGradient id="plArea${id}" x1="0" y1="0" x2="0" y2="1">
-            <stop class="gs-area-1" offset="0%"/><stop class="gs-area-2" offset="100%"/>
-          </linearGradient>
-          <radialGradient id="plDot${id}">
-            <stop class="gs-dot-1" offset="0%"/><stop class="gs-dot-2" offset="100%"/>
-          </radialGradient>
-          <linearGradient id="plDip${id}" x1="0" y1="0" x2="0" y2="1">
-            <stop class="gs-dip-1" offset="0%"/><stop class="gs-dip-2" offset="70%"/><stop class="gs-dip-3" offset="100%"/>
-          </linearGradient>
-        </defs>
-        ${grid.join('')}
-        ${guide}
-        ${dipSvg}
-        ${area ? `<path class="area" d="${area}" fill="url(#plArea${id})"/>` : ''}
-        ${line ? `<path class="line" d="${line}" stroke="url(#plLine${id})"/>` : ''}
-        <circle class="dot-halo" cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="15" fill="url(#plDot${id})"/>
-        <circle class="dot-core" cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="4.6"/>
-      </svg>`;
-    return { x: last.x, y: last.y, W, H, dip };
-  }
-
-  // Подпись у точки просадки + сигнал «лучшее время для покупки» под графиком.
-  function renderDipLabel(el, spot, span = 0) {
-    if (!el || !spot || !spot.dip || spot.dip.isLast) return;
-    const { dip, W } = spot;
-    const lab = document.createElement('div');
-    const leftSide = dip.x > W * 0.6;
-    lab.className = 'chart-dip' + (leftSide ? ' left' : '');
-    lab.style.left = (leftSide ? dip.x - 12 : Math.min(W - 70, Math.max(70, dip.x))) + 'px';
-    lab.style.top = Math.max(0, dip.y - (leftSide ? 20 : 46)) + 'px';
-    const timeLabel = span > 86400000 ? `${fmtDayMonth(dip.at)} ${fmtOrganicTime(dip.at)}` : fmtOrganicTime(dip.at);
-    lab.innerHTML = `<span class="d-k">Просадка · ${esc(timeLabel)}</span><span class="d-v">${esc(Math.round(dip.v).toLocaleString('ru-RU'))} ₽</span>`;
-    el.appendChild(lab);
-  }
-
-  const DISCLAIMER = '<div class="disclaimer">По фактическим данным курса за период. Не является инвестиционной рекомендацией.</div>';
-
-  function marketSignal(series, spot) {
-    if (!spot || !spot.dip || series.length < 3) return '';
-    const vals = series.map((p) => Number(p.v));
-    const lo = Math.min(...vals);
-    const hi = Math.max(...vals);
-    const cur = vals[vals.length - 1];
-    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-    const when = spanLabel(series[series.length - 1].at - series[0].at);
-    const pos = hi > lo ? (cur - lo) / (hi - lo) : 1;
-    const above = lo > 0 ? ((cur - lo) / lo) * 100 : 0;
-    if (spot.dip.isLast || pos <= 0.2) {
-      return `<div class="signal buy"><span class="s-ic">◆</span><div><div class="s-t">Лучшее время для покупки</div>` +
-        `<div class="s-s">${spot.dip.isLast ? `Курс на минимуме ${when}` : `Курс у минимума ${when} — всего на ${above.toFixed(2)} % выше дна`}. Брокеры PRICELEX зафиксируют цену за вас.</div></div></div>`;
-    }
-    const below = avg > 0 ? ((avg - cur) / avg) * 100 : 0;
-    if (below > 0.05) {
-      return `<div class="signal good"><span class="s-ic">◆</span><div><div class="s-t">Курс ниже среднего ${when}</div>` +
-        `<div class="s-s">На ${below.toFixed(2)} % дешевле средней цены периода — хороший момент для покупки.</div></div></div>`;
-    }
-    return `<div class="signal"><span class="s-ic">◇</span><div><div class="s-t">Лучшая цена ${when} — ${Math.round(lo).toLocaleString('ru-RU')} ₽ в ${fmtOrganicTime(spot.dip.at)}</div>` +
-      `<div class="s-s">Сейчас на ${above.toFixed(2)} % выше. Отмечаем просадки на графике — следите за точкой входа.</div></div></div>`;
-  }
-
-  function renderChartNote(el, text) {
-    if (!el || !text) return;
-    const note = document.createElement('div');
-    note.className = 'chart-note';
-    note.textContent = text;
-    el.appendChild(note);
-  }
-
-  function renderChartTip(el, spot, value, sub) {
-    if (!el || !spot) return;
-    const tip = document.createElement('div');
-    tip.className = 'chart-tip' + (spot.y < 78 ? ' below' : '');
-    tip.style.top = (spot.y < 78 ? spot.y + 12 : spot.y - 8) + 'px';
-    tip.innerHTML = `<div class="t-k">сейчас</div><div class="t-v">${esc(value)}</div>${sub ? `<div class="t-s">${esc(sub)}</div>` : ''}`;
-    el.appendChild(tip);
-  }
-
-  function renderHero() {
-    const s = S.settings;
-    if (!s) return;
-    const cur = S.currency;
-    const rate = cur === 'BTC' ? s.rateBTC : s.rateGRAM;
-    const label = document.getElementById('heroRate');
-    if (label) label.textContent = Math.round(Number(rate) || 0).toLocaleString('ru-RU');
-    const sub = document.getElementById('heroSub');
-    if (sub) sub.innerHTML = `за 1 <b>${cur}</b>`;
-    const upd = document.getElementById('heroUpdated');
-    if (upd) upd.textContent = s.rateUpdatedAt ? fmtAgo(s.rateUpdatedAt) : 'ожидаем обновление';
-
-    const series = (S.history.points || []).map((p) => ({ at: p.at, v: cur === 'BTC' ? p.btc : p.gram }))
-      .filter((p) => Number.isFinite(p.v) && p.v > 0);
-    const chart = document.getElementById('rateChart');
-    const axis = document.getElementById('rateAxis');
-    const signal = document.getElementById('rateSignal');
-    if (!chart) return;
-    chart.innerHTML = '';
-    if (axis) axis.innerHTML = '';
-    if (signal) signal.innerHTML = '';
-
-    if (series.length >= 2) {
-      const span = series[series.length - 1].at - series[0].at;
-      const spot = renderChart(chart, series, { markDip: true });
-      renderDipLabel(chart, spot, span);
-      if (signal) {
-        const sig = marketSignal(series, spot);
-        signal.innerHTML = sig ? sig + DISCLAIMER : '';
-      }
-      renderChartTip(chart, spot, (Math.round(series[series.length - 1].v) || 0).toLocaleString('ru-RU') + ' ₽', fmtTime(series[series.length - 1].at));
-      if (axis) {
-        const mid = series[Math.floor((series.length - 1) / 2)];
-        const fmtAxis = (ts) => (span > 86400000 ? fmtDayMonth(ts) : fmtTime(ts));
-        axis.innerHTML = [series[0], mid, series[series.length - 1]]
-          .map((p) => `<span>${fmtAxis(p.at)}</span>`).join('');
-      }
-      const a = series[0].v;
-      const b = series[series.length - 1].v;
-      const pct = a > 0 ? ((b - a) / a) * 100 : 0;
-      const cls = Math.abs(pct) < 0.005 ? 'flat' : pct > 0 ? 'up' : 'down';
-      const ar = cls === 'flat' ? '•' : cls === 'up' ? '▲' : '▼';
-      const txt = cls === 'flat' ? 'без изменений' : `${Math.abs(pct).toFixed(2)} %`;
-      const when = spanLabel(series[series.length - 1].at - series[0].at);
-      const d = document.getElementById('heroDelta');
-      if (d) d.innerHTML = `<span class="delta ${cls}"><span class="ar">${ar}</span><span>${txt}</span><span class="when">${when}</span></span>`;
-    } else {
-      renderChart(chart, series.length ? series : [{ at: Date.now(), v: 0 }]);
-      renderChartTip(chart, { x: 0, y: (chart.clientHeight || 158) / 2 }, (Math.round(Number(rate) || 0)).toLocaleString('ru-RU') + ' ₽', 'текущий курс');
-      renderChartNote(chart, 'График курса появится, когда накопится история обновлений');
-      const d = document.getElementById('heroDelta');
-      if (d) d.innerHTML = '<span class="delta flat"><span class="ar">•</span><span>стабильный курс</span></span>';
-    }
-  }
-
-  function isOrderPage() {
-    return S.tab === 'exchange' && Boolean(S.order && S.orderOpen);
-  }
-
-  function isSubpage() {
-    return ['profile', 'broker', 'support', 'desk'].includes(S.tab) || isOrderPage();
-  }
 
   function renderHeader() {
-    const header = $('#appHeader');
-    if (!header) return;
-    const s = S.settings || {};
-    const home = S.tab === 'exchange' && !isOrderPage();
-    const status = s.online
-      ? '<span class="pill"><span class="dot"></span>Live</span>'
-      : '<span class="pill off"><span class="dot"></span>Offline</span>';
-    const demoTag = S.isDemo ? '<span class="pill demo">ДЕМО</span>' : '';
-
-    if (home) {
-      header.innerHTML = `
-        <div class="hdr-home">
-          <div class="hdr-brand">
-            <img class="hdr-logo-img" src="/img/logo-mark.png" alt="PRICELEX" width="34" height="34" />
-            <div class="hdr-brand-text">
-              <span class="hdr-logo">PRICELEX</span>
-              <span class="hdr-sub">PRIVATE CRYPTO BROKERAGE</span>
-            </div>
-          </div>
-          <div class="hdr-actions"><div class="hdr-status">${status}${demoTag}</div><button class="icon-button" id="profileMenu" type="button" aria-label="Открыть профиль">${ICONS.menu}</button></div>
-        </div>`;
-      $('#profileMenu').addEventListener('click', () => { haptic('light'); goTab('profile'); });
-      syncTgBackButton(false);
-      return;
-    }
-
-    const titles = {
-      history: 'История', reviews: 'Отзывы', refs: 'Рефералы', profile: 'Профиль',
-      broker: 'Стать брокером', support: 'Помощь', desk: 'Деск', info: 'Инфо',
-    };
-    const title = isOrderPage() ? 'Заявка' : (titles[S.tab] || 'PRICELEX');
-    header.innerHTML = `
-      <div class="hdr-page">
-        <button class="icon-button back-button" id="headerBack" type="button" aria-label="Назад">${ICONS.back}</button>
-        <div class="hdr-page-title">${title}</div>
-        <div class="hdr-page-spacer" aria-hidden="true"></div>
-      </div>`;
-    $('#headerBack').addEventListener('click', goBack);
-    syncTgBackButton(true);
-  }
-
-  /* ---------- «назад» ---------- */
-  // Стрелка в шапке, свайп и системная кнопка Telegram ведут сюда. Экран заявки
-  // закрывается обратно в форму обмена, остальные экраны достают из стека
-  // прошлый экран (см. goTab), а когда стек пуст — возвращают на обмен.
-  function goBack() {
-    if (isOrderPage()) {
-      S.orderOpen = false;
-      renderExchange();
-      renderHeader();
-      renderNav();
-      document.documentElement.scrollTop = 0;
-      document.body.scrollTop = 0;
-      return;
-    }
-    goTab(S.navStack.pop() || 'exchange', { back: true });
-  }
-
-  // Системная кнопка «назад» Telegram (в шапке клиента, на Android — ещё и
-  // аппаратная «назад») видна там же, где стрелка в шапке приложения, и ведёт
-  // в тот же goBack(). На главном экране обмена её нет: там Telegram
-  // показывает своё «Закрыть».
-  function syncTgBackButton(show) {
-    const button = tg && tg.BackButton;
-    if (!button || typeof button.show !== 'function' || typeof button.hide !== 'function') return;
-    if (typeof tg.isVersionAtLeast === 'function' && !tg.isVersionAtLeast('6.1')) return;
-    try {
-      if (!syncTgBackButton.wired && typeof button.onClick === 'function') {
-        button.onClick(() => { haptic('light'); goBack(); });
-        syncTgBackButton.wired = true;
-      }
-      if (show) button.show();
-      else button.hide();
-    } catch (e) { /* клиент Telegram без BackButton */ }
-  }
-
-  /* ---------- свайп влево — «назад» ---------- */
-  // Жест равносилен кнопке «назад» в шапке: короткий свайп влево возвращает
-  // на прошлый экран. Отзывается только там, где есть куда возвращаться — на
-  // главном экране обмена жест молчит. Палец ведёт за собой колонку (вдвое
-  // медленнее пальца, не дальше 110 px), отпустил раньше порога — колонка
-  // возвращается на место; при prefers-reduced-motion колонка стоит, а
-  // переход всё равно происходит. Вертикальный скролл не трогаем: пока палец
-  // ушёл вниз сильнее, чем в сторону, жест не считается горизонтальным.
-  function swipeBackAvailable() {
-    return S.tab !== 'exchange' || isOrderPage();
-  }
-  function setupSwipeBack() {
-    if (setupSwipeBack.done) return;
-    setupSwipeBack.done = true;
-    const THRESHOLD = 64; // свайп — минимум столько px влево
-    const FOLLOW = 0.5;   // колонка едет за пальцем вдвое медленнее
-    let sx = 0; let sy = 0; let dx = 0; let t0 = 0; let tracking = false; let horizontal = null;
-    const column = () => $('.app');
-    const settle = (el) => {
-      if (!el || !el.style.transform) return;
-      el.style.transition = 'transform .26s cubic-bezier(.2, .8, .2, 1)';
-      el.style.transform = '';
-      setTimeout(() => { el.style.transition = ''; }, 280);
-    };
-    const reset = () => { tracking = false; horizontal = null; dx = 0; };
-    document.addEventListener('touchstart', (e) => {
-      if (e.touches.length !== 1) return reset();
-      sx = e.touches[0].clientX;
-      sy = e.touches[0].clientY;
-      t0 = Date.now();
-      dx = 0; tracking = true; horizontal = null;
-    }, { passive: true });
-    document.addEventListener('touchmove', (e) => {
-      if (!tracking || e.touches.length !== 1) return;
-      dx = e.touches[0].clientX - sx;
-      const dy = e.touches[0].clientY - sy;
-      if (horizontal === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
-        horizontal = Math.abs(dx) > Math.abs(dy) * 1.4;
-      }
-      if (!horizontal || dx >= 0 || !swipeBackAvailable()) return;
-      const el = column();
-      if (el && !reducedMotion()) {
-        el.style.transition = 'none';
-        el.style.transform = `translateX(${Math.max(-110, dx * FOLLOW)}px)`;
-      }
-    }, { passive: true });
-    document.addEventListener('touchend', () => {
-      const el = column();
-      settle(el);
-      const done = tracking && horizontal === true && dx <= -THRESHOLD
-        && Date.now() - t0 < 1000 && swipeBackAvailable();
-      reset();
-      if (done) { haptic('light'); goBack(); }
-    });
-    document.addEventListener('touchcancel', () => { settle(column()); reset(); });
+    const s = S.settings;
+    let html = s.online
+      ? '<span class="pill"><span class="dot"></span>ОНЛАЙН</span>'
+      : '<span class="pill off"><span class="dot"></span>ОФФЛАЙН</span>';
+    if (S.isDemo) html += ' <span class="pill demo">ДЕМО</span>';
+    $('#hdrStatus').innerHTML = html;
   }
 
   function renderAnnounce() {
@@ -803,944 +271,746 @@
     el.textContent = t || '';
   }
 
-  // Переход вперёд кладёт текущий экран в стек «назад», а «назад» достаёт его
-  // оттуда. Раньше помнился только один прошлый экран, и пара «Профиль ⇄
-  // Помощь» замыкалась сама на себя: из Помощи «назад» вёл в Профиль, из
-  // Профиля — снова в Помощь, и выйти на обмен было нельзя. Обмен — корень:
-  // переход на него стек очищает. Если экран уже лежит в стеке (вернулись к
-  // нему по ссылке, а не стрелкой), всё, что сверху, отбрасывается — экраны в
-  // стеке не повторяются, и «назад» всегда доводит до обмена.
-  function goTab(tab, { back = false } = {}) {
-    if (tab === S.tab) return;
-    if (tab === 'exchange') S.navStack = [];
-    else if (!back) {
-      const seen = S.navStack.indexOf(tab);
-      if (seen >= 0) S.navStack = S.navStack.slice(0, seen);
-      else S.navStack.push(S.tab);
-    }
-    S.tab = tab;
-    document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
-    const view = $('#view-' + tab);
-    if (view) view.classList.remove('hidden');
-    $('.app').classList.toggle('subpage', isSubpage());
-    renderHeader();
-    renderNav();
-    updateSupportFab();
-    if (tab === 'history') renderHistory();
-    if (tab === 'refs') renderRefs();
-    if (tab === 'profile') renderProfile();
-    if (tab === 'broker') { renderBroker(); loadBrokerStatus(); }
-    if (tab === 'desk') renderDesk();
-    if (tab === 'info') renderInfo();
-    if (tab === 'support') renderSupport();
-    if (tab === 'reviews') { renderReviews(); loadReviews(); }
-    // Возвращаясь на обмен, сразу обновляем живые числа (курс, депозит, брокеры),
-    // не перерисовывая форму — введённая сумма и кошелёк остаются на месте.
-    if (tab === 'exchange') tickLiveNumbers();
-    document.documentElement.scrollTop = 0;
-    document.body.scrollTop = 0;
-  }
-
-  /* ---------- страница брокера для клиента: минимум — только скорость ---------- */
-
-  function renderDesk() {
-    const v = $('#view-desk');
-    const s = S.settings || {};
-    const avg = Number(s.avgExchangeMin);
-    v.innerHTML = `
-      <section class="card editorial">
-        <div class="ed-art" style="background-image:url('/img/broker.jpg')" aria-hidden="true"></div>
-        <div class="ed-body">
-          <div class="kicker">Ваш брокер — <em>команда PRICELEX</em></div>
-          <div class="display">Среднее время<br>обмена — <em>${avg > 0 ? `${avg} мин` : 'минуты'}</em></div>
-        </div>
-      </section>
-      <div class="card desk-metric">
-        <div class="dm-num">${avg > 0 ? `${avg}<span>мин</span>` : '—'}</div>
-        <div class="dm-label">${avg > 0 ? 'среднее время обмена по последним сделкам' : 'статистика появится после первых сделок'}</div>
-      </div>
-      <div class="card brokers-pool-card">
-        <div class="card-title">
-          <span>Брокеры на линии</span>
-          <span class="pill"><span class="dot"></span>Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b></span>
-        </div>
-        <div class="brokers-list">
-          ${ADMIN_BROKERS.map((b) => `
-            <div class="broker-row">
-              <div class="broker-avatar">${esc(b.login.slice(0, 2).toUpperCase())}</div>
-              <div class="broker-details">
-                <div class="broker-name">${esc(b.name)}</div>
-                <div class="broker-meta">★ ${b.rating} · ${b.deals} сделок</div>
-              </div>
-              <div class="broker-status-tag"><span class="dot-online"></span>онлайн</div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-      <div class="card">
-        <div class="feat">
-          <div class="f"><span class="i">◆</span><span class="f-copy">Сделку ведёт живой брокер из проверенной команды — быстро и вручную</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Брокеры торгуют под залог общего депозита — сейчас ${depositInlineHtml()}: если выплата не пришла, площадка гарантированно компенсирует средства клиенту</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Средства на время сделки лежат на гарантийном счёте и размораживаются после подтверждения оплаты</span></div>
-        </div>
-        <button class="btn btn-primary mt" id="deskGo">${ICONS.bolt}<span>Обменять сейчас</span></button>
-      </div>
-      <div class="signature">PRICELEX</div>`;
-    $('#deskGo').addEventListener('click', () => { haptic('light'); goTab('exchange'); });
-  }
-
   function renderNav() {
-    const nav = $('#nav');
-    const visible = ['exchange', 'history', 'reviews', 'refs', 'info'].includes(S.tab) && !isOrderPage();
-    nav.classList.toggle('hidden', !visible);
-    $('.app').classList.toggle('subpage', isSubpage());
-    if (!visible) { nav.innerHTML = ''; return; }
-
-    // Объёмные бронзовые иконки (ref IMG_1229): генерация + tools/png-key.js.
-    const last = S.tab === 'info'
-      ? ['info', 'Инфо', '/img/hero-shield.png']
-      : ['profile', 'Профиль', '/img/tab-profile.png'];
     const items = [
-      ['exchange', 'Обмен', '/img/tab-exchange.png'],
-      ['history', 'История', '/img/tab-history.png'],
-      ['reviews', 'Отзывы', '/img/tab-reviews.png'],
-      ['refs', 'Рефералы', '/img/tab-refs.png'],
-      last,
+      ['exchange', 'Обмен', ICONS.swap],
+      ['history', 'История', ICONS.clock],
+      ['refs', 'Рефералы', ICONS.users],
+      ['support', 'Чат', ICONS.chat],
+      ['profile', 'Профиль', ICONS.user],
     ];
-    nav.innerHTML = items
-      .map(([id, label, art]) => `<button type="button" data-tab="${id}" class="${S.tab === id ? 'on' : ''}\"><img class=\"nav-art\" src=\"${art}\" alt=\"\" width=\"26\" height=\"26\" /><span>${label}</span></button>`)
+    $('#nav').innerHTML = items
+      .map(([id, l, ic]) => `<button data-tab="${id}" class="${S.tab === id ? 'on' : ''}">${ic}<span>${l}</span>${id==='support' && S.support.length ? `<span class="badge">${S.support.length>99?'99+':S.support.length}</span>` : ''}</button>`)
       .join('');
-    nav.querySelectorAll('button').forEach((button) =>
-      button.addEventListener('click', () => {
-        if (S.tab === button.dataset.tab) return;
+    $('#nav').querySelectorAll('button').forEach((b) =>
+      b.addEventListener('click', () => {
+        if (S.tab === b.dataset.tab) return;
+        S.tab = b.dataset.tab;
         haptic('light');
-        goTab(button.dataset.tab);
+        document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
+        $('#view-' + S.tab).classList.remove('hidden');
+        renderNav();
+        if (S.tab === 'history') renderHistory();
+        if (S.tab === 'refs') renderRefs();
+        if (S.tab === 'profile') renderProfile();
+        if (S.tab === 'support') renderSupport();
+        syncTgBack();
       })
     );
   }
 
-  /* ---------- знак обмена в шапке ---------- */
-  // Вместо россыпи монет — знак обмена: две шампанские стрелки. Знак
-  // статичен: ни разворота, ни бегущего блика — всё в токенах палитры,
-  // стопы градиента раскрашены классами в ios.css (.ex-*), цветов в
-  // разметке нет.
-  function exchangeBadgeHtml() {
-    return `
-      <span class="exchange-badge" aria-hidden="true">
-        <svg class="ex-swap" viewBox="0 0 44 44" focusable="false">
-          <defs>
-            <linearGradient id="exSwapGrad" x1="8" y1="6" x2="36" y2="38" gradientUnits="userSpaceOnUse">
-              <stop class="ex-stop-1" offset="0" />
-              <stop class="ex-stop-2" offset=".55" />
-              <stop class="ex-stop-3" offset="1" />
-            </linearGradient>
-          </defs>
-          <g class="ex-arw">
-            <path d="M12 17 H30" />
-            <path d="M25.4 12.2 L30.6 17.4 L25.4 22.6" />
-            <path d="M32 27 H14" />
-            <path d="M18.6 22.2 L13.4 27.4 L18.6 32.6" />
-          </g>
-        </svg>
-      </span>`;
+  // ---------- Выбор актива: экран «Выбор активов для обмена» + нижние шторки ----------
+  // Обмен открывается на экране выбора активов (криптовалюта / подарочные карты).
+  // Сам выбор актива — всегда через нижнюю шторку: и для криптовалюты, и для подарочных карт.
+  // Для всех поддерживаемых карт используются общие правила: США, USD, $10 и кратно $10.
+  let sheetCloseTimer = null;
+  let sheetFrames = [];
+  let rulesCloseTimer = null;
+  let rulesFrames = [];
+  // Показываем все направления, даже выключенные: их рисуем полупрозрачными,
+  // чтобы клиент видел, что обмен бывает, — но не мог выбрать.
+  function sheetRowsFor(kind) {
+    return dirs().filter((d) => (kind === 'gift' ? isGiftDir(d) : !isGiftDir(d)));
   }
-
-  /* ---------- доступ: 3 дня бесплатно, дальше подписка на Tribute ---------- */
-
-  const accessNow = () => S.access || { ok: true, state: 'open', trialDays: 3, amountRub: 200, tributeUrl: '' };
-  const fmtAccessUntil = (ts) => (ts ? new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) : '');
-
-  // Тихая строка состояния: бесплатные дни или активная подписка — без плашек.
-  function accessBarHtml() {
-    const a = accessNow();
-    if (a.state === 'trial') {
-      return `<div class="access-note">🎁 Бесплатный доступ: ещё ${a.daysLeft === 1 ? 'день' : a.daysLeft + ' дн.'} из ${a.trialDays}</div>`;
+  function renderAssetSheet(kind) {
+    const rows = sheetRowsFor(kind);
+    const cur = currentDir();
+    const $title = $('#sheetTitle');
+    if ($title) $title.textContent = kind === 'gift' ? 'Подарочные карты' : 'Криптовалюта';
+    const list = $('#sheetList');
+    if (!list) return;
+    list.innerHTML = rows.length
+      ? rows
+          .map((d) => {
+            const off = !eligible(d);
+            const on = d.key === cur.key && !off;
+            const sub = off
+              ? 'Временно недоступно'
+              : kind === 'gift'
+                ? `1 $ = ${fmtCrypto(d.rate, 'BTC', 8)} · выплата в BTC`
+                : (d.network ? `Сеть ${d.network} · комиссию назовёт оператор` : 'Стоимость назовёт оператор после заявки');
+            return `<button class="sheet-row${on ? ' on' : ''}${off ? ' off' : ''}" data-key="${esc(d.key)}" role="option" aria-selected="${on ? 'true' : 'false'}"${off ? ' aria-disabled="true"' : ''}>
+              <span class="coin-ic ${esc(d.coin)}">${coinInner(d)}</span>
+              <span class="sheet-row-text"><b>${esc(d.label)}</b><i>${esc(sub)}</i></span>
+              <span class="sheet-check">${ICONS.check}</span>
+            </button>`;
+          })
+          .join('')
+      : '<div class="sheet-empty">Сейчас нет доступных направлений</div>';
+    const foot = $('#sheetFoot');
+    if (foot) {
+      foot.textContent = kind === 'gift' ? 'Принимаются карты США в USD · выплата в BTC' : '';
+      foot.classList.toggle('hidden', !foot.textContent);
     }
-    if (a.state === 'active') {
-      return `<div class="access-note">Подписка активна до ${fmtAccessUntil(a.until)}</div>`;
+    list.querySelectorAll('.sheet-row').forEach((b) =>
+      b.addEventListener('click', () => {
+        if (b.classList.contains('off')) {
+          haptic('error');
+          toast('Направление временно недоступно');
+          return;
+        }
+        pickAsset(b.dataset.key);
+      })
+    );
+  }
+  function openAssetSheet(kind) {
+    S.sheet = kind;
+    if (sheetCloseTimer) { clearTimeout(sheetCloseTimer); sheetCloseTimer = null; }
+    renderAssetSheet(kind);
+    const sheet = $('#assetSheet');
+    if (!sheet) return;
+    sheet.classList.remove('hidden');
+    sheet.setAttribute('aria-hidden', 'false');
+    // Двойной rAF — чтобы шторка появилась в DOM до запуска слайд-анимации.
+    // Кадры отменяем при закрытии, чтобы «открыть и сразу закрыть» не оставляло шторку в подвисшем состоянии.
+    sheetFrames = [requestAnimationFrame(() => { sheetFrames[1] = requestAnimationFrame(() => sheet.classList.add('open')); })];
+    document.body.classList.add('sheet-lock');
+    syncTgBack();
+  }
+  function closeAssetSheet() {
+    S.sheet = null;
+    document.body.classList.remove('sheet-lock');
+    sheetFrames.forEach((f) => { try { cancelAnimationFrame(f); } catch (e) {} });
+    sheetFrames = [];
+    const sheet = $('#assetSheet');
+    if (!sheet || sheet.classList.contains('hidden')) { syncTgBack(); return; }
+    sheet.classList.remove('open');
+    sheet.setAttribute('aria-hidden', 'true');
+    if (sheetCloseTimer) clearTimeout(sheetCloseTimer);
+    sheetCloseTimer = setTimeout(() => sheet.classList.add('hidden'), 320);
+    syncTgBack();
+  }
+  function setScreen(name) {
+    S.screen = name;
+    const picker = $('#assetPicker');
+    const form = $('#assetForm');
+    if (picker) picker.classList.toggle('hidden', name !== 'picker');
+    if (form) form.classList.toggle('hidden', name !== 'form');
+    syncTgBack();
+  }
+  const goToAssetPicker = () => setScreen('picker');
+  function syncAssetChip() {
+    const dir = currentDir();
+    const ic = $('#chipIc');
+    if (ic) { ic.className = 'coin-ic ' + dir.coin; ic.innerHTML = coinInner(dir); }
+    const lb = $('#chipLabel');
+    if (lb) lb.textContent = dir.label;
+  }
+  // Курсы/доступность могли измениться, пока форма открыта: выключенные группы не прячем —
+  // подсвечиваем полупрозрачными (как и направления внутри шторки), чтобы было видно, что обмен бывает.
+  function syncPickerAvailability() {
+    const cryptoEmpty = true;
+    const giftEmpty = sellDirs().length === 0;
+    const tradingOff = !S.settings.online;
+    const c = document.querySelector('[data-group="crypto"]');
+    if (c) c.classList.toggle('off', tradingOff || cryptoEmpty);
+    const g = document.querySelector('[data-group="gift"]');
+    if (g) g.classList.toggle('off', tradingOff || giftEmpty);
+    const empty = $('#pickerEmpty');
+    if (empty) empty.classList.toggle('hidden', !(cryptoEmpty && giftEmpty));
+    if (S.sheet) renderAssetSheet(S.sheet);
+    syncAssetChip();
+  }
+  function pickAsset(key) {
+    const want = dirs().find((d) => d.key === key);
+    if (!want) return;
+    if (!eligible(want)) {
+      haptic('error');
+      toast('Направление временно недоступно');
+      return;
     }
-    return '';
+    S.dir = want.key;
+    haptic('medium');
+    closeAssetSheet();
+    setScreen('form');
+    const w = $('#inWallet');
+    if (w) w.placeholder = want.walletHint;
+    syncAssetChip();
+    renderFormMeta();
   }
-
-  function accessSummaryUi() {
-    const a = accessNow();
-    if (a.state === 'trial') return `Бесплатно ещё ${a.daysLeft} дн. · дальше ${fmtRub(a.amountRub)}/мес`;
-    if (a.state === 'active') return `Подписка активна до ${fmtAccessUntil(a.until)}`;
-    if (a.state === 'pending') return 'Оплата на проверке';
-    if (a.state === 'open') return 'Открыт без подписки';
-    return `Оформить подписку — ${fmtRub(a.amountRub)}/мес`;
+  // Системная кнопка «назад» в Telegram: закрывает шторку, иначе возвращает к выбору активов.
+  function syncTgBack() {
+    try {
+      if (!tg || !tg.BackButton) return;
+      const need = S.tab === 'exchange' && !S.order && (S.screen === 'form' || !!S.sheet || !!S.giftRules || !!S.adminOpen);
+      if (need) tg.BackButton.show(); else tg.BackButton.hide();
+    } catch (e) { /* не-Telegram окружение */ }
   }
-
-  function paywallHtml() {
-    const a = accessNow();
-    const pending = a.state === 'pending';
-    const link = a.tributeUrl
-      ? `<button class="btn btn-primary mt" id="subPay">${ICONS.bolt}<span>Оформить подписку</span></button>`
-      : `<div class="note mt">Ссылку на оплату осталось вписать площадке — она появится здесь автоматически.</div>`;
-    return `
-      <section class="card paywall">
-        <div class="pw-mark">💳</div>
-        <div class="stage-title">${pending ? 'Проверяем оплату' : 'Бесплатные дни закончились'}</div>
-        <div class="stage-sub">
-          ${pending
-            ? 'Спасибо! Включим доступ сразу после подтверждения платежа на Tribute.'
-            : `Дальше доступ — подписка «Минимальный донат»: <b>${fmtRub(a.amountRub)}</b>/мес. Никаких процентов и сборов со сделок.`}
-        </div>
-        <div class="note">
-          ${pending ? 'Обычно это занимает несколько минут.' : `Подписка одна на человека: платить можно с любой стороны — и клиент, и брокер.`}
-        </div>
-        ${link}
-        ${pending ? '' : `<button class="btn btn-ghost mt" id="subPaid">✅ Я оплатил</button>`}
-        <div class="note" style="margin-top:8px">Оплата проходит на стороне Tribute — PRICELEX не принимает деньги клиентских сделок.</div>
-      </section>`;
-  }
-
-  function wirePaywall() {
-    const pay = $('#subPay');
-    if (pay) pay.addEventListener('click', () => {
-      haptic('medium');
-      const url = accessNow().tributeUrl;
-      if (!url) return toast('Ссылка на оплату ещё не задана');
-      if (tg && typeof tg.openLink === 'function') tg.openLink(url);
-      else window.open(url, '_blank', 'noopener');
-    });
-    const paid = $('#subPaid');
-    if (paid) paid.addEventListener('click', async () => {
-      paid.disabled = true;
-      haptic('medium');
-      try {
-        const r = await api('/api/subscription/paid', { method: 'POST', body: {} });
-        S.access = r.access;
-        toast('Спасибо! Включим доступ после подтверждения оплаты');
-        renderExchange();
-        renderProfile();
-      } catch (e) {
-        toast(e.message);
-        paid.disabled = false;
-      }
-    });
-  }
-
-  /* ---------- подписка «Минимальный донат» в личном кабинете ---------- */
-  // Тариф, сумма и статус Tribute видны сразу в ЛК — и клиенту, и брокеру,
-  // без перехода на экран обмена.
-  function subscriptionCardHtml(idp) {
-    const a = accessNow();
-    const stateText = {
-      trial: `Бесплатно ещё ${a.daysLeft} дн. из ${a.trialDays} · дальше ${fmtRub(a.amountRub)}/мес`,
-      active: `Активна до ${fmtAccessUntil(a.until)}`,
-      pending: 'Оплата на проверке',
-      open: 'Открыт без подписки',
-      expired: 'Не оформлена',
-    }[a.state] || 'Открыт без подписки';
-    const needPay = !a.ok;
-    const note = a.state === 'pending'
-      ? `<div class="note">Включим доступ сразу после подтверждения платежа на Tribute — обычно это занимает несколько минут.</div>`
-      : needPay && !a.tributeUrl
-        ? `<div class="note">Ссылка на оплату появится здесь, как только площадка её впишет.</div>`
-        : a.ok
-          ? `<div class="note">Оплата проходит на стороне Tribute — одна подписка открывает и обмен, и кабинет брокера.</div>`
-          : '';
-    const buttons = needPay && a.state !== 'pending' && a.tributeUrl
-      ? `<button class="btn btn-primary mt" id="${idp}SubPay" type="button">${ICONS.bolt}<span>Оформить подписку</span></button>
-         <button class="btn btn-ghost mt" id="${idp}SubPaid" type="button">✅ Я оплатил</button>`
-      : '';
-    return `
-      <section class="card profile-sub" aria-label="Подписка">
-        <div class="profile-section-title">Подписка</div>
-        <div class="sub-row"><span>Тариф</span><b>Минимальный донат · ${fmtRub(a.amountRub)}/мес</b></div>
-        <div class="sub-row"><span>Статус</span><b class="sub-state ${a.ok ? 'on' : 'off'}">${esc(stateText)}</b></div>
-        ${note}
-        ${buttons}
-      </section>`;
-  }
-
-  function wireSubscriptionCard(idp) {
-    const pay = document.getElementById(idp + 'SubPay');
-    if (pay) pay.addEventListener('click', () => {
-      haptic('medium');
-      const url = accessNow().tributeUrl;
-      if (!url) return toast('Ссылка на оплату ещё не задана');
-      if (tg && typeof tg.openLink === 'function') tg.openLink(url);
-      else window.open(url, '_blank', 'noopener');
-    });
-    const paid = document.getElementById(idp + 'SubPaid');
-    if (paid) paid.addEventListener('click', async () => {
-      paid.disabled = true;
-      haptic('medium');
-      try {
-        const r = await api('/api/subscription/paid', { method: 'POST', body: {} });
-        S.access = r.access;
-        toast('Спасибо! Включим доступ после подтверждения оплаты');
-        renderProfile();
-        if (S.brokerLk || S.brokerLkErr) renderBrokerLk();
-      } catch (e) {
-        toast(e.message);
-        paid.disabled = false;
-      }
-    });
-  }
-
-  // Экран доступа: офер создать нельзя, но курс виден — площадка ничего не прячет.
-  function renderExchangeGate(acc) {
-    const s = S.settings || {};
-    const cur = S.currency;
-    const rate = cur === 'BTC' ? s.rateBTC : s.rateGRAM;
-    $('#view-exchange').innerHTML = `
-      <div class="exchange-heading">
-        <div class="exchange-heading-left">
-          ${exchangeBadgeHtml()}
-          <div><h1>Куда отправим крипту?</h1><p>Вы указываете сумму. Брокеры предлагают цену.</p></div>
-        </div>
-      </div>
-      <section class="card card-hero lux-hero">
-        <div class="hero-art" aria-hidden="true"></div>
-        <div class="hero-top"><div class="kicker">Текущий курс</div></div>
-        <div class="hero-amount"><div class="metric"><span>${rate ? fmtRub(rate) : '—'}</span></div></div>
-        <div class="metric-sub">за 1 <b>${cur}</b> · рыночный курс, без наценки</div>
-      </section>
-      ${paywallHtml()}
-      <div class="signature">PRICELEX</div>`;
-    wirePaywall();
-    if (acc.state === 'expired') toast('Бесплатные дни закончились — нужна подписка');
+  function onTgBackButton() {
+    if (S.adminOpen) { closeAdminSheet(); return; }
+    if (S.giftRules) { giftRulesClose(); return; }
+    if (S.sheet) { closeAssetSheet(); return; }
+    if (S.tab === 'exchange' && S.screen === 'form') goToAssetPicker();
   }
 
   function renderExchange() {
-    const hasOpenOrder = S.order && !TERMINAL.includes(S.order.status);
-    // Без доступа офер не создать — показываем окно подписки. Текущую сделку
-    // доводим до конца в любом случае: начатое не бросаем.
-    if (!accessNow().ok && !hasOpenOrder) return renderExchangeGate(accessNow());
+    const dir = currentDir();
+    const sell = currentSellDir();
+    const giftOn = sellDirs().length > 0;
+    const cryptoOn = false;
+    const step = Number(sell && sell.step) || 10;
+    const minUnits = Number(sell && sell.minUnits) || step;
     $('#view-exchange').innerHTML = `
-      <div class="exchange-heading ${S.order && S.orderOpen ? 'hidden' : ''}">
-        <div class="exchange-heading-left">
-          ${exchangeBadgeHtml()}
-          <div><h1>Куда отправим крипту?</h1><p>Вы указываете сумму. Брокеры предлагают цену.</p></div>
+      <div id="exForm" class="${S.order ? 'hidden' : ''}">
+        <div id="assetPicker" role="region" aria-label="Выбор активов для обмена">
+          <div class="picker-head">
+            <div class="picker-title">Выбор активов для обмена</div>
+            <div class="picker-sub">Выберите, чем торгуем: криптовалюта или подарочная карта — откроется форма обмена.</div>
+          </div>
+          <div class="picker-group">
+            <div class="picker-group-label">ПОДАРОЧНЫЕ КАРТЫ</div>
+            <button class="group-card${(!S.settings.online || !giftOn) ? ' off' : ''}" data-group="gift">
+              <span class="coin-ic gift group-ic">🎁</span>
+              <span class="group-text"><b>Подарочные карты</b><i>${esc(sellDirs().map((d) => d.label).join(' · ') || 'Google · iTunes · Xbox · Apple Store')} — выплата в BTC</i></span>
+              <span class="group-chev">${ICONS.right}</span>
+            </button>
+          </div>
+          <div class="picker-empty${cryptoOn || giftOn ? ' hidden' : ''}" id="pickerEmpty">Направления временно недоступны.<br>Загляните чуть позже.</div>
         </div>
-        <a class="brokers-online-chip compare-link" href="#topBrokers">Сравнить брокеров <span aria-hidden="true">↘</span></a>
+        <div id="assetForm" class="hidden">
+          <div class="form-topbar">
+            <button class="back-btn" id="btnBackToAssets">${ICONS.left}<span>Выбор активов</span></button>
+            <button class="asset-chip" id="assetChip" aria-label="Сменить актив">
+              <span class="coin-ic ${esc(dir.coin)}" id="chipIc">${coinInner(dir)}</span>
+              <span class="asset-chip-label" id="chipLabel">${esc(dir.label)}</span>
+              ${ICONS.chevDown}
+            </button>
+          </div>
+          <div id="buyForm">
+          <div class="card">
+            <div class="card-title">Направление обмена</div>
+            <div class="f-label"><span>Вы получаете (точное количество)</span></div>
+            <div id="netPick"></div>
+            <div class="f-box" style="margin-top:10px"><div class="coin-ic" id="getIc">${coinInner(dir)}</div><input id="inCrypto" type="number" inputmode="decimal" placeholder="0.0005" min="0" step="any"></div>
+            <div class="f-hint">Стоимость в рублях назовёт оператор после заявки. Вы ничего не переводите, пока не согласитесь с суммой.</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Кошелёк получателя</div>
+            <div class="f-box"><div class="coin-ic" id="walIc">${coinInner(dir)}</div><input id="inWallet" placeholder="${esc(dir.walletHint)}" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
+            <div class="f-hint" id="walHint"></div>
+            <div class="f-err" id="fErr"></div>
+          </div>
+          <button class="btn btn-primary" style="margin-top:14px" id="btnGo">${ICONS.bolt}<span>Отправить заявку</span></button>
+        </div>
+        <div id="giftForm" class="hidden">
+          <div class="card">
+            <div class="card-title" id="giftTitle">${esc(sell.label)}</div>
+            <div class="f-label"><span>Номинал карты</span><span id="giftRule"></span></div>
+            <div class="seg gift-nom" id="segNom"></div>
+            <div class="f-box" style="margin-top:10px"><div class="coin-ic ${esc(sell.coin)}" id="giftCardIcon">${coinInner(sell)}</div><input id="inUnits" type="number" inputmode="numeric" placeholder="10" min="${minUnits}" step="${step}" value="10"></div>
+            <div class="f-hint">Введите номинал карты: от $${minUnits}, кратно $${step}</div>
+            <div class="f-sep"><div class="arr">${ICONS.down}</div></div>
+            <div class="f-label"><span>Вы получаете</span><span id="giftLimits"></span></div>
+            <div class="f-box"><div class="coin-ic btc">₿</div><input id="outBtc" type="text" readonly placeholder="—"></div>
+            <div class="f-meta" id="giftMeta"></div>
+            <div class="info-note" style="margin-top:10px">⏱ На сделку даётся <b>1 час</b>: создайте заявку → <b>дождитесь подключения оператора</b> → отправьте код <b>только после его команды</b> — оператор проверит карту и выплатит BTC.</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Где взять карту</div>
+            <div class="info-note" id="giftInfo">Карту можно купить на любом маркетплейсе — Яндекс Маркет, Ozon, Wildberries и т. д. Нужна карта региона <b>США</b> с номиналом в <b>USD</b>; карты других регионов и валют не принимаются.</div>
+            <div class="info-warn">⚠️ Проверьте регион карты: США, валюта номинала — <b>USD ($)</b>.</div>
+            <div class="info-note" style="margin-top:10px">🛡 <b>Минимальный цифровой след</b><br>Карту можно купить за <b>наличные</b> — она не привязана к вашему банковскому счёту и паспорту. Мы не запрашиваем документы и регистрацию: только код карты и Bitcoin-адрес. Выплата идёт прямо на ваш кошелёк — без банков, бирж и посредников. Меньше точек, где фиксируются ваши данные, — меньше цифрового следа.</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Bitcoin-кошелёк для выплаты BTC</div>
+            <div class="f-box"><div class="coin-ic btc">₿</div><input id="inBtcWallet" placeholder="bc1… / 1… / 3…" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
+            <div class="f-hint" id="giftBtcHint">Адрес Bitcoin-кошелька: bc1…, 1… или 3…</div>
+            <div class="f-err" id="giftErr"></div>
+          </div>
+          <button class="btn btn-primary" style="margin-top:14px" id="btnSell">${ICONS.bolt}<span>Продать карту за BTC</span></button>
+        </div>
+        </div>
       </div>
-      ${hasOpenOrder && !S.orderOpen ? `
-        <button class="active-order" id="activeOrder" type="button">
-          <span class="active-order-mark">${ICONS.clock}</span>
-          <span class="active-order-copy"><b>У вас есть активная заявка</b><small>#${S.order.id} · ${STATUS[S.order.status]?.label || 'В работе'}</small></span>
-          ${ICONS.chevron}
-        </button>` : ''}
-      <div id="exForm" class="${S.order && S.orderOpen ? 'hidden' : ''}">
-        ${accessBarHtml()}
-        <div class="exchange-journey">
-        <div class="journey-intro"><h2>Начнём обмен</h2><span>3 простых шага</span></div>
-        <p class="currency-caption">Что хотите получить?</p>
-        <div class="seg block currency-segment" id="segCur">
-          <button type="button" data-c="BTC" class="${S.currency === 'BTC' ? 'on' : ''}" aria-pressed="${S.currency === 'BTC'}">${coinHtml('BTC')}<span class="seg-label">Биткоин <small>BTC</small></span></button>
-          <button type="button" data-c="GRAM" class="${S.currency === 'GRAM' ? 'on' : ''}" aria-pressed="${S.currency === 'GRAM'}">${coinHtml('GRAM')}<span class="seg-label">Грам <small>GRAM</small></span></button>
-        </div>
-        <div class="card exchange-form-card">
-          <div class="card-title"><span class="step-number">1</span> Сколько меняем?</div>
-          <div class="f-label"><label for="inRub">Вы отдаёте</label><span id="mmLabel"></span></div>
-          <div class="field">
-            <div class="coin-ic coin-art rub coin-swap">${coinHtml('RUB', 30)}</div>
-            <input id="inRub" type="number" inputmode="decimal" placeholder="5 000" min="0" step="any">
-            <span class="suffix">RUB</span>
-          </div>
-          <div class="swap-row"><div class="swap">${ICONS.down}</div></div>
-          <div class="f-label"><label for="inCrypto">Примерно получите</label><span id="cryptoLimits"></span></div>
-          <div class="field">
-            <div class="coin-ic coin-art ${S.currency.toLowerCase()}" id="getIc" data-cur="${S.currency}">${coinHtml(S.currency, 30)}</div>
-            <input id="inCrypto" type="number" inputmode="decimal" placeholder="0.0005" min="0" step="any">
-            <span class="suffix" id="curSuffix">BTC</span>
-          </div>
-          <div class="f-hint">Введите сумму в любом поле — второе посчитается автоматически</div>
-          <details class="calculation-details"><summary>Как рассчитана сумма?</summary>
-            <div class="f-meta" id="fMeta"></div>
-            ${depositNoteHtml()}
-          </details>
-        </div>
-
-        <div class="card wallet-card">
-          <div class="card-title"><span class="step-number">2</span> <label for="inWallet">Куда отправить?</label></div>
-          <p class="wallet-help" id="walletHelp">Вставьте адрес своего криптокошелька. Не номер карты.</p>
-          <div class="field">
-            <div class="coin-ic coin-art ${S.currency.toLowerCase()}" id="walIc" data-cur="${S.currency}">${coinHtml(S.currency, 30)}</div>
-            <input id="inWallet" aria-describedby="walletHelp fErr" placeholder="Адрес BTC-кошелька" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
-          </div>
-          ${captchaHtml('capOrder')}
-          <div class="f-err" id="fErr" role="alert"></div>
-        </div>
-
-        <div class="journey-finish"><div class="finish-copy"><span class="step-number">3</span><span>Получите предложения и выберите брокера</span></div>
-        <button class="btn btn-cta mt" id="btnGo">${ICONS.bolt}<span>Создать заявку</span>${ICONS.chevron}</button>
-        <p class="submit-help">Сейчас платить не нужно. Сначала вы увидите условия.</p></div>
-        </div>
-        <section class="card card-hero lux-hero">
-          <div class="hero-art" aria-hidden="true"></div>
-          <div class="hero-top"><div class="kicker">Курс и брокеры</div><span class="live-label">Сейчас</span></div>
-          <div class="hero-amount">
-            <div class="metric"><span id="heroRate">—</span><span class="cur">₽</span></div>
-            <div id="heroDelta"></div>
-          </div>
-          <div class="metric-sub" id="heroSub">за 1 <b>${S.currency}</b></div>
-          <div class="chart" id="rateChart"></div>
-          <div class="chart-axis" id="rateAxis"></div>
-          <details class="market-details"><summary>Подробнее о курсе</summary><div id="rateSignal"></div></details>
-          <section id="topBrokers" aria-label="Топ брокеров"></section>
-          <div class="hero-foot">
-            <div><div class="k">Курс обновлён</div><div class="v" id="heroUpdated">—</div></div>
-            <button class="ghost-pill" id="howItWorks"><span class="q">?</span>Как это работает</button>
-          </div>
-        </section>
-
-        <details class="card offers-card">
-          <summary class="card-title">Все предложения брокеров</summary>
-          <div class="offers-list" id="offersList"><div class="note">Загружаем предложения…</div></div>
-        </details>
-      </div>
-      <div id="exOrder" class="${S.order && S.orderOpen ? '' : 'hidden'}"></div>
+      <div id="exOrder" class="${S.order ? '' : 'hidden'}"></div>
     `;
-    $('#segCur').querySelectorAll('button').forEach((b) =>
+
+    // Выбор актива: группы на экране выбора → нижние шторки (криптовалюта / подарочные карты).
+    $('#assetPicker').querySelectorAll('[data-group]').forEach((b) =>
       b.addEventListener('click', () => {
-        const changed = S.currency !== b.dataset.c;
-        S.currency = b.dataset.c;
-        haptic(changed ? 'selection' : 'light');
-        // Обновляем выбранную валюту без сброса заполненных полей.
-        $('#segCur').querySelectorAll('button').forEach((x) => {
-          x.classList.toggle('on', x === b);
-          x.setAttribute('aria-pressed', String(x === b));
-        });
-        renderHero();
-        renderFormMeta();
-        renderOffers();
+        haptic('light');
+        openAssetSheet(b.dataset.group);
       })
     );
-    const activeOrder = $('#activeOrder');
-    if (activeOrder) activeOrder.addEventListener('click', () => {
-      S.orderOpen = true;
-      renderExchange();
-      renderHeader();
-      renderNav();
+    $('#btnBackToAssets').addEventListener('click', () => { haptic('light'); goToAssetPicker(); });
+    $('#assetChip').addEventListener('click', () => {
+      haptic('light');
+      openAssetSheet(isGiftDir(currentDir()) ? 'gift' : 'crypto');
     });
-    $('#inRub').addEventListener('input', () => { S.calcFrom = 'rub'; renderFormMeta(); });
-    $('#inCrypto').addEventListener('input', () => { S.calcFrom = 'crypto'; renderFormMeta(); });
+    $('#inCrypto').addEventListener('input', renderFormMeta);
     $('#btnGo').addEventListener('click', submitOrder);
-    $('#howItWorks').addEventListener('click', () => { haptic('light'); goTab('info'); });
-    renderCaptchaBoxes();
-    renderHero();
+
+    if (giftOn) {
+      $('#segNom').innerHTML = [10, 20, 50, 100]
+        .map((v) => `<button data-v="${v}" class="${v === 10 ? 'on' : ''}">$${v}</button>`)
+        .join('');
+      $('#segNom').querySelectorAll('button').forEach((b) =>
+        b.addEventListener('click', () => {
+          $('#inUnits').value = b.dataset.v;
+          haptic('light');
+          $('#segNom').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+          renderFormMeta();
+        })
+      );
+      const unitsInput = $('#inUnits');
+      unitsInput.addEventListener('input', () => {
+        // Номинал кратен $10: ввод 37 превращаем в 30.
+        const n = Math.floor((Number(unitsInput.value) || 0) / step) * step;
+        $('#segNom').querySelectorAll('button').forEach((x) => x.classList.toggle('on', Number(x.dataset.v) === n));
+        renderFormMeta();
+      });
+      unitsInput.addEventListener('blur', () => {
+        const n = Math.max(minUnits, Math.floor((Number(unitsInput.value) || 0) / step) * step);
+        unitsInput.value = String(n);
+        renderFormMeta();
+      });
+      $('#inBtcWallet').addEventListener('input', renderFormMeta);
+      $('#btnSell').addEventListener('click', submitGiftOrder);
+    }
+    setScreen(S.screen || 'picker');
+    syncAssetChip();
     renderFormMeta();
     renderOrderStage();
-    renderOffers();
-    loadOffers();
   }
 
   function renderFormMeta() {
     const s = S.settings;
     if (!s) return;
-    const cur = S.currency;
-    const rate = cur === 'BTC' ? s.rateBTC : s.rateGRAM;
-    const inRub = $('#inRub');
-    const inCrypto = $('#inCrypto');
-    if (inRub && inCrypto) {
-      if (S.calcFrom === 'crypto') {
-        const c = parseFloat(inCrypto.value);
-        inRub.value = c > 0 ? String(rubFromCrypto(c, rate)) : '';
-      } else {
-        const rub = parseFloat(inRub.value);
-        inCrypto.value = rub > 0 ? fmtTrim(cryptoFromRub(rub, rate)) : '';
+    const dir = currentDir();
+    const all = available();
+    syncPickerAvailability();
+    // Гифт-карта — отдельная форма: номинал в $ → BTC, без полей рублей и курса.
+    const giftMode = isGiftDir(dir);
+    if ($('#buyForm')) $('#buyForm').classList.toggle('hidden', giftMode);
+    if ($('#giftForm')) $('#giftForm').classList.toggle('hidden', !giftMode);
+    if (giftMode) return renderGiftMeta();
+    // Выбранное направление выключили — переключаемся на доступное.
+    if (dir.enabled === false) {
+      if (all.length) {
+        S.dir = all[0].key;
+        return renderFormMeta();
       }
+      const btn0 = $('#btnGo');
+      if (btn0) {
+        btn0.disabled = true;
+        btn0.querySelector('span').textContent = '⛔ Направления временно недоступны';
+      }
+      return;
     }
-    $('#mmLabel').textContent = `от ${fmtRub(s.minRub)} до ${fmtRub(s.maxRub)}`;
-    const cl = $('#cryptoLimits');
-    if (cl) cl.textContent = `≈ ${fmtTrim(s.minRub / rate)}–${fmtTrim(s.maxRub / rate)} ${cur}`;
-    // Монеты в полях меняются только со сменой валюты: renderFormMeta зовётся
-    // на каждый ввод суммы, и пересоздание картинок сбивало бы разворот.
-    [$('#getIc'), $('#walIc')].forEach((el) => {
-      if (!el || el.dataset.cur === cur) return;
-      el.dataset.cur = cur;
-      el.className = 'coin-ic coin-art coin-swap ' + cur.toLowerCase();
-      el.innerHTML = coinHtml(cur, 30);
-    });
-    const sfx = $('#curSuffix');
-    if (sfx) sfx.textContent = cur;
-    $('#inWallet').placeholder = cur === 'BTC' ? 'Адрес BTC-кошелька (bc1… / 1… / 3…)' : 'Адрес GRAM-кошелька';
-    $('#inCrypto').placeholder = cur === 'BTC' ? '0.0005' : '40';
-    $('#fMeta').innerHTML = `
-      <div class="row"><span>Официальный курс</span><b>1 ${cur} = ${fmtRub(rate)}</b></div>
-      ${s.rateUpdatedAt ? `<div class="row"><span>Курс обновлён</span><b>${fmtDate(s.rateUpdatedAt)}</b></div>` : ''}
-      <div class="row"><span>Сделку ведёт</span><button class="f-link" id="yourBroker"><b>брокер PRICELEX</b>${ICONS.info}</button></div>`;
-    const yb = $('#yourBroker');
-    if (yb) yb.addEventListener('click', () => { haptic('light'); goTab('desk'); });
+    const ic = $('#getIc');
+    if (ic) { ic.className = 'coin-ic ' + dir.coin; ic.innerHTML = coinInner(dir); }
+    const wi = $('#walIc');
+    if (wi) { wi.className = 'coin-ic ' + dir.coin; wi.innerHTML = coinInner(dir); }
+    const w = $('#inWallet');
+    if (w) w.placeholder = dir.walletHint;
+    const np = $('#netPick');
+    if (np) {
+      np.innerHTML = dir.network && dir.networkHint
+        ? `<div class="net-note"><b>${esc(dir.label)}</b> · ${esc(dir.networkHint)}</div>`
+        : '';
+    }
+    const wh = $('#walHint');
+    if (wh) wh.textContent = dir.network
+      ? `⚠️ Выплата только в сети ${dir.network}. Адрес из другой сети приведёт к потере средств.`
+      : '';
     const btn = $('#btnGo');
-    const hasOpenOrder = S.order && !TERMINAL.includes(S.order.status);
-    btn.disabled = !s.online || Boolean(hasOpenOrder);
-    btn.querySelector('span').textContent = !s.online
-      ? 'Обмен временно недоступен'
-      : hasOpenOrder ? 'Сначала завершите текущую заявку' : 'Создать заявку';
+    btn.disabled = !s.online;
+    btn.querySelector('span').textContent = s.online ? 'Отправить заявку' : '⛔ Обмен временно недоступен';
   }
 
-  /* ---------- что предлагают брокеры до создания заявки ---------- */
-  // Живые цены из кабинетов брокеров — механика inDrive: сначала смотришь
-  // предложения, потом решаешь. Если цен нет — честно показываем «не предлагают».
-  let offersLoading = false;
-  async function loadOffers() {
-    if (offersLoading) return;
-    offersLoading = true;
-    const previous = JSON.stringify([S.offers?.offers, S.offers?.market, S.offers?.failed]);
+  // Гифт-карта: номинал в $ → выплата BTC по текущему курсу BTC/USD.
+  function renderGiftMeta() {
+    const units = $('#inUnits');
+    if (!units) return;
+    const s = S.settings;
+    const dir = isGiftDir(currentDir()) ? currentDir() : currentSellDir();
+    const step = Number(dir && dir.step) || 10;
+    const minUnits = Number(dir && dir.minUnits) || step;
+    const rate = Number(dir && dir.rate) || 0;
+    const title = $('#giftTitle');
+    if (title && dir) title.textContent = dir.label;
+    const cardIcon = $('#giftCardIcon');
+    if (cardIcon && dir) { cardIcon.className = 'coin-ic ' + dir.coin; cardIcon.innerHTML = coinInner(dir); }
+    const nominal = Math.max(0, Math.floor((Number(units.value) || 0) / step) * step);
+    const wallet = ($('#inBtcWallet') && $('#inBtcWallet').value) || '';
+    const payout = giftPayout(nominal);
+    const out = $('#outBtc');
+    const amount = (v) => fmtCrypto(v, 'BTC', 8);
+    if (out) out.value = nominal && payout ? amount(payout) : '—';
+    const rule = $('#giftRule');
+    if (rule) rule.textContent = `от $${minUnits} · кратно $${step}`;
+    const info = $('#giftInfo');
+    if (info && dir && dir.infoNote) info.innerHTML = esc(dir.infoNote).replace(/USD/g, '<b>USD</b>');
+    const limits = $('#giftLimits');
+    if (limits) {
+      limits.textContent = rate
+        ? `${fmtCrypto(rate, 'BTC', 8)} за $1 номинала`
+        : 'направление недоступно';
+    }
+    const hint = $('#giftBtcHint');
+    if (hint) {
+      hint.textContent = wallet
+        ? giftWalletValid(wallet)
+          ? `Выплата: ${payout ? amount(payout) : '—'} за $${nominal}`
+          : 'Проверьте Bitcoin-адрес: bc1…, 1… или 3…'
+        : 'Адрес Bitcoin-кошелька: bc1…, 1… или 3…';
+    }
+    const meta = $('#giftMeta');
+    if (meta) {
+      meta.innerHTML = `
+        <div class="row"><span>Номинал карты</span><b>$${nominal}</b></div>
+        <div class="row"><span>Курс</span><b>1 $ = ${rate ? fmtCrypto(rate, 'BTC', 8) : '—'}</b></div>
+        <div class="row"><span>К выплате</span><b>${payout ? amount(payout) : '—'}</b></div>`;
+    }
+    const btn = $('#btnSell');
+    if (btn) {
+      btn.disabled = !s.online || !rate;
+      btn.querySelector('span').textContent = s.online ? 'Продать карту за BTC' : '⛔ Обмен временно недоступен';
+    }
+  }
+
+  function giftRulesOpen() {
+    const dlg = $('#giftRules');
+    if (!dlg) return;
+    const dir = isGiftDir(currentDir()) ? currentDir() : currentSellDir();
+    S.giftRuleKey = dir && dir.key;
+    const brand = $('#giftRulesBrand');
+    if (brand && dir) brand.textContent = dir.label;
+    if (rulesCloseTimer) { clearTimeout(rulesCloseTimer); rulesCloseTimer = null; }
+    dlg.classList.remove('hidden');
+    dlg.setAttribute('aria-hidden', 'false');
+    rulesFrames = [requestAnimationFrame(() => { rulesFrames[1] = requestAnimationFrame(() => dlg.classList.add('open')); })];
+    document.body.classList.add('sheet-lock');
+    S.giftRules = true;
+    syncTgBack();
+  }
+  function giftRulesClose() {
+    const dlg = $('#giftRules');
+    S.giftRules = false;
+    S.giftRuleKey = null;
+    document.body.classList.remove('sheet-lock');
+    rulesFrames.forEach((f) => { try { cancelAnimationFrame(f); } catch (e) {} });
+    rulesFrames = [];
+    if (!dlg) { syncTgBack(); return; }
+    if (dlg.classList.contains('hidden')) { syncTgBack(); return; }
+    dlg.classList.remove('open');
+    dlg.setAttribute('aria-hidden', 'true');
+    if (rulesCloseTimer) clearTimeout(rulesCloseTimer);
+    rulesCloseTimer = setTimeout(() => dlg.classList.add('hidden'), 320);
+    syncTgBack();
+  }
+  // Проверка формы подарочной карты; при успехе открывает диалог с правилами.
+  function submitGiftOrder() {
+    const s = S.settings;
+    const err = $('#giftErr');
+    err.textContent = '';
+    const dir = isGiftDir(currentDir()) ? currentDir() : currentSellDir();
+    const step = Number(dir && dir.step) || 10;
+    const minUnits = Number(dir && dir.minUnits) || step;
+    const units = Math.floor((Number($('#inUnits').value) || 0) / step) * step;
+    const wallet = ($('#inBtcWallet').value || '').trim();
+    if (!s.online) return (err.textContent = '⛔ Обмен временно недоступен — загляните позже.');
+    if (!(Number(dir.rate) > 0)) return (err.textContent = 'Продажа карт сейчас недоступна.');
+    if (!units || units < minUnits) return (err.textContent = `Минимальный номинал — $${minUnits}, сумма кратна $${step}.`);
+    if (!giftWalletValid(wallet, dir)) return (err.textContent = 'Укажите корректный Bitcoin-адрес: bc1…, 1… или 3….');
+    const payout = giftPayout(units, dir);
+    if (!(payout > 0)) return (err.textContent = 'Не удалось рассчитать выплату — проверьте курс и номинал.');
+    haptic('medium');
+    giftRulesOpen();
+  }
+
+  // Создание заявки — только после подтверждения правил в диалоге.
+  async function createGiftOrder() {
+    const s = S.settings;
+    const err = $('#giftErr');
+    const dir = dirs().find((d) => d.key === S.giftRuleKey) || (isGiftDir(currentDir()) ? currentDir() : currentSellDir());
+    const step = Number(dir && dir.step) || 10;
+    const minUnits = Number(dir && dir.minUnits) || step;
+    const units = Math.floor((Number($('#inUnits').value) || 0) / step) * step;
+    const wallet = ($('#inBtcWallet').value || '').trim();
+    if (!s.online || !eligible(dir) || !giftWalletValid(wallet, dir) || !units || units < minUnits) {
+      giftRulesClose();
+      return renderGiftMeta();
+    }
+    const btn = $('#giftRulesConfirm');
+    btn.disabled = true;
+    haptic('medium');
     try {
-      S.offers = await api('/api/offers');
-    } catch {
-      S.offers = { offers: [], failed: true };
+      const r = await api('/api/orders', {
+        method: 'POST',
+        body: { units, wallet, currency: dir.currency, startParam },
+      });
+      S.order = r.order;
+      S.orders.unshift(r.order);
+      haptic('heavy');
+      giftRulesClose();
+      $('#exForm').classList.add('hidden');
+      $('#exOrder').classList.remove('hidden');
+      renderOrderStage();
+      toast('Заявка создана — дождитесь подключения оператора');
+    } catch (e) {
+      if (err) err.textContent = e.message;
+      toast(e.message);
+      giftRulesClose();
     } finally {
-      offersLoading = false;
+      btn.disabled = false;
+      renderGiftMeta();
     }
-    // checkedAt changes on every response; don't rebuild focused controls for it.
-    if (previous !== JSON.stringify([S.offers?.offers, S.offers?.market, S.offers?.failed])) renderOffers();
-  }
-
-  function topBrokerOffers() {
-    const seen = new Set();
-    return (Array.isArray(S.offers?.offers) ? S.offers.offers : [])
-      .filter((o) => o && o.login && o.online !== false && o.active !== false
-        && Number.isFinite(Number(o[S.currency])) && Number(o[S.currency]) > 0
-        && Number.isFinite(Number(o.rating)) && Number(o.rating) > 0 && Number(o.rating) <= 5)
-      .sort((a, b) => Number(b.rating) - Number(a.rating)
-        || (Number(b.deals) || 0) - (Number(a.deals) || 0)
-        || String(a.login).localeCompare(String(b.login)))
-      .filter((o) => {
-        const key = String(o.login).toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      }).slice(0, 5);
-  }
-
-  function renderTopBrokers() {
-    const box = $('#topBrokers');
-    if (!box) return;
-    const list = topBrokerOffers();
-    const heading = '<div class="top-heading"><h2>Топ-5 брокеров</h2><span>По рейтингу ★</span></div>';
-    if (!list.length) {
-      const message = !S.offers ? 'Загружаем цены брокеров…' : S.offers.failed
-        ? 'Не удалось загрузить цены. Попробуйте ещё раз.'
-        : 'Пока нет предложений с рейтингом по ' + S.currency + '. Создайте заявку — брокеры смогут ответить.';
-      box.innerHTML = heading + `<div class="top-empty">${ICONS.users}<p>${esc(message)}</p>${S.offers?.failed ? '<button type="button" class="ghost-pill" id="retryOffers">Попробовать снова</button>' : ''}</div>`;
-      const retry = $('#retryOffers');
-      if (retry) retry.onclick = () => { S.offers = null; renderOffers(); loadOffers(); };
-      return;
-    }
-    if (!list.some((o) => o.login === S.topBroker)) S.topBroker = list[0].login;
-    const market = Number(S.offers?.market?.[S.currency]) || Number(S.currency === 'BTC' ? S.settings?.rateBTC : S.settings?.rateGRAM);
-    const hasMarket = Number.isFinite(market) && market > 0;
-    const prices = list.map((o) => Number(o[S.currency]));
-    if (hasMarket) prices.push(market);
-    const min = Math.min(...prices), max = Math.max(...prices);
-    const pad = Math.max((max - min) * .15, max * .001);
-    const x = (price) => 24 + (price - min + pad) / (max - min + 2 * pad) * 252;
-    const height = list.length * 42 + 12;
-    box.innerHTML = heading + `<p class="top-explainer">Лучший рейтинг — выше. Цена левее — дешевле.</p>
-      <div class="broker-price-chart" role="group" aria-label="Текущие цены за 1 ${S.currency}, в рублях">
-        <div class="broker-price-axis"><span>${fmtRub(min)}</span><span>${fmtRub(max)}</span></div>
-        <svg viewBox="0 0 300 ${height}" role="group" aria-label="Цены топ-${list.length} брокеров. Номера соответствуют списку ниже.">
-          ${hasMarket ? `<line class="market-guide" x1="${x(market)}" y1="0" x2="${x(market)}" y2="${height}"/>` : ''}
-          ${list.map((o, i) => `<g class="broker-plot ${o.login === S.topBroker ? 'selected' : ''}" data-broker-plot="${i}" role="button" tabindex="0" aria-pressed="${o.login === S.topBroker}" aria-label="${esc(o.name || o.login)}: ${fmtRub(o[S.currency])}">
-            <title>${esc(o.name || o.login)}: ${fmtRub(o[S.currency])}, рейтинг ${Number(o.rating).toFixed(2)}</title>
-            <line class="broker-track" x1="10" y1="${26 + i * 42}" x2="290" y2="${26 + i * 42}"/>
-            <circle class="broker-pin" cx="${x(Number(o[S.currency]))}" cy="${26 + i * 42}" r="15"/>
-            <text x="${x(Number(o[S.currency]))}" y="${31 + i * 42}" text-anchor="middle">${i + 1}</text>
-          </g>`).join('')}
-        </svg>
-        ${hasMarket ? `<div class="market-key"><i></i> Рыночный курс: ${fmtRub(market)}</div>` : ''}
-      </div>
-      <div class="top-broker-list">${list.map((o, i) => `<button type="button" class="top-broker" data-top-broker="${i}" aria-pressed="${o.login === S.topBroker}">
-        <span class="broker-rank">${i + 1}</span><span class="top-broker-copy"><b>${esc(o.name || o.login)}</b><small>★ ${Number(o.rating).toFixed(2)} · ${Number(o.deals) || 0} сделок</small></span><strong>${fmtRub(o[S.currency])}</strong>
-      </button>`).join('')}</div>
-      <p class="top-selection" id="topSelection" role="status"></p>
-      <p class="top-footnote">${list.length < 5 ? `Доступно ${list.length} из 5 предложений. ` : ''}Среди брокеров с ценой по ${S.currency}. При равном рейтинге выше тот, у кого больше сделок. Это текущие цены, не сделки на графике истории.</p>`;
-    const select = (index) => {
-      S.topBroker = list[index].login;
-      box.querySelectorAll('[data-top-broker]').forEach((b, i) => b.setAttribute('aria-pressed', String(i === index)));
-      box.querySelectorAll('[data-broker-plot]').forEach((g, i) => {
-        g.classList.toggle('selected', i === index);
-        g.setAttribute('aria-pressed', String(i === index));
-      });
-      $('#topSelection').textContent = `${list[index].name || list[index].login}: ${fmtRub(list[index][S.currency])} за 1 ${S.currency}. Брокера можно выбрать после создания заявки.`;
-    };
-    box.querySelectorAll('[data-top-broker]').forEach((b) => b.addEventListener('click', () => select(Number(b.dataset.topBroker))));
-    box.querySelectorAll('[data-broker-plot]').forEach((g) => {
-      g.addEventListener('click', () => select(Number(g.dataset.brokerPlot)));
-      g.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          select(Number(g.dataset.brokerPlot));
-        }
-      });
-    });
-    select(list.findIndex((o) => o.login === S.topBroker));
-  }
-
-  function renderOffers() {
-    const box = $('#offersList');
-    if (!box) return;
-    renderTopBrokers();
-    const cur = S.currency;
-    if (!S.offers) {
-      box.innerHTML = '<div class="note">Предложения брокеров загружаются…</div>';
-      return;
-    }
-    if (S.offers.failed) {
-      box.innerHTML = '<div class="note">Предложения брокеров сейчас не загружаются — создайте заявку, отклики придут в неё.</div>';
-      return;
-    }
-    const market = Number((S.offers.market || {})[cur]) ||
-      Number(S.settings && (cur === 'BTC' ? S.settings.rateBTC : S.settings.rateGRAM)) || 0;
-    const list = (S.offers.offers || [])
-      .filter((o) => Number(o[cur]) > 0)
-      .sort((a, b) => Number(a[cur]) - Number(b[cur])); // ниже рынка — выгоднее клиенту, такие сверху
-    if (!list.length) {
-      const w = (S.settings && S.settings.offerWindowSec) || 120;
-      box.innerHTML = `<div class="note" id="offersEmpty">Брокеры пока не предлагают цену по ${cur} — создайте заявку: отклики придут в течение ${w} сек.</div>`;
-      return;
-    }
-    box.innerHTML = list.map((o) => {
-      const rate = Number(o[cur]);
-      const delta = market ? (rate / market - 1) * 100 : 0;
-      const cls = !market || Math.abs(delta) < 0.05 ? 'eq' : delta > 0 ? 'up' : 'down';
-      const txt = !market ? '' : Math.abs(delta) < 0.05
-        ? 'по рынку'
-        : delta > 0
-          ? `дороже рынка на ${Math.abs(delta).toFixed(2)}%`
-          : `выгоднее рынка на ${Math.abs(delta).toFixed(2)}%`;
-      const meta = [o.rating ? `★ ${o.rating}` : '', o.deals ? `${o.deals} сделок` : ''].filter(Boolean).join(' · ');
-      return `
-        <div class="offer-row">
-          <div class=\"offer-who\"><b>${esc(o.name || o.login)}</b>${meta ? `<span>${meta}</span>` : ''}</div>
-          <div class="offer-rate"><b>${fmtRub(rate)}</b>${txt ? `<span class="offer-delta ${cls}">${txt}</span>` : ''}</div>
-          <button class="btn btn-primary btn-sm offer-pick" data-pick-offer="${esc(o.login)}" type="button">Выбрать</button>
-        </div>`;
-    }).join('') +
-      `<div class="note">Цены — из кабинетов брокеров, выбирать не обязательно: в заявке они пришлют отклик, и вы примете лучший.</div>`;
-    box.querySelectorAll('[data-pick-offer]').forEach((btn) =>
-      btn.addEventListener('click', () => {
-        haptic('selection');
-        const field = $('#inRub');
-        if (field) {
-          try { if (field.scrollIntoView) field.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* jsdom без прокрутки */ }
-          field.focus({ preventScroll: true });
-        }
-        toast('Введите сумму и создайте заявку — брокеры пришлют отклик, и вы выберёте лучший');
-      }));
   }
 
   async function submitOrder() {
     const s = S.settings;
     const err = $('#fErr');
     err.textContent = '';
-    // Ошибка проверки формы отзывается «ошибочной» вибрацией, а не просто тишиной.
-    const fail = (msg) => { err.textContent = msg; haptic('error'); return msg; };
-    if (!s) return fail('Курс загружается — подождите пару секунд.');
-    const rate = S.currency === 'BTC' ? s.rateBTC : s.rateGRAM;
-    const rawRub = parseFloat($('#inRub').value);
+    const dir = currentDir();
+    if (dir.enabled === false) return (err.textContent = 'Это направление сейчас недоступно — выберите другое.');
     const rawCrypto = parseFloat($('#inCrypto').value);
-    const useCrypto = S.calcFrom === 'crypto' && isFinite(rawCrypto) && rawCrypto > 0;
-    const cryptoAmount = useCrypto ? rawCrypto : null;
-    const rub = useCrypto ? rubFromCrypto(rawCrypto, rate) : rawRub;
+    const cryptoAmount = isFinite(rawCrypto) && rawCrypto > 0 ? rawCrypto : null;
     const wallet = ($('#inWallet').value || '').trim();
-    if (!s.online) return fail('⛔ Обмен временно недоступен — загляните позже.');
-    if (!isFinite(rub) || rub < s.minRub) return fail(`Минимальная сумма обмена — ${fmtRub(s.minRub)} (≈ ${fmtTrim(cryptoFromRub(s.minRub, rate))} ${S.currency}).`);
-    if (rub > s.maxRub) return fail(`Максимальная сумма обмена — ${fmtRub(s.maxRub)} (≈ ${fmtTrim(cryptoFromRub(s.maxRub, rate))} ${S.currency}).`);
-    if (wallet.length < 26 || wallet.length > 128 || /\s/.test(wallet)) return fail('Проверьте адрес кошелька — он выглядит некорректно.');
-    const cap = captchaPayload('capOrder');
-    if (!cap.captchaAnswer) return fail('Решите проверочный пример — это защита от ботов.');
+    if (!s.online) return (err.textContent = '⛔ Обмен временно недоступен — загляните позже.');
+    if (!cryptoAmount) return (err.textContent = 'Укажите количество крипты — сколько хотите получить (например 0.001).');
+    let re = null;
+    try { re = new RegExp(dir.walletPattern); } catch (e) { re = null; }
+    if (re ? !re.test(wallet) : !/^[a-zA-Z0-9]{26,90}$/.test(wallet)) {
+      return (err.textContent = dir.walletError || 'Проверьте адрес кошелька — он выглядит некорректно.');
+    }
     const btn = $('#btnGo');
     btn.disabled = true;
     haptic('medium');
     try {
-      const body = useCrypto
-        ? { cryptoAmount, currency: S.currency, wallet, startParam, ...cap }
-        : { rub, currency: S.currency, wallet, startParam, ...cap };
+      const body = { cryptoAmount, currency: dir.currency, network: dir.network || undefined, wallet, startParam };
       const r = await api('/api/orders', { method: 'POST', body });
       S.order = r.order;
-      S.orderOpen = true;
       S.orders.unshift(r.order);
-      haptic('success');
-      refreshCaptcha(); // пара сгорела — сразу новая для следующей заявки
+      haptic('heavy');
       $('#exForm').classList.add('hidden');
       $('#exOrder').classList.remove('hidden');
-      renderHeader();
-      renderNav();
       renderOrderStage();
     } catch (e) {
       err.textContent = e.message;
-      haptic('error');
       toast(e.message);
-      if (e.status === 402 && e.payload && e.payload.access) {
-        S.access = e.payload.access;
-        renderExchange();
-        return;
-      }
-      await refreshCaptcha();
     } finally {
       btn.disabled = !S.settings.online;
+      const span = btn.querySelector('span');
+      if (span) span.textContent = S.settings.online ? 'Отправить заявку' : '⛔ Обмен временно недоступен';
     }
   }
 
-  function chip(st) {
-    const m = STATUS[st] || { label: st, cls: 'cancelled' };
-    return `<span class="chip ${m.cls}">${m.label}</span>`;
+  function chip(st, label) {
+    const m = STATUS[st] || { label: st, color: '#8aa0b8' };
+    const text = label || m.label;
+    return `<span class="chip" style="color:${m.color};background:${m.color}1a;border:1px solid ${m.color}55">${text}</span>`;
   }
 
-  const searchingReqOrders = new Set();
+  // Гифт-заявка: клиент отдал код карты и ждёт выплату BTC (старые заявки сохраняют USDT).
+  const GIFT_KEYS = new Set(['GOOGLE_USD', 'ITUNES_USD', 'XBOX_USD', 'APPLE_STORE_USD']);
+  const isGiftOrder = (o) => !!o && (o.direction === 'sell' || GIFT_KEYS.has(String(o.currency || '').toUpperCase()));
+  const giftNominal = (o) => Number(o.units) || 0;
 
-  // В демо-режиме реквизиты подставляет демо-админка — чтобы поток можно было
-  // пройти целиком без бота. В реальном режиме реквизиты выдаёт брокер.
-  function scheduleRequisitesSearch(o) {
-    if (!o || o.status !== 'new' || !o.broker) return;
-    if (searchingReqOrders.has(o.id)) return;
-    searchingReqOrders.add(o.id);
-    const isTest = typeof navigator !== 'undefined' && (/jsdom/i.test(navigator.userAgent) || navigator.userAgent === '');
-    if (isTest) return;
-    setTimeout(async () => {
-      try {
-        if (S.order && S.order.id === o.id && S.order.status === 'new') {
-          if (S.isDemo) {
-            const r = await api(`/api/admin/order/${o.id}/req`, { method: 'POST' });
-            if (r && r.order) {
-              S.order = r.order;
-              const idx = S.orders.findIndex((x) => x.id === r.order.id);
-              if (idx >= 0) S.orders[idx] = r.order;
-              renderOrderStage();
-              toast('Реквизиты получены ✅');
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Requisites search:', e);
-      } finally {
-        searchingReqOrders.delete(o.id);
-      }
-    }, 3200);
+  // Сколько осталось до конца срока (1 час на сделку).
+  function timeLeft(expiresAt) {
+    const left = Number(expiresAt) - Date.now();
+    if (!(left > 0)) return null;
+    const m = Math.floor(left / 60000);
+    const sLeft = Math.floor((left % 60000) / 1000);
+    return m >= 60 ? `${Math.floor(m / 60)} ч ${String(m % 60).padStart(2, '0')} мин` : `${m}:${String(sLeft).padStart(2, '0')}`;
   }
+  const ttlText = (o) => {
+    const left = timeLeft(o.expiresAt);
+    return left ? `⏳ На сделку осталось <b>${left}</b>` : '⏳ Срок на сделку истёк';
+  };
 
-  async function callAdmin(order) {
-    haptic('warning');
-    toast('Вызываем администратора… 🛡️');
-    try {
-      const res = await api(`/api/order/${order.id}/call-admin`, { method: 'POST' });
-      if (res && res.order) {
-        order.adminCalled = true;
-        S.order = res.order;
-        const idx = S.orders.findIndex((x) => x.id === res.order.id);
-        if (idx >= 0) S.orders[idx] = res.order;
-      } else {
-        order.adminCalled = true;
-      }
-    } catch (e) {
-      order.adminCalled = true;
-    }
-    renderOrderStage();
-    toast('Администратор вызван в чат 🛡️');
-    setTimeout(() => {
-      haptic('light');
-      goTab('support');
-    }, 600);
-  }
-
-  /* ---------- офер и отклики: работает как такси ---------- */
-  // Клиент публикует офер — брокеры присылают свою цену. Клиент видит рыночный
-  // курс как ориентир и решает: принять отклик сразу или подождать ещё.
-
-  let offerTicker = null;
-  let bidsSignature = '';
-
-  const bidCrypto = (b) => Number(b.crypto) || 0;
-  const bidPay = (b) => Number(b.payRub) || 0;
-  const marketRateNow = () => Number(S.marketRate) || (S.currency === 'GRAM' ? (S.settings || {}).rateGRAM : (S.settings || {}).rateBTC) || 0;
-
-  // Переплата к рыночному курсу — единственная цифра, которая честно сравнивает отклики.
-  function bidDeltaHtml(b) {
-    const market = marketRateNow();
-    const rate = Number(b.rate) || 0;
-    if (!market || !rate) return '';
-    const pct = ((rate / market) - 1) * 100;
-    if (Math.abs(pct) < 0.05) return '<span class="bid-delta eq">по рынку</span>';
-    return `<span class="bid-delta ${pct > 0 ? 'up' : 'down'}">${pct > 0 ? '+' : '−'}${Math.abs(pct).toFixed(1)}% к рынку</span>`;
-  }
-
-  function brokerCardHtml(card) {
-    if (!card) return '';
-    const initials = String(card.name || card.login || '—').slice(0, 2).toUpperCase();
-    const rating = card.rating ? `★ ${card.rating}` : '';
-    const deals = card.deals ? `${card.deals} сделок` : '';
-    return `
-      <div class="bid-broker">
-        <div class="bid-avatar">${esc(initials)}</div>
-        <div class="bid-broker-meta">
-          <b>${esc(card.name || card.login)}</b>
-          <small>${[rating, deals].filter(Boolean).join(' · ') || 'брокер PRICELEX'}</small>
-        </div>
-      </div>`;
-  }
-
-  function bidsListHtml(o) {
-    const list = S.bids || [];
-    if (!list.length) {
-      return `
-        <div class="bids-empty">
-          <div class="radar-ping"></div>
-          <div>Ждём предложения брокеров…</div>
-        </div>`;
-    }
-    return list.map((b) => `
-      <div class="bid ${b.accepted ? 'accepted' : ''}" data-bid="${b.id}">
-        ${brokerCardHtml(b.broker)}
-        <div class="bid-body">
-          <div class="bid-rate">${fmtRub(b.rate)} <span>за 1 ${esc(o.currency)}</span></div>
-          <div class="bid-get">вы получите <b>${fmtCrypto(bidCrypto(b), o.currency)}</b></div>
-          ${b.note ? `<div class="bid-note">${esc(b.note)}</div>` : ''}
-          ${bidDeltaHtml(b)}
-        </div>
-        <button class="btn btn-primary btn-sm bid-take" data-take="${b.id}" type="button">Принять</button>
-      </div>`).join('');
-  }
-
-  async function loadBids(o) {
-    try {
-      const r = await api('/api/order/' + o.id + '/bids');
-      if (!S.order || S.order.id !== o.id) return;
-      S.bids = r.bids || [];
-      S.offerWindowSec = Number(r.offerWindowSec) || S.offerWindowSec;
-      S.marketRate = Number(r.marketRate) || S.marketRate;
-      if (r.order) S.order = r.order;
-      const sig = JSON.stringify(S.bids.map((b) => [b.id, b.rate]));
-      if (sig !== bidsSignature) {
-        bidsSignature = sig;
-        renderOrderStage();
-      }
-    } catch { /* связь вернётся на следующем опросе */ }
-  }
-
-  function stopOfferTicker() {
-    if (offerTicker) { clearInterval(offerTicker); offerTicker = null; }
-  }
-
-  // Таймер окна откликов: живёт секундой, не перерисовывая список.
-  function startOfferTicker(o) {
-    stopOfferTicker();
-    if (!o.bidUntil) return;
-    const isTest = typeof navigator !== 'undefined' && (/jsdom/i.test(navigator.userAgent) || navigator.userAgent === '');
-    if (isTest) return;
-    const tick = () => {
-      const left = Math.max(0, Math.round((o.bidUntil - Date.now()) / 1000));
-      const el = document.querySelector('[data-offer-left]');
-      const bar = document.querySelector('[data-offer-bar]');
-      const total = Math.max(1, Number(S.offerWindowSec) || 120);
-      if (el) el.textContent = left > 0 ? `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}` : 'приём закрыт';
-      if (bar) bar.style.width = `${Math.min(100, (left / total) * 100)}%`;
-      if (left <= 0) {
-        stopOfferTicker();
-        renderOrderStage();
-      }
-    };
-    tick();
-    offerTicker = setInterval(tick, 1000);
-  }
-
-  async function acceptBid(bidId) {
-    const o = S.order;
-    if (!o) return;
-    haptic('medium');
-    try {
-      const r = await api('/api/order/' + o.id + '/accept', { method: 'POST', body: { bidId } });
-      S.order = r.order;
-      const i = S.orders.findIndex((x) => x.id === r.order.id);
-      if (i >= 0) S.orders[i] = r.order; else S.orders.unshift(r.order);
-      stopOfferTicker();
-      haptic('success');
-      toast('Брокер выбран — выдаёт реквизиты');
-      renderOrderStage();
-    } catch (e) {
-      toast(e.message);
-      if (e.status === 402 && e.payload && e.payload.access) {
-        S.access = e.payload.access;
-        renderExchange();
-        return;
-      }
-      await loadBids(o);
-    }
-  }
-
-  function renderOfferStage(o) {
+  function renderGiftStage(o) {
     const box = $('#exOrder');
-    const left = o.bidUntil ? Math.max(0, Math.round((o.bidUntil - Date.now()) / 1000)) : 0;
-    const total = Math.max(1, Number(S.offerWindowSec) || 120);
-    const market = marketRateNow();
+    const payout = giftPayoutText(o);
+    if (o.status === 'new' && o.giftCode) {
+      // Совместимость со старыми заявками, где код был указан при создании.
+      box.innerHTML = `
+        <div class="card stage">
+          ${chip('details')}
+          <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
+          <div class="stage-title">Подтвердите передачу карты</div>
+          <div class="stage-sub">Заявка <b>#${o.id}</b>. Проверьте код — он уйдёт оператору, как только вы нажмёте «Я оплатил».</div>
+          <div class="req-box" id="giftCodeBox">Код карты: ${esc(o.giftCode)}</div>
+          <div class="copy-row">
+            <button class="btn btn-ghost btn-sm" id="cpGift">${ICONS.copy}<span>Копировать код</span></button>
+          </div>
+          <div class="note">${ttlText(o)}<br>После «Я оплатил» оператор проверит карту и выплатит ${payout}.</div>
+          <button class="btn btn-primary" style="margin-top:14px" id="btnGiftPaid">${ICONS.check}<span>Я оплатил</span></button>
+          <button class="btn btn-ghost" style="margin-top:8px" id="btnCancel">Отменить заявку</button>
+        </div>`;
+      $('#cpGift').addEventListener('click', () => copyText(o.giftCode || '', 'Код скопирован'));
+      $('#btnGiftPaid').addEventListener('click', async () => {
+        haptic('medium');
+        await changeOrder(o, 'paid');
+        const now = S.order;
+        if (now && now.id === o.id && now.status === 'paid') {
+          toast('Код отправлен на проверку ✅');
+          renderOrderStage();
+        }
+      });
+      $('#btnCancel').addEventListener('click', async () => { haptic('light'); await changeOrder(o, 'cancel'); });
+      return true;
+    }
+    if (o.status === 'new') {
+      // Двухфазная сделка: ждём, пока оператор подключится к заявке.
+      box.innerHTML = `
+        <div class="card stage">
+          <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🤝</div></div>
+          ${chip('new', 'Ожидаем оператора')}
+          <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
+          <div class="stage-title">Ожидаем подключения оператора</div>
+          <div class="stage-sub">Заявка <b>#${o.id}</b> передана оператору.<br>Обычно это занимает несколько минут — <b>не закрывайте приложение</b>.</div>
+          <div class="note">${ttlText(o)}<br><b>Ничего не отправляйте и никому не сообщайте код карты</b>, пока оператор не подключится к заявке и не попросит его.</div>
+          <button class="btn btn-ghost" style="margin-top:14px" id="btnCancel">Отменить заявку</button>
+        </div>`;
+      $('#btnCancel').addEventListener('click', async () => { haptic('light'); await changeOrder(o, 'cancel'); });
+      return true;
+    }
+    if (o.status === 'details' && !o.giftCode) {
+      // Оператор подключился — теперь можно отправить код карты.
+      box.innerHTML = `
+        <div class="card stage">
+          ${chip('details', 'Оператор на связи')}
+          <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
+          <div class="stage-title">Оператор на связи</div>
+          <div class="stage-sub">Оператор подключился к заявке <b>#${o.id}</b> и ждёт код карты.<br>Введите код карты ${esc(giftLabelOf(o))} номиналом <b>$${giftNominal(o)}</b>:</div>
+          <div class="f-box" style="margin-top:12px"><div class="coin-ic ${esc(giftDirOfOrder(o).coin)}">${coinInner(giftDirOfOrder(o))}</div><input id="inGiftSendCode" placeholder="Например: XXXX-XXXX-XXXX-XXXX" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off"></div>
+          <div class="f-err" id="giftSendErr"></div>
+          <div class="note">${ttlText(o)}<br>Код увидит только оператор. Не сообщайте его больше никому — ни в поддержке, ни в личных сообщениях.</div>
+          <button class="btn btn-primary" style="margin-top:14px" id="btnGiftSend">${ICONS.check}<span>Отправить код оператору</span></button>
+          <button class="btn btn-ghost" style="margin-top:8px" id="btnCancel">Отменить заявку</button>
+        </div>`;
+      const input = $('#inGiftSendCode');
+      const errEl = $('#giftSendErr');
+      input.addEventListener('input', () => { errEl.textContent = ''; });
+      $('#btnGiftSend').addEventListener('click', async () => {
+        const code = (input.value || '').trim();
+        errEl.textContent = '';
+        if (code.length < 8) { errEl.textContent = 'Введите полный код карты (не менее 8 символов).'; return; }
+        const btn = $('#btnGiftSend');
+        btn.disabled = true;
+        haptic('medium');
+        try {
+          const r = await api(`/api/order/${o.id}/code`, { method: 'POST', body: { giftCode: code } });
+          S.order = r.order;
+          const i = S.orders.findIndex((x) => x.id === r.order.id);
+          if (i >= 0) S.orders[i] = r.order; else S.orders.unshift(r.order);
+          haptic('heavy');
+          toast('Код отправлен оператору ✅');
+          renderOrderStage();
+        } catch (e) {
+          errEl.textContent = e.message;
+          toast(e.message);
+          btn.disabled = false;
+        }
+      });
+      $('#btnCancel').addEventListener('click', async () => { haptic('light'); await changeOrder(o, 'cancel'); });
+      return true;
+    }
+    if (o.status === 'paid' || (o.status === 'details' && o.giftCode)) {
+      box.innerHTML = `
+        <div class="card stage">
+          <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🔎</div></div>
+          <div class="stage-title">Карта на проверке</div>
+          <div class="stage-sub">Оператор проверяет ${esc(giftLabelOf(o))} на <b>$${giftNominal(o)}</b>, регион (<b>США</b>) и валюту (<b>USD</b>).<br>Как только всё подтвердится — пришлём ${payout} на ваш кошелёк. Обычно 5–15 минут.</div>
+          <div class="req-box">Код карты: ${esc(o.giftCode || '—')}</div>
+          <div class="note">Не передавайте код никому, кроме поддержки VEGA. Если карта окажется недействительной — заявка будет отклонена.</div>
+        </div>`;
+      return true;
+    }
+    if (o.status === 'completed') {
+      box.innerHTML = `
+        <div class="card stage">
+          <svg class="okmark" viewBox="0 0 100 100"><circle cx="50" cy="50" r="41"/><path d="M32 51l13 13 24-27"/></svg>
+          <div class="stage-title">Карта принята — ${esc(giftCurrencyOf(o))} выплачен</div>
+          <div class="stage-sub">${esc(giftLabelOf(o))} $${giftNominal(o)} → <b>${payout}</b><br>отправлены на ваш кошелёк. Спасибо, что выбираете VEGA ✦</div>
+          ${o.txUrl ? `
+            <div class="tx-box">
+              <div class="tx-label">🔗 Транзакция в блокчейне</div>
+              <a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a>
+              <button class="btn btn-ghost btn-sm" style="margin-top:10px" id="cpTx">${ICONS.copy}<span>Копировать ссылку</span></button>
+            </div>` : `<div class="note" style="margin-top:12px">Выплата отправлена вручную. Ссылка на транзакцию появится здесь, если оператор её добавит.</div>`}
+          <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Новая заявка</button>
+        </div>`;
+      const cpTx = $('#cpTx');
+      if (cpTx) cpTx.addEventListener('click', () => copyText(o.txUrl, 'Ссылка скопирована'));
+      $('#btnNew').addEventListener('click', resetToForm);
+      return true;
+    }
+    if (o.status === 'rejected' || o.status === 'cancelled') {
+      const rej = o.status === 'rejected';
+      const expired = o.cancelReason === 'Срок на сделку истёк';
+      box.innerHTML = `
+        <div class="card stage">
+          <div class="stage-title">${rej ? 'Карта не принята' : expired ? 'Срок на сделку истёк' : 'Заявка отменена'}</div>
+          <div class="stage-sub">${rej ? 'Оператор не смог подтвердить карту по заявке #' + o.id + '. Проверьте код или напишите в поддержку.' : expired ? 'На сделку даётся 1 час. Создайте новую заявку с тем же кодом карты.' : 'Вы отменили заявку #' + o.id + '.'}</div>
+          <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Новая заявка</button>
+        </div>`;
+      $('#btnNew').addEventListener('click', resetToForm);
+      return true;
+    }
+    // Страховка: подарочная заявка не должна попасть в обычный «куплю крипту» сценарий.
     box.innerHTML = `
-      <div class="card stage stage-offer">
-        <div class="offer-head">
-          <div>
-            <div class="stage-kicker">Заявка #${o.id}</div>
-            <div class="offer-sum">${fmtRub(o.rub)} → ${esc(o.currency)}</div>
-          </div>
-          <div class="offer-timer">
-            <span data-offer-left>${left > 0 ? `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}` : 'приём закрыт'}</span>
-            <small>приём откликов</small>
-          </div>
-        </div>
-        <div class="offer-bar"><span data-offer-bar style="width:${Math.min(100, (left / total) * 100)}%"></span></div>
-        <div class="offer-market">
-          <span>Рыночный курс: <b>${fmtRub(market)}</b> за 1 ${esc(o.currency)}</span>
-          <span class="offer-market-note">без наценки площадки</span>
-        </div>
-        <div class="bids">${bidsListHtml(o)}</div>
-        <div class="offer-foot">
-          <span class="dot-online"></span> Брокеров в сети: <b class="broker-online-count">${currentBrokerCount()}</b>
-          ${(S.bids || []).length ? `<span class="offer-count">Откликов: <b>${S.bids.length}</b></span>` : ''}
-        </div>
-        <div class="note">Можно принять любой отклик сразу — или подождать ещё: брокеры видят заявку одновременно.</div>
-        <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
+      <div class="card stage">
+        <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🎁</div></div>
+        <div class="stage-title">Заявка #${o.id} обрабатывается</div>
+        <div class="stage-sub">Дождитесь оператора или обновите экран.</div>
+        <button class="btn btn-ghost" style="margin-top:14px" id="btnCancel">Отменить заявку</button>
       </div>`;
-    startOfferTicker(o);
-    box.querySelectorAll('[data-take]').forEach((btn) =>
-      btn.addEventListener('click', () => acceptBid(Number(btn.dataset.take))));
-    $('#btnCancel').addEventListener('click', async () => {
-      haptic('warning');
-      await changeOrder(o, 'cancel');
-    });
+    $('#btnCancel').addEventListener('click', async () => { haptic('light'); await changeOrder(o, 'cancel'); });
+    return true;
   }
 
   function renderOrderStage() {
+    syncTgBack();
     const box = $('#exOrder');
     const o = S.order;
     if (!box) return;
-    if (o && o.status === 'completed' && !o.review && isTypingReview() && box.contains(document.activeElement)) return;
     if (!o) { box.innerHTML = ''; return; }
-    if (o.status === 'collecting') {
-      S.marketRate = o.currency === 'GRAM' ? (S.settings || {}).rateGRAM : (S.settings || {}).rateBTC;
-      renderOfferStage(o);
-      loadBids(o);
-    } else if (o.status === 'new') {
-      // Брокер выбран клиентом — он готовит реквизиты и ведёт сделку вручную.
-      scheduleRequisitesSearch(o);
+    if (isGiftOrder(o) && renderGiftStage(o)) return;
+    if (o.status === 'quote') {
       box.innerHTML = `
-        <div class="card stage stage-broker">
-          <div class="stage-steps-bar">
-            <span class="stage-step done"><span class="step-num">✓</span> Брокер выбран</span>
-            <span class="stage-step-arrow">→</span>
-            <span class="stage-step active"><span class="step-num">2</span> Реквизиты</span>
-          </div>
-          <div class="stage-matched-card">
-            <div class="matched-avatar">${esc(String(o.broker || '').slice(0, 2).toUpperCase())}</div>
-            <div class="matched-meta">
-              <div class="matched-label">Ваш брокер</div>
-              <div class="matched-name">${esc(o.broker || '—')}</div>
-            </div>
-            <div class="matched-badge"><span class="dot-online"></span>онлайн</div>
-          </div>
-          <div class="order-meta">
-            <div class="mrow"><span>Ваша цена</span><b>${fmtRub(o.rate)} за 1 ${esc(o.currency)}</b></div>
-            <div class="mrow"><span>К оплате</span><b>${fmtRub(o.payRub || o.rub)}</b></div>
-          </div>
-          <div class="stage-title">Брокер готовит реквизиты…</div>
-          <div class="stage-sub">Переведёте ₽ по реквизитам — брокер сам отправит ${fmtCrypto(o.crypto, o.currency)} на ваш кошелёк <code>${esc(o.wallet)}</code>.</div>
-          ${depositNoteHtml()}
-          <div class="progress" aria-hidden="true"><span></span></div>
-          <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку</button>
+        <div class="card stage">
+          ${chip('quote', 'Согласование суммы')}
+          <div class="pay-dir">${ICONS.swap}<span>₽ → <b>${esc(dirLabel(o))}</b> · ${cryptoOf(o)}</span></div>
+          <div class="pay-amount"><div class="l">Оператор назвал сумму</div><div class="v">${fmtRub(o.payRub || o.rub)}</div></div>
+          <div class="note">Продолжить сделку можно только с вашего согласия. Если сумма не подходит — откажитесь, заявка отменится.</div>
+          <button class="btn btn-primary" style="margin-top:14px" id="btnQuoteYes">${ICONS.check}<span>Согласен, продолжить</span></button>
+          <button class="btn btn-ghost" style="margin-top:8px" id="btnQuoteNo">❌ Отказаться</button>
+        </div>`;
+      const respond = async (action, btnId) => {
+        const b = $(btnId);
+        b.disabled = true;
+        haptic(action === 'quote-accept' ? 'heavy' : 'medium');
+        try {
+          const r = await api(`/api/order/${o.id}/${action}`, { method: 'POST' });
+          S.order = r.order;
+          syncStatus();
+          renderOrderStage();
+          toast(action === 'quote-accept' ? 'Сумма согласована — ждём реквизиты ✅' : 'Заявка отменена');
+        } catch (e) {
+          b.disabled = false;
+          toast(e.message || 'Не удалось отправить ответ');
+        }
+      };
+      $('#btnQuoteYes').addEventListener('click', () => respond('quote-accept', '#btnQuoteYes'));
+      $('#btnQuoteNo').addEventListener('click', () => respond('quote-decline', '#btnQuoteNo'));
+    } else if (o.status === 'new' && !isGiftOrder(o) && !(o.payRub || o.rub)) {
+      box.innerHTML = `
+        <div class="card stage">
+          <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">💰</div></div>
+          <div class="stage-title">Оператор изучает заявку</div>
+          <div class="stage-sub">Заявка <b>#${o.id}</b> передана оператору.<br>Скоро он назовёт стоимость <b>${cryptoOf(o)}</b> в рублях — вы увидите сумму и согласитесь или откажетесь.</div>
+          <button class="btn btn-ghost" style="margin-top:18px" id="btnCancel">Отменить заявку</button>
+        </div>`;
+      $('#btnCancel').addEventListener('click', async () => { haptic('light'); await changeOrder(o, 'cancel'); });
+    } else if (o.status === 'new') {
+      box.innerHTML = `
+        <div class="card stage">
+          <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🔍</div></div>
+          <div class="stage-title">Сумма согласована — ищем реквизиты</div>
+          <div class="stage-sub">Заявка <b>#${o.id}</b> · ${cryptoOf(o)} · <b>${fmtRub(o.payRub || o.rub)}</b><br>Обычно это занимает меньше минуты — не закрывайте приложение.</div>
+          <button class="btn btn-ghost" style="margin-top:18px" id="btnCancel">Отменить заявку</button>
         </div>`;
       $('#btnCancel').addEventListener('click', async () => {
         haptic('light');
@@ -1749,14 +1019,8 @@
     } else if (o.status === 'details') {
       box.innerHTML = `
         <div class="card stage">
-          <div class="stage-broker-info-bar">
-            <div class="sbib-left">
-              <span class="sbib-icon">🤝</span>
-              <span class="sbib-text">Заявку ведёт брокер: <b>${esc(o.broker || 'stony montana')}</b></span>
-            </div>
-            <span class="broker-badge-online"><span class="dot-online"></span>онлайн</span>
-          </div>
           ${chip('details')}
+          <div class="pay-dir">${ICONS.swap}<span>₽ → <b>${esc(dirLabel(o))}</b> · ${cryptoOf(o)}</span></div>
           <div class="pay-amount"><div class="l">Переведите точно</div><div class="v">${fmtRub(o.payRub || o.rub)}</div></div>
           <div class="req-box" id="reqBox">${esc(o.requisites || 'Реквизиты готовятся…')}</div>
           <div class="copy-row">
@@ -1768,75 +1032,36 @@
             <button class="btn btn-ghost btn-sm" id="btnPick">📎 <span>${o.receipt ? 'Заменить чек (PDF)' : 'Прикрепить чек (PDF)'}</span></button>
             <div class="file-name ${o.receipt ? 'ok' : ''}" id="fileName">${o.receipt ? `✅ ${esc(o.receipt.name)} (${fmtSize(o.receipt.size)})` : 'Без чека оплата не подтвердится'}</div>
           </div>
-          ${depositNoteHtml()}
-          <div class="note">Переведите <b>точную сумму</b> по реквизитам выше, прикрепите <b>чек в PDF</b>, затем нажмите кнопку ниже. Брокер лично проверяет поступление и сам отправляет ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code>. Сделка защищена гарантией депозита брокера.</div>
-          <button class="btn btn-primary mt" id="btnPaid">${ICONS.check}<span>Я оплатил</span></button>
-          ${o.adminCalled ? `
-            <div class="admin-call-banner">
-              <div class="acb-icon">🛡️</div>
-              <div class="acb-body">
-                <b>Администратор вызван в чат</b>
-                <span>Администратор подключается к сделке #${o.id}. Брокеры работают под гарантией общего депозита площадки.</span>
-              </div>
-              <button class="btn btn-ghost btn-sm acb-btn" id="btnGoSupportChat" type="button">💬 В чат</button>
-            </div>
-          ` : `
-            <button class="btn btn-ghost btn-problem mt" id="btnCallAdmin" type="button">🆘 Проблема с заявкой? Позвать админа в чат</button>
-          `}
-          <button class="btn btn-ghost" style="margin-top:9px" id="btnCancel">Отменить заявку</button>
+          <div class="note">Переведите <b>точную сумму</b> по реквизитам выше, прикрепите <b>чек в PDF</b>, затем нажмите кнопку ниже. После подтверждения оператор отправит ${cryptoOf(o)} на ваш кошелёк.</div>
+          <button class="btn btn-primary" style="margin-top:14px" id="btnPaid">${ICONS.check}<span>Я оплатил</span></button>
+          <button class="btn btn-ghost" style="margin-top:8px" id="btnCancel">Отменить заявку</button>
         </div>`;
       $('#cpSum').addEventListener('click', () => copyText(String(Math.round(o.payRub || o.rub)), 'Сумма скопирована'));
       $('#cpReq').addEventListener('click', () => copyText(o.requisites || '', 'Реквизиты скопированы'));
       wireReceiptPicker(o);
       $('#btnPaid').addEventListener('click', async () => {
-        haptic('heavy');
+        haptic('medium');
         await confirmPaidWithReceipt(o);
       });
       $('#btnCancel').addEventListener('click', async () => {
-        haptic('warning');
+        haptic('light');
         await changeOrder(o, 'cancel');
       });
-      const bCall = $('#btnCallAdmin');
-      if (bCall) bCall.addEventListener('click', () => callAdmin(o));
-      const bGoChat = $('#btnGoSupportChat');
-      if (bGoChat) bGoChat.addEventListener('click', () => { haptic('light'); goTab('support'); });
     } else if (o.status === 'paid') {
       box.innerHTML = `
         <div class="card stage">
           <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">⏳</div></div>
           <div class="stage-title">Подтверждаем оплату</div>
-          <div class="stage-sub">Брокер <b>${esc(o.broker || 'stony montana')}</b> проверяет поступление ${fmtRub(o.payRub || o.rub)} по заявке <b>#${o.id}</b> и сам переводит ${fmtCrypto(o.crypto, o.currency)} прямо на ваш кошелёк <code>${esc(o.wallet)}</code>.<br>Средства клиента застрахованы залогом обменника.</div>
-          ${depositNoteHtml()}
+          <div class="stage-sub">Оператор проверяет поступление ${fmtRub(o.payRub || o.rub)} по заявке <b>#${o.id}</b>.<br>Как только платёж подтвердится — мы отправим ${cryptoOf(o)}.</div>
           ${o.receipt
-            ? `<div class="note">🧾 Чек <b>${esc(o.receipt.name)}</b> отправлен ✅</div>`
+            ? `<div class="note">🧾 Чек <b>${esc(o.receipt.name)}</b> отправлен оператору ✅</div>`
             : `<div class="file-box">
                  <input type="file" id="inReceipt" accept=".pdf,application/pdf" hidden>
                  <button class="btn btn-ghost btn-sm" id="btnPick">📎 <span>Выбрать чек (PDF)</span></button>
-                 <div class="file-name" id="fileName">⚠️ Чек не прикреплён — без него оплата не подтвердится</div>
+                 <div class="file-name" id="fileName">⚠️ Чек не прикреплён — без него оператор не подтвердит оплату</div>
                  <button class="btn btn-primary btn-sm" style="width:100%" id="btnSendReceipt">Отправить чек</button>
                </div>`}
-          ${o.adminCalled ? `
-            <div class="admin-call-banner">
-              <div class="acb-icon">🛡️</div>
-              <div class="acb-body">
-                <b>Администратор вызван в чат</b>
-                <span>Администратор подключается к сделке #${o.id}. Обменники работают под залогом депозита.</span>
-              </div>
-              <button class="btn btn-ghost btn-sm acb-btn" id="btnGoSupportChat" type="button">💬 В чат</button>
-            </div>
-          ` : `
-            <button class="btn btn-ghost btn-problem mt" id="btnCallAdmin" type="button">🆘 Проблема с выплатой? Позвать админа в чат</button>
-          `}
-          <button class="btn btn-ghost mt" id="btnCancel">Отменить заявку (в любое время)</button>
-          <button class="btn btn-ghost btn-problem mt" id="btnClaim">🛡 Не пришёл BTC — подать обращение на выплату из залога</button>
-          <div class="note" style="margin-top:8px">Неполучение BTC достаточно для подачи обращения. Обращение рассматривает человек; подача ≠ автоматическое одобрение или выплата. ИИ не участвует в споре.</div>
         </div>`;
-      const bCall = $('#btnCallAdmin');
-      if (bCall) bCall.addEventListener('click', () => callAdmin(o));
-      const bGoChat = $('#btnGoSupportChat');
-      if (bGoChat) bGoChat.addEventListener('click', () => { haptic('light'); goTab('support'); });
-      $('#btnCancel').addEventListener('click', async () => { haptic('warning'); await changeOrder(o, 'cancel'); });
-      $('#btnClaim').addEventListener('click', async () => { haptic('light'); await fileClaim(o); });
       if (!o.receipt) {
         wireReceiptPicker(o);
         $('#btnSendReceipt').addEventListener('click', async () => {
@@ -1860,57 +1085,32 @@
         });
       }
     } else if (o.status === 'completed') {
-      const hasTx = !!o.txUrl;
       box.innerHTML = `
         <div class="card stage">
-          <img class="okmark-art" src="/img/hero-shield.png" alt="" width="88" height="88" />
+          <svg class="okmark" viewBox="0 0 100 100"><circle cx="50" cy="50" r="41"/><path d="M32 51l13 13 24-27"/></svg>
           <div class="stage-title">Обмен завершён!</div>
-          <div class="stage-sub">Брокер <b>${esc(o.broker || o.exchangerId || 'PRICELEX')}</b> завершил сделку: ${fmtRub(o.payRub || o.rub)} → <b>${fmtCrypto(o.crypto, o.currency)}</b> отправлены на ваш кошелёк <code>${esc(o.wallet)}</code>.</div>
+          <div class="stage-sub">${fmtRub(o.payRub || o.rub)} → <b>${cryptoOf(o)}</b> (${esc(dirLabel(o))})<br>отправлены на ваш кошелёк. Спасибо, что выбираете VEGA ✦</div>
           ${o.txUrl ? `
             <div class="tx-box">
               <div class="tx-label">🔗 Транзакция в блокчейне</div>
               <a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a>
-              <button class="btn btn-ghost btn-sm" style="margin-top:11px" id="cpTx">${ICONS.copy}<span>Копировать ссылку</span></button>
+              <button class="btn btn-ghost btn-sm" style="margin-top:10px" id="cpTx">${ICONS.copy}<span>Копировать ссылку</span></button>
             </div>
-          ` : `<div class="note">Средства отправлены на ваш кошелёк. Если BTC не пришёл — подайте обращение: неполучение достаточно. Ссылка на блокчейн появится здесь, если её добавит обменник.</div>`}
-          ${!hasTx ? `<button class="btn btn-ghost btn-problem mt" id="btnClaim">🛡 BTC не пришёл — подать обращение на выплату из залога</button><div class="note" style="margin-top:8px">Подача обращения не означает автоматическое одобрение/выплату. Рассматривает человек с обязательной мотивировкой. ИИ не участвует.</div>` : ''}
-          ${o.adminCalled ? `
-            <div class="admin-call-banner">
-              <div class="acb-icon">🛡️</div>
-              <div class="acb-body">
-                <b>Администратор подключился</b>
-                <span>Если выплата не поступила — средства компенсируются из залога обменника после ручной проверки.</span>
-              </div>
-              <button class="btn btn-ghost btn-sm acb-btn" id="btnGoSupportChat" type="button">💬 В чат</button>
-            </div>
-          ` : `
-            <button class="btn btn-ghost btn-problem btn-sm mt" id="btnCallAdmin" type="button">🆘 Не пришла выплата? Позвать админа в чат</button>
-          `}
-          <button class="btn btn-primary mt" id="btnNew">Новый обмен</button>
-        </div>
-        ${reviewCtaHtml(o)}`;
-      wireReviewForm('stRv', () => o.id);
+          ` : `<div class="note" style="margin-top:12px">Оператор отправит средства вручную. Ссылка на блокчейн появится здесь, если оператор её добавит.</div>`}
+          <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Новый обмен</button>
+        </div>`;
       const cpTx = $('#cpTx');
       if (cpTx) cpTx.addEventListener('click', () => copyText(o.txUrl, 'Ссылка скопирована'));
       $('#btnNew').addEventListener('click', resetToForm);
-      const bCall = $('#btnCallAdmin');
-      if (bCall) bCall.addEventListener('click', () => callAdmin(o));
-      const bGoChat = $('#btnGoSupportChat');
-      if (bGoChat) bGoChat.addEventListener('click', () => { haptic('light'); goTab('support'); });
     } else {
       const rej = o.status === 'rejected';
-      const cancelled = o.status === 'cancelled';
       box.innerHTML = `
         <div class="card stage">
-          <div class="failmark">${rej ? '🔴' : '⚪'}</div>
           <div class="stage-title">${rej ? 'Заявка отклонена' : 'Заявка отменена'}</div>
-          <div class="stage-sub">${rej ? `Заявка #${o.id} отклонена. Если это ошибка — напишите в поддержку ${supportLinkHtml()}.` : 'Вы отменили заявку #' + o.id + '. Вы можете отменить в любое время до завершения.'}</div>
+          <div class="stage-sub">${rej ? 'Оператор отклонил заявку #' + o.id + '. Если это ошибка — напишите в поддержку.' : 'Вы отменили заявку #' + o.id + '.'}</div>
           ${o.txUrl ? `<div class="tx-box"><div class="tx-label">🔗 Блокчейн</div><a class="tx-link" href="${esc(o.txUrl)}" target="_blank" rel="noopener">${esc(o.txUrl)}</a></div>` : ''}
-          ${cancelled ? `<button class="btn btn-ghost btn-problem mt" id="btnClaim">🛡 BTC не получен — подать обращение на выплату из залога</button><div class="note" style="margin-top:8px">Если вы отменили, но BTC не пришёл — неполучение достаточно для подачи обращения. Резерв остаётся заблокированным до человеческого решения. Автоматической выплаты нет.</div>` : ''}
-          <button class="btn btn-primary mt" id="btnNew">Создать заявку</button>
+          <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Создать заявку</button>
         </div>`;
-      const bClaim = $('#btnClaim');
-      if (bClaim) bClaim.addEventListener('click', async () => { haptic('light'); await fileClaim(o); });
       $('#btnNew').addEventListener('click', resetToForm);
     }
   }
@@ -1994,124 +1194,75 @@
     }
   }
 
-  async function fileClaim(order) {
-    try {
-      const reason = 'btc_not_received';
-      const description = prompt('Опишите ситуацию (необязательно, до 2000 символов): неполучение BTC достаточно для подачи обращения. Рассмотрит человек, автоматической выплаты нет.');
-      if (description === null) return;
-      const r = await api(`/api/order/${order.id}/claim`, { method: 'POST', body: { reason, description: (description || '').slice(0, 2000) } });
-      toast(`🛡 Обращение #${r.claim.id} создано. Резерв заблокирован до решения человека. Автовыплаты нет.`);
-      S.claims.unshift(r.claim);
-    } catch (e) {
-      toast(e.message || 'Не удалось подать обращение');
-    }
-  }
-
   function resetToForm() {
     S.order = null;
-    S.orderOpen = false;
     haptic('light');
-    renderExchange();
-    renderHeader();
-    renderNav();
+    $('#exOrder').classList.add('hidden');
+    $('#exForm').classList.remove('hidden');
+    closeAssetSheet();
+    setScreen('picker');
+    renderOrderStage();
+    syncTgBack();
   }
 
   function renderHistory() {
     const v = $('#view-history');
     if (!S.orders.length) {
-      v.innerHTML = `<div class="card"><div class="empty"><div class="e-ic">🗂</div>История пока пуста.<br>Совершите первый обмен — он появится здесь.</div></div>`;
+      v.innerHTML = `<div class="card"><div class="empty">История пока пуста.<br>Совершите первый обмен — он появится здесь.</div></div>`;
       return;
     }
-    const done = S.orders.filter((o) => o.status === 'completed');
-    const rubSum = done.reduce((acc, o) => acc + Math.round(o.payRub || o.rub), 0);
-    const byCur = done.reduce((acc, o) => {
-      acc[o.currency] = (acc[o.currency] || 0) + (Number(o.crypto) || 0);
-      return acc;
-    }, {});
-    const cryptoLine = Object.keys(byCur).map((c) => fmtCrypto(byCur[c], c)).join(' · ');
-    const series = done
-      .slice()
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .map((o) => ({ at: o.createdAt, v: Math.round(o.payRub || o.rub) }));
-
-    v.innerHTML = `
-      <section class="card card-hero hist-hero">
-        <div class="hero-art hist-art" aria-hidden="true"></div>
-        <div class="hero-frame" aria-hidden="true"></div>
-        <div class="hero-top">
-          <div class="kicker">Объём обменов</div>
-          <div class="seg" id="histSeg">
-            <button data-h="all" class="on">Все</button>
-            <button data-h="completed">Завершённые</button>
+    v.innerHTML =
+      `<div class="card-title" style="padding:2px 4px 10px">История обменов</div>` +
+      S.orders
+        .map(
+          (o) => `
+        <div class="card h-item" data-order="${o.id}" role="button" tabindex="0">
+          <div class="h-ic ${esc(dirOfOrder(o).coin)}">${coinInner(dirOfOrder(o))}${o.network ? `<small>${esc(o.network === 'TRC20' ? 'TRC' : 'ERC')}</small>` : ''}</div>
+          <div class="h-main">
+            ${isGiftOrder(o)
+              ? `<div class="h-top"><span>${esc(giftLabelOf(o))} $${giftNominal(o)} → ${esc(giftCurrencyOf(o))}</span><span>${giftPayoutText(o)}</span></div>`
+              : `<div class="h-top"><span>₽ → ${esc(dirLabel(o))}</span><span>${o.payRub || o.rub ? fmtRub(o.payRub || o.rub) : cryptoOf(o)}</span></div>`}
+            <div class="h-sub"><span>#${o.id}${o.receipt ? ' 🧾' : ''}${o.txUrl ? ' 🔗' : ''} · ${fmtDate(o.createdAt)}</span>${chip(o.status)}</div>
+            <div class="h-sub" style="margin-top:2px"><span>${esc(o.wallet.slice(0, 10) + '…' + o.wallet.slice(-6))}</span><b style="color:#9fd8ff">${cryptoOf(o)}</b></div>
+            ${o.txUrl ? `<div class="h-sub" style="margin-top:6px"><a href="${esc(o.txUrl)}" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;word-break:break-all">🔗 ${esc(o.txUrl.slice(0,50))}…</a></div>` : ''}
           </div>
-        </div>
-        <div class="hero-amount">
-          <div class="metric">${Number(rubSum).toLocaleString('ru-RU')}<span class="cur">₽</span></div>
-          <div><span class="delta ${done.length ? 'up' : 'flat'}"><span class="ar">${done.length ? '✓' : '•'}</span><span>${done.length} ${done.length === 1 ? 'обмен' : done.length < 5 ? 'обмена' : 'обменов'}</span></span></div>
-        </div>
-        <div class="metric-sub">${cryptoLine ? `${cryptoLine} · всего операций ${S.orders.length}` : `всего операций ${S.orders.length}`}</div>
-        ${done.length >= 3 ? `<div class="chart" id="volChart"></div><div class="chart-axis" id="volAxis"></div>` : ''}
-      </section>
-      <div class="card-title" style="padding:16px 4px 11px">История обменов</div>
-      <div id="histList">${historyItems(S.orders)}</div>`;
-
-    const volChart = $('#volChart');
-    if (volChart && series.length >= 3) {
-      const spot = renderChart(volChart, series);
-      renderChartTip(volChart, spot, fmtRub(series[series.length - 1].v), fmtDate(series[series.length - 1].at));
-      const axis = $('#volAxis');
-      if (axis) {
-        axis.innerHTML = [series[0], series[series.length - 1]]
-          .map((p) => `<span>${fmtDate(p.at)}</span>`).join('');
-      }
-    }
-    $('#histSeg').querySelectorAll('button').forEach((b) =>
-      b.addEventListener('click', () => {
-        haptic('light');
-        $('#histSeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
-        $('#histList').innerHTML = historyItems(b.dataset.h === 'all' ? S.orders : S.orders.filter((o) => o.status === 'completed'));
-      })
+        </div>`
+        )
+        .join('');
+    // Клик по записи открывает карточку заявки — в том числе завершённой или истёкшей.
+    v.querySelectorAll('[data-order]').forEach((el) =>
+      el.addEventListener('click', () => openOrderFromHistory(Number(el.dataset.order)))
     );
   }
 
-  function historyItems(list) {
-    if (!list.length) return '<div class="card"><div class="empty">В этой подборке пока нет обменов.</div></div>';
-    return list
-      .map(
-        (o) => `
-      <div class="card h-item">
-        <div class="h-ic ${o.currency.toLowerCase()}">${o.currency === 'BTC' ? '₿' : 'G'}</div>
-        <div class="h-main">
-          <div class="h-top"><span>₽ → ${o.currency}</span><span class="sum">${fmtRub(o.payRub || o.rub)}</span></div>
-          <div class="h-sub"><span>#${o.id}${o.receipt ? ' 🧾' : ''} · ${fmtDate(o.createdAt)}</span><span class="crypto">${fmtCrypto(o.crypto, o.currency)}</span></div>
-          <div class="h-sub">
-            <span>${esc(o.wallet.slice(0, 10) + '…' + o.wallet.slice(-6))}</span>
-            ${chip(o.status)}
-          </div>
-          ${o.txUrl ? `<div class="h-sub"><a href="${esc(o.txUrl)}" target="_blank" rel="noopener">🔗 ${esc(o.txUrl.slice(0, 46))}…</a></div>` : ''}
-        </div>
-      </div>`
-      )
-      .join('');
+  // Открывает заявку из истории в карточке на вкладке «Обмен».
+  function openOrderFromHistory(id) {
+    const order = S.orders.find((o) => o.id === id);
+    if (!order) return;
+    S.order = order;
+    S.tab = 'exchange';
+    haptic('light');
+    document.querySelectorAll('.view').forEach((vv) => vv.classList.add('hidden'));
+    $('#view-exchange').classList.remove('hidden');
+    renderNav();
+    if (S.order) {
+      if ($('#exForm')) $('#exForm').classList.add('hidden');
+      if ($('#exOrder')) $('#exOrder').classList.remove('hidden');
+    }
+    renderOrderStage();
   }
 
   function renderRefs() {
-    const s = S.settings || {};
+    const s = S.settings;
     const v = $('#view-refs');
-    const link = s.botUsername ? `https://t.me/${s.botUsername}?startapp=ref${S.me?.id || ''}` : null;
+    const link = s.botUsername ? `https://t.me/${s.botUsername}?startapp=ref${S.me.id}` : null;
     v.innerHTML = `
-      <section class="card editorial">
-        <div class="ed-art" style="background-image:url('/img/refs.jpg')" aria-hidden="true"></div>
-        <div class="ed-body">
-          <div class="display">${s.refPercent}% с каждого<br>обмена друга</div>
-        </div>
-      </section>
       <div class="card">
         <div class="card-title">Реферальная программа</div>
         ${
           link
             ? `<div class="ref-link" id="refLink">${esc(link)}</div>
-               <button class="btn btn-primary" style="margin-top:11px" id="cpRef">${ICONS.copy}<span>Скопировать ссылку</span></button>`
+               <button class="btn btn-primary" style="margin-top:10px" id="cpRef">${ICONS.copy}<span>Скопировать ссылку</span></button>`
             : `<div class="empty">Реферальная ссылка появится после подключения бота.</div>`
         }
         <div class="ref-stats">
@@ -2119,9 +1270,9 @@
           <div class="ref-stat"><div class="v">${s.refPercent}%</div><div class="l">бонус с обмена</div></div>
         </div>
         <div class="steps">
-          <div class="step"><div class="n">1</div><span class="step-copy">Отправьте ссылку другу — она закрепит его за вами навсегда.</span></div>
-          <div class="step"><div class="n">2</div><span class="step-copy">Друг совершает обмен в PRICELEX через ваше приложение.</span></div>
-          <div class="step"><div class="n">3</div><span class="step-copy">Вы получаете ${s.refPercent}% с каждого его обмена — без лимитов.</span></div>
+          <div class="step"><div class="n">1</div>Отправьте ссылку другу — она закрепит его за вами навсегда.</div>
+          <div class="step"><div class="n">2</div>Друг совершает обмен в VEGA через ваше приложение.</div>
+          <div class="step"><div class="n">3</div>Вы получаете ${s.refPercent}% с каждого его обмена — без лимитов.</div>
         </div>
       </div>`;
     const cp = $('#cpRef');
@@ -2129,877 +1280,293 @@
   }
 
   function renderProfile() {
-    const view = $('#view-profile');
+    const s = S.settings;
+    const v = $('#view-profile');
     const me = S.me || {};
-    const name = String(me.name || 'Клиент PRICELEX').trim();
-    const username = me.username ? '@' + String(me.username).replace(/^@/, '') : `ID ${me.id || '—'}`;
-    const initial = name.charAt(0).toUpperCase() || 'P';
-    const hasOpenOrder = S.order && !TERMINAL.includes(S.order.status);
-
-    view.innerHTML = `
-      <section class="profile-identity card">
-        <div class="profile-avatar" aria-hidden="true">${esc(initial)}</div>
-        <div class="profile-user"><h1>${esc(name)}</h1><span>${esc(username)}</span></div>
-        <div class="profile-member">Клиент PRICELEX</div>
-      </section>
-      ${hasOpenOrder ? `
-        <button class="active-order profile-active-order" id="profileActiveOrder" type="button">
-          <span class="active-order-mark">${ICONS.clock}</span>
-          <span class="active-order-copy"><b>Активная заявка</b><small>#${S.order.id} · ${STATUS[S.order.status]?.label || 'В работе'}</small></span>
-          ${ICONS.chevron}
-        </button>` : ''}
-      <section class="card profile-settings" aria-label="Настройки">
-        <div class="profile-section-title">Настройки</div>
-        <button class="profile-row" type="button" id="profileNotifications">
-          <span class="profile-row-icon">${ICONS.bell}</span>
-          <span class="profile-row-copy"><b>Уведомления</b><small>Статус и сообщения по заявкам</small></span>
-          <span class="profile-toggle" aria-hidden="true"><i></i></span>
-        </button>
-        <div class="profile-row static-row">
-          <span class="profile-row-icon language-icon">А</span>
-          <span class="profile-row-copy"><b>Язык</b></span>
-          <span class="profile-value">Русский ${ICONS.chevron}</span>
-        </div>
-      </section>
-      ${subscriptionCardHtml('profile')}
-      <section class="card profile-links" aria-label="Разделы">
-        <button class="profile-link" type="button" id="profileAccess">
-          <span class="profile-row-icon">💳</span>
-          <span class="profile-row-copy"><b>Доступ</b><small>${esc(accessSummaryUi())}</small></span>${ICONS.chevron}
-        </button>
-        <button class="profile-link" type="button" data-go="support">
-          <span class="profile-row-icon">${ICONS.chat}</span><span class="profile-row-copy"><b>Поддержка</b><small>Написать команде PRICELEX</small></span>${ICONS.chevron}
-        </button>
-        <button class="profile-link" type="button" data-go="info">
-          <span class="profile-row-icon">${ICONS.info}</span><span class="profile-row-copy"><b>О приложении</b><small>Правила и информация о сервисе</small></span>${ICONS.chevron}
-        </button>
-        <button class="profile-link" type="button" data-go="broker">
-          <span class="profile-row-icon">${ICONS.case}</span><span class="profile-row-copy"><b>${S.brokerLogin ? 'Кабинет брокера' : 'Стать брокером'}</b><small>${S.brokerLogin ? 'Цена, оферы и отзывы' : 'Присоединиться к команде'}</small></span>${ICONS.chevron}
-        </button>
-      </section>
-      <button class="profile-logout" id="profileLogout" type="button">Выйти из приложения</button>
-      <div class="profile-foot">
-        <div class="profile-foot-mark">PRICELEX</div>
-      </div>
-    `;
-
-    view.querySelectorAll('[data-go]').forEach((button) => button.addEventListener('click', () => {
-      haptic('light');
-      goTab(button.dataset.go);
-    }));
-    wireSubscriptionCard('profile');
-    const accRow = $('#profileAccess');
-    if (accRow) accRow.addEventListener('click', () => {
-      haptic('light');
-      const a = accessNow();
-      if (a.ok && a.state === 'active') return toast(`Подписка активна до ${fmtAccessUntil(a.until)}`);
-      if (a.ok && a.state === 'trial') return toast(`Бесплатный доступ: ещё ${a.daysLeft} дн.`);
-      // Раньше здесь сначала выставлялось S.tab = 'exchange', и goTab() считал,
-      // что переходить некуда: оставался экран профиля, а «назад» молчал.
-      goTab('exchange');
-      toast(a.state === 'pending' ? 'Оплата на проверке — включим доступ после подтверждения' : 'Оформите подписку, чтобы продолжить');
-    });
-    const active = $('#profileActiveOrder');
-    if (active) active.addEventListener('click', () => {
-      S.orderOpen = true;
-      goTab('exchange');
-      // Экран обмена перерисовывается с заявкой вместо формы — иначе шапка
-      // уже «Заявка», а под ней оставалась форма обмена.
-      renderExchange();
-      renderHeader();
-      renderNav();
-    });
-    $('#profileNotifications').addEventListener('click', () => {
-      if (tg && typeof tg.requestWriteAccess === 'function') {
-        try {
-          tg.requestWriteAccess((allowed) => toast(allowed ? 'Уведомления Telegram включены' : 'Telegram не разрешил отправку уведомлений'));
-        } catch { toast('Не удалось открыть настройки уведомлений Telegram'); }
-      } else {
-        toast('Уведомления доступны при запуске приложения в Telegram');
-      }
-    });
-    $('#profileLogout').addEventListener('click', () => {
-      haptic('light');
-      if (tg && typeof tg.close === 'function') tg.close();
-      else toast('Демо-сеанс сохранён в этом браузере');
-    });
-  }
-
-  /* ---------- капча ---------- */
-  // Одна активная пара «вопрос-ответ» на клиенте; сервер выдаёт новую на
-  // каждую отправку формы (создание обмена, заявка брокера).
-  async function refreshCaptcha() {
-    try {
-      const r = await api('/api/captcha');
-      S.captcha = r;
-    } catch { S.captcha = null; }
-    renderCaptchaBoxes();
-  }
-
-  const captchaHtml = (boxId) => `<div class="captcha" id="${boxId}"></div>`;
-
-  function renderCaptchaBoxes() {
-    for (const boxId of ['capOrder', 'capBroker']) {
-      const box = document.getElementById(boxId);
-      if (!box) continue;
-      box.innerHTML = S.captcha
-        ? `<label class="cap-label" for="${boxId}In">Проверка: <b class="cap-expr">${esc(S.captcha.question)}</b></label>
-           <input id="${boxId}In" inputmode="numeric" autocomplete="off" placeholder="Ответ">`
-        : '';
-      const inp = document.getElementById(boxId + 'In');
-      if (inp) inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });
-    }
-  }
-
-  const captchaPayload = (boxId) => {
-    const inp = document.getElementById(boxId + 'In');
-    const answer = inp ? inp.value.trim() : '';
-    return { captchaId: S.captcha ? S.captcha.id : '', captchaAnswer: answer };
-  };
-
-  /* ---------- ЛК брокера: цена, график, оферы и отзывы ---------- */
-  // Брокер видит здесь ровно то, что нужно для работы: свою цену и её график,
-  // живые оферы клиентов с откликом в один тап, статистику и отзывы о себе.
-
-  const lkCurrency = () => S.lkCurrency || 'BTC';
-
-  async function loadBrokerLk(force = false) {
-    if (S.brokerLk && !force) return S.brokerLk;
-    try {
-      S.brokerLk = await api('/api/broker/me');
-      S.brokerLkErr = null;
-      if (S.brokerLk && S.brokerLk.access) S.access = S.brokerLk.access;
-    } catch (e) {
-      S.brokerLkErr = e.status === 402 ? 'subscription' : (e.message || 'error');
-      if (e.status === 402 && e.payload && e.payload.access) S.access = e.payload.access;
-    }
-    return S.brokerLk;
-  }
-
-  function lkChartSeries(lk) {
-    const cur = lkCurrency();
-    const mine = (lk.priceHistory || []).filter((p) => p.currency === cur);
-    if (mine.length >= 2) return { series: mine.map((p) => ({ at: p.at, v: p.rate })), own: true };
-    const market = (lk.marketHistory || []).map((p) => ({ at: p.at, v: cur === 'GRAM' ? p.gram : p.btc }));
-    return { series: market, own: false };
-  }
-
-  function renderBrokerLk() {
-    const v = $('#view-broker');
-    const lk = S.brokerLk;
-    if (S.brokerLkErr === 'subscription') {
-      v.innerHTML = `
-        <section class="card editorial br-hero">
-          <div class="ed-art" style="background-image:url('/img/broker.jpg')" aria-hidden="true"></div>
-          <div class="ed-body">
-            <div class="kicker gold">Кабинет брокера</div>
-            <div class="display">Доступ<br><em>по подписке</em></div>
-          </div>
-        </section>
-        ${paywallHtml()}`;
-      wirePaywall();
-      return;
-    }
-    if (!lk) {
-      v.innerHTML = '<div class="card"><div class="stage-title">Загружаем кабинет…</div></div>';
-      return;
-    }
-    const cur = lkCurrency();
-    const price = Number(lk.price && lk.price[cur]) || 0;
-    const market = Number(lk.market && lk.market[cur]) || 0;
-    const delta = market && price ? ((price / market) - 1) * 100 : 0;
-    const deltaTxt = market && price
-      ? (Math.abs(delta) < 0.05 ? 'ровно по рынку' : `${delta > 0 ? '+' : '−'}${Math.abs(delta).toFixed(1)}% к рынку`)
-      : '';
-    const offers = lk.offers || [];
-    const mine = lk.mine || [];
-    const st = lk.stats || {};
-    const b = lk.broker || {};
-    const offersHtml = offers.length ? offers.map((o) => `
-      <div class="lk-offer">
-        <div class="lk-offer-top">
-          <b>${fmtRub(o.rub)} → ${esc(o.currency)}</b>
-          <span class="lk-offer-market">рынок ${fmtRub(o.marketRate)}</span>
-        </div>
-        <div class="lk-offer-meta">
-          ${o.myBid ? `ваш отклик: <b>${fmtRub(o.myBid.rate)}</b>` : 'вы ещё не откликнулись'}
-          ${o.bids ? ` · откликов: ${o.bids}` : ''}
-        </div>
-        ${o.canTake
-          ? `<button class="btn ${o.myBid ? 'btn-ghost' : 'btn-primary'} btn-sm lk-bid" data-bid-order="${o.id}" type="button">${o.myBid ? 'Изменить отклик' : 'Откликнуться'}</button>`
-          : `<div class="note">${esc(o.limitNote || 'Лимит по депозиту не позволяет взять этот офер')}</div>`}
-      </div>`).join('') : '<div class="note">Свободных оферов сейчас нет — новые придут в бот и появятся здесь.</div>';
-
+    const name = me.name || 'Клиент';
+    const userLine = [me.username ? '@' + me.username : null, 'ID ' + (me.id ?? '—')].filter(Boolean).join(' · ');
+    const doneOrders = S.orders.filter((o) => o.status === 'completed');
+    const volume = doneOrders.reduce((sum, o) => sum + Number(o.units || 0), 0);
+    const opLink = 'https://t.me/' + String(s.operator || '').replace(/^@/, '');
+    const link = s.botUsername ? `https://t.me/${s.botUsername}?startapp=ref${me.id}` : null;
     v.innerHTML = `
-      <section class="card lk-head">
-        <div class="lk-avatar">${esc(String(b.name || b.login || '—').slice(0, 2).toUpperCase())}</div>
-        <div class="lk-head-meta">
-          <h1>${esc(b.name || b.login || 'Брокер')}</h1>
-          <small>${[b.rating ? `★ ${b.rating}` : '', b.deals ? `${b.deals} сделок` : '', b.online ? 'онлайн' : 'офлайн'].filter(Boolean).join(' · ')}</small>
+      <div class="card lc-head">
+        <div class="lc-id">
+          <div class="lc-name">${esc(name)}</div>
+          <div class="lc-sub">${esc(userLine)}</div>
+          <div class="lc-note">${s.online ? '🟢 Обменник онлайн' : '🔴 Обменник офлайн'}</div>
         </div>
-        <div class="lk-head-access">${esc(accessSummaryUi())}</div>
-      </section>
-      ${subscriptionCardHtml('lk')}
-      <div class="card">
-        <div class="card-title">Моя цена</div>
-        <div class="seg block currency-segment" id="lkCur">
-          <button type="button" data-c="BTC" class="${cur === 'BTC' ? 'on' : ''}">${coinHtml('BTC')}<span class="seg-label">Биткоин <small>BTC</small></span></button>
-          <button type="button" data-c="GRAM" class="${cur === 'GRAM' ? 'on' : ''}">${coinHtml('GRAM')}<span class="seg-label">Грам <small>GRAM</small></span></button>
-        </div>
-        <div class="field">
-          <input id="lkPrice" type="number" inputmode="decimal" min="0" step="any" value="${price || ''}" placeholder="${market || ''}">
-          <span class="suffix">₽</span>
-        </div>
-        <div class="lk-price-meta">
-          <span>Рынок: <b>${fmtRub(market)}</b></span>
-          ${deltaTxt ? `<span class="bid-delta ${delta > 0 ? 'up' : delta < 0 ? 'down' : 'eq'}">${deltaTxt}</span>` : ''}
-        </div>
-        <button class="btn btn-primary mt" id="lkSave" type="button">${ICONS.check}<span>Сохранить цену</span></button>
-        <div class="chart" id="lkChart"></div>
-        <div class="chart-axis" id="lkAxis"></div>
-        <div class="note">${lkChartSeries(lk).own ? 'График вашей цены за неделю.' : 'Пока это рыночный график: как только сохраните свою цену, здесь появится ваша линия.'}</div>
+      </div>
+      <div class="lc-stats">
+        <div class="lc-stat"><b>${S.orders.length}</b><span>заявок всего</span></div>
+        <div class="lc-stat"><b>${doneOrders.length}</b><span>завершено</span></div>
+        <div class="lc-stat"><b>$${volume}</b><span>выкуплено карт</span></div>
       </div>
       <div class="card">
-        <div class="card-title">Оферы клиентов <span class="offer-count">${offers.length}</span></div>
-        ${offersHtml}
-        <div class="note" style="margin-top:8px">Реквизиты и подтверждение оплаты — в боте: отклик принял клиент, бот присылает заявку в работу.</div>
-      </div>
-      ${mine.length ? `
-        <div class="card">
-          <div class="card-title">Мои заявки</div>
-          ${mine.map((o) => `<div class="mrow"><span>#${o.id} · ${fmtRub(o.rub)} → ${esc(o.currency)}</span><b>${STATUS[o.status]?.label || o.status}</b></div>`).join('')}
+        <div class="card-title">Реферальная программа</div>
+        <div class="about" style="font-size:12.5px;line-height:1.6"><b>${s.refPercent}%</b> с каждого обмена друга — без лимитов. Приглашено: <b>${me.referredCount || 0}</b></div>
+        ${link ? `<div class="ref-link" id="lcRefLink" style="margin-top:10px">${esc(link)}</div>
+        <div class="copy-row">
+          <button class="btn btn-ghost btn-sm" id="lcCopyRef">${ICONS.copy}<span>Копировать ссылку</span></button>
+          <button class="btn btn-ghost btn-sm" id="lcGoRefs">${ICONS.right}<span>Как это работает</span></button>
         </div>` : ''}
-      <div class="card">
-        <div class="card-title">Статистика</div>
-        <div class="ref-stats">
-          <div class="ref-stat"><div class="v">${st.bids || 0}</div><div class="l">откликов</div></div>
-          <div class="ref-stat"><div class="v">${st.won || 0}</div><div class="l">принято</div></div>
-          <div class="ref-stat"><div class="v">${st.completed || 0}</div><div class="l">сделок</div></div>
-        </div>
-        <div class="order-meta">
-          ${st.avgMin ? `<div class="mrow"><span>Среднее время сделки</span><b>${st.avgMin} мин</b></div>` : ''}
-          <div class="mrow"><span>Заработано</span><b>${fmtBtcUi(st.earnedBtc || 0)} BTC</b></div>
-        </div>
       </div>
-      <div class="card">
-        <div class="card-title">Отзывы о вас <span class="offer-count">${(lk.reviews || []).length}</span></div>
-        ${(lk.reviews || []).length
-          ? (lk.reviews || []).slice(0, 3).map((r) => `
-            <div class="lk-review">
-              <div class="lk-review-top"><b>${esc(r.name)}</b>${starsHtml(r.rating)}</div>
-              <div class="lk-review-text">${esc(r.text)}</div>
-            </div>`).join('')
-          : '<div class="note">Отзывы появятся после первых завершённых сделок.</div>'}
-      </div>
-      <div class="signature">PRICELEX<span>кабинет брокера</span></div>`;
-
-    wireSubscriptionCard('lk');
-    $('#lkCur').querySelectorAll('button').forEach((btn) =>
-      btn.addEventListener('click', () => {
-        S.lkCurrency = btn.dataset.c;
-        haptic('light');
-        renderBrokerLk();
-      }));
-    const save = $('#lkSave');
-    save.addEventListener('click', async () => {
-      const rate = Number($('#lkPrice').value);
-      if (!(rate > 0)) return toast('Укажите цену больше нуля');
-      save.disabled = true;
-      haptic('medium');
-      try {
-        S.brokerLk = await api('/api/broker/price', { method: 'POST', body: { currency: lkCurrency(), rate } });
-        toast('Цена сохранена — по ней вы откликаетесь');
-        renderBrokerLk();
-      } catch (e) {
-        toast(e.message);
-        save.disabled = false;
-      }
-    });
-    v.querySelectorAll('[data-bid-order]').forEach((btn) =>
-      btn.addEventListener('click', async () => {
-        haptic('medium');
-        btn.disabled = true;
-        try {
-          const r = await api('/api/broker/bid', { method: 'POST', body: { orderId: Number(btn.dataset.bidOrder) } });
-          S.brokerLk = r.payload || S.brokerLk;
-          haptic('success');
-          toast(`Отклик отправлен: ${fmtRub(r.bid.rate)} за 1`);
-          renderBrokerLk();
-        } catch (e) {
-          toast(e.message);
-          btn.disabled = false;
-          if (e.status === 402 && e.payload && e.payload.access) {
-            S.access = e.payload.access;
-            S.brokerLkErr = 'subscription';
-            renderBrokerLk();
-          }
-        }
-      }));
-    const chart = $('#lkChart');
-    if (chart) {
-      const { series } = lkChartSeries(lk);
-      const spot = renderChart(chart, series.length >= 2 ? series : [], {});
-      renderChartNote($('#lkAxis'), series.length >= 2 ? `${series.length} наблюдений за неделю` : 'недостаточно данных для графика');
-      if (spot && series.length >= 2) renderChartTip(chart, spot, fmtRub(Number(series[series.length - 1].v)), `1 ${cur}`);
-    }
-  }
-
-  /* ---------- брокер: заявка ---------- */
-
-  const brokerPayoutMin = () => {
-    const v = S.settings && S.settings.brokerMinPayoutBtc;
-    return Number.isFinite(Number(v)) ? String(Number(v)) : '0.0002';
-  };
-
-  const fmtBtcUi = (v) => (Math.round(Number(v) * 1e8) / 1e8).toFixed(8).replace(/\.?0+$/, '');
-
-  function renderBroker() {
-    const v = $('#view-broker');
-    // Брокеру вкладка показывает кабинет, остальным — анкету «стать брокером».
-    if (S.brokerLogin) {
-      if (S.brokerLk || S.brokerLkErr) renderBrokerLk();
-      else {
-        v.innerHTML = '<div class="card"><div class="stage-title">Загружаем кабинет…</div></div>';
-        loadBrokerLk().then(renderBrokerLk);
-      }
-      return;
-    }
-    const app = S.brokerApp;
-    const s = S.settings || {};
-    const kb = s.botUsername ? `https://t.me/${s.botUsername}` : null;
-    const features = `
-      <div class="feat">
-        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Каждый может стать брокером:</b> прозрачные условия и равный доступ для всех участников</span></div>
-        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Торговля ровно на сумму депозита:</b> брокер откликается на заявки в пределах своего депозита</span></div>
-        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Гарантия для клиентов:</b> если выплата не пришла или возникли трудности, площадка компенсирует клиенту 100% средств из общего депозита брокеров — сейчас это ${depositInlineHtml()}</span></div>
-        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Свой депозит:</b> место на площадке выдаёт администратор, депозит вы пополняете через бот на любую сумму — после подтверждения торгуете в его пределах. Без стажировки и сборов за подключение</span></div>
-        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Доход со сделок:</b> ваша доля — ${s && s.brokerSharePercent ? s.brokerSharePercent : 70}% спреда каждой завершённой сделки, начисляется в BTC мгновенно</span></div>
-        <div class="f"><span class="i">◆</span><span class="f-copy"><b>Выплаты в любое время:</b> вывод из бота при балансе от <span class="nw">${fmtBtcUi(brokerPayoutMin())} BTC</span></span></div>
-      </div>`;
-    const statusHtml = app ? `
-      <div class="card">
-        <div class="card-title">Ваша заявка</div>
-        <div class="order-meta">
-          <div class="mrow"><span>Статус</span><b>${app.status === 'pending' ? '⏳ На проверке у администрации' : app.status === 'approved' ? '✅ Одобрена — ждите сообщение в Telegram' : '❌ Отклонена — подайте новую, доработав описание опыта'}</b></div>
-          <div class="mrow"><span>Опыт</span><b>${esc(app.experience)}</b></div>
-          <div class="mrow"><span>Контакт</span><b>${esc(app.contact)}</b></div>
-        </div>
-        ${app.status === 'approved' && kb ? `<a class="btn btn-primary mt" href="${kb}" target="_blank" rel="noopener">${ICONS.bolt}<span>Открыть бота → /broker</span></a>` : ''}
-        ${app.status === 'rejected' ? `<button class="btn btn-outline mt" id="brokerAgain">Подать заявку снова</button>` : ''}
-      </div>` : `
-      <div class="card">
-        <div class="card-title">Анкета кандидата</div>
-        <div class="field">
-          <label class="f-hint" for="brokerExp">Опыт: сделки, объёмы, направления (10–1500 символов)</label>
-          <textarea id="brokerExp" rows="4" maxlength="1500" placeholder="Например: два года сопровождаю P2P-сделки, личный оборот — …"></textarea>
-        </div>
-        <div class="field">
-          <label class="f-hint" for="brokerContact">Контакт для связи — Telegram, телефон или e-mail</label>
-          <input id="brokerContact" maxlength="200" placeholder="@username или +7…">
-        </div>
-        ${captchaHtml('capBroker')}
-        <button class="btn btn-primary mt" id="brokerApply">${ICONS.bolt}<span>Отправить заявку</span></button>
-        <div class="f-err" id="brokerErr"></div>
-      </div>`;
-    v.innerHTML = `
-      <section class="card editorial br-hero">
-        <div class="ed-art" style="background-image:url('/img/apply.jpg')" aria-hidden="true"></div>
-        <div class="ed-body">
-          <div class="kicker gold">Станьте брокером PRICELEX</div>
-          <div class="display">Ваш опыт —<br><em>ваш доход</em></div>
-        </div>
-      </section>
-      <div class="card">
-        <div class="card-title">Как это устроено</div>
-        ${features}
-      </div>
-      ${statusHtml}`;
-    const exp = $('#brokerExp');
-    if (exp) {
-      exp.addEventListener('input', () => {
-        exp.style.height = 'auto';
-        exp.style.height = Math.min(exp.scrollHeight, 200) + 'px';
-      });
-      renderCaptchaBoxes();
-    }
-    const again = $('#brokerAgain');
-    if (again) again.addEventListener('click', () => { S.brokerApp = null; renderBroker(); });
-    const apply = $('#brokerApply');
-    if (apply) apply.addEventListener('click', submitBrokerApply);
-  }
-
-  const isTypingBroker = () => {
-    const el = document.activeElement;
-    return el && ['brokerExp', 'brokerContact', 'capBrokerIn'].includes(el.id);
-  };
-
-  async function loadBrokerStatus() {
-    // Фоновая проверка: одна заявка на пользователя.
-    if (isTypingBroker()) return;
-    try {
-      const r = await api('/api/broker/status');
-      S.brokerApp = r.application;
-    } catch { /* не критично */ }
-  }
-
-  async function submitBrokerApply() {
-    const err = $('#brokerErr');
-    err.textContent = '';
-    const experience = $('#brokerExp').value.trim();
-    const contact = $('#brokerContact').value.trim();
-    const fail = (msg) => { err.textContent = msg; haptic('error'); return msg; };
-    if (experience.length < 10) return fail('Расскажите про опыт чуть подробнее (от 10 символов).');
-    if (contact.length < 3) return fail('Оставьте контакт для связи.');
-    const cap = captchaPayload('capBroker');
-    if (!cap.captchaAnswer) return fail('Решите проверочный пример.');
-    const btn = $('#brokerApply');
-    btn.disabled = true;
-    haptic('medium');
-    try {
-      const r = await api('/api/broker/apply', {
-        method: 'POST',
-        body: { experience, contact, startParam, ...cap },
-      });
-      S.brokerApp = r.application;
-      haptic('success');
-      toast('Заявка отправлена администрации');
-      renderBroker();
-    } catch (e) {
-      err.textContent = e.message;
-      haptic('error');
-      toast(e.message);
-      await refreshCaptcha();
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  // Дежурного Telegram-оператора больше нет: поддержка — в чате приложения.
-  // Если администрация задаст контакт в настройках — покажем ссылку.
-  const supportHandle = () => {
-    const op = String((S.settings && S.settings.operator) || '').trim();
-    return op ? '@' + op.replace(/^@/, '') : '';
-  };
-  const supportUrl = () => 'https://t.me/' + supportHandle().slice(1);
-  const supportLinkHtml = () =>
-    supportHandle()
-      ? `<a class="inline-link" href="${esc(supportUrl())}" target="_blank" rel="noopener">${esc(supportHandle())}</a>`
-      : '';
-
-  function renderInfo() {
-    $('#view-info').innerHTML = `
-      <section class="card speech" id="speech">
-        <div class="sp-art" style="background-image:url('/img/speech.jpg')" aria-hidden="true"></div>
-        <div class="sp-body">
-          <div class="sp-mic"><span class="dot"></span>Слово PRICELEX</div>
-          <p class="sp-line lead">PRICELEX — private crypto brokerage.</p>
-          <p class="sp-line big">Одна площадка — две стороны сделки: <em>клиент и брокер.</em> Сразу видно, что получает каждый.</p>
-          <p class="sp-line"><em>Клиенту:</em> живой брокер ведёт обмен от заявки до выплаты — объясняет шаги, проверяет реквизиты, доводит операцию до результата.</p>
-          <p class="sp-line"><em>Брокеру:</em> работа в рамках своего депозита и на собственный капитал — без начальника и десяти согласований.</p>
-          <p class="sp-line"><em>Клиенту:</em> сумма к оплате известна заранее, а на каждом шаге остаётся след — заявка, чек, ссылка на транзакцию.</p>
-          <p class="sp-line"><em>Брокеру:</em> не нужно объяснять человеку, который вчера узнал, что такое USDT, почему возможность есть именно сейчас. Ты увидел возможность — <em>ты должен быть способен действовать.</em></p>
-          <p class="sp-line">Здесь деньги — это инструмент. А главное преимущество — скорость, опыт и понимание рынка.</p>
-          <p class="sp-line">Нам не нужен тот, кто хочет научиться. Нам нужен тот, кто уже умеет: держит несколько источников одновременно, знает рынок, понимает ликвидность и считает риск до того, как нажмёт кнопку.</p>
-          <p class="sp-line">И не теряется, когда возможность живёт несколько минут.</p>
-          <p class="sp-line big">Если ты такой брокер — <em>PRICELEX тебе подходит.</em> Если вам нужен такой брокер — <em>подходит и вам.</em></p>
-          <p class="sp-line">Не потому что мы обещаем лёгкие деньги. А потому что мы создаём среду, где опыт и капитал работают профессионально — по обе стороны сделки.</p>
-          <p class="sp-line">Мы отвечаем за качество <em>репутацией и гарантийным депозитом</em> — и просим вас держать свои ключи при себе. Как именно это устроено — в блоке «Безопасность» ниже.</p>
-          <p class="sp-line big">PRICELEX. <em>Private crypto brokerage.</em></p>
-          <div class="sp-sign">since 2026</div>
-        </div>
-      </section>
-      <div class="card">
-        <div class="card-title">Безопасность</div>
-        <p class="why-pair-lead">Это не страшилки, а порядок, при котором ваши средства не зависят от чьей-то доброты.</p>
-        <div class="feat">
-          <div class="f"><span class="i">◆</span><span class="f-copy">Реквизиты сообщает только брокер внутри вашей заявки. Мы не пишем первыми в личку, не присылаем «резервный» адрес и не просим перевести «для проверки».</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">PRICELEX не спрашивает seed-фразу, приватный ключ, пароль от кошелька и код из SMS. Кто бы ни представился командой и что бы ни обещал — это подделка.</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Адрес получения сверяйте сами: первые и последние шесть символов. Адрес поменялся в переписке — стоп, и только поддержка в приложении.</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Средства по активной заявке заморожены на гарантийном счёте: ни брокер, ни третьи лица их не тронут. Общую ответственность держит гарантийный депозит брокеров — ${depositInlineHtml()}.</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Спор решает администрация по фактам — чек, история заявки и ссылка на транзакцию, а не слова. Решение окончательное, правила платформы открыты ниже.</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Официального канала и общего чата у нас нет — любые «канал PRICELEX» или «чат сообщества» ведут мошенники. Связь с Платформой — только поддержка внутри приложения${supportHandle() ? ` и ${esc(supportHandle())}` : ''}. Домен или хэндл с одной лишней буквой — не мы.</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Никаких обещаний доходности и «разгона баланса»: мы про обмен и сопровождение сделки, инвестиционных рекомендаций здесь нет.</span></div>
-        </div>
-        <p class="disclaimer">Платформа не является банком, платёжной системой или оператором электронных денежных средств.</p>
-      </div>
-      <div class="card">
-        <div class="card-title">Почему PRICELEX</div>
-        <div class="feat">
-          <div class="f"><span class="i">◆</span><span class="f-copy">Проверенная и быстрая команда — сделку ведёт брокер, а не скрипт</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Общий гарантийный депозит всех брокеров — ${depositInlineHtml()}: им страхуется каждая сделка</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Сумма к оплате известна заранее — без доплат</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Просадки курса отмечены на графике — видно хорошую точку входа</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Отзывы только от реальных клиентов — после завершённого обмена</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">Стать брокером может любой клиент — заявка из личного кабинета, быстрая проверка опыта, и вы работаете под брендом площадки</span></div>
-          <div class="f"><span class="i">◆</span><span class="f-copy">С депозита брокера ничего не удерживаем — свободную часть можно вывести через бот в любой момент</span></div>
-        </div>
-      </div>
-      <div class="card why-pair">
-        <div class="kicker gold">since 2026</div>
-        <div class="card-title">Почему только BTC и GRAM</div>
-        <p class="why-pair-lead">Две пары. Самые точные рыночные отклики. Прямой путь в любую валюту.</p>
-        <p class="why-pair-body">Bitcoin и GRAM — то, чем рынок дышит каждый день: глубина, ликвидность, привычная конвертация. Мы не держим витрину из десятков тикеров — ведём две пары, которые действительно обмениваются чисто и быстро.</p>
-        <p class="why-pair-body">Нужен другой актив? Напишите. Брокер разберёт маршрут и с радостью поможет пройти его спокойно.</p>
-      </div>
-      <div class="card">
-        <div class="card-title">Как это работает</div>
-        <div class="steps">
-          <div class="step"><div class="n">1</div><span class="step-copy">Выберите валюту и сумму: калькулятор считает по рыночному курсу — без наценки площадки.</span></div>
-          <div class="step"><div class="n">2</div><span class="step-copy">Укажите кошелёк и создайте заявку: брокеры откликнутся своей ценой за актив.</span></div>
-          <div class="step"><div class="n">3</div><span class="step-copy">Примите отклик — сразу или дождавшись окна: брокер пришлёт реквизиты, дальше перевод, PDF-чек и «Я оплатил».</span></div>
-          <div class="step"><div class="n">4</div><span class="step-copy">После подтверждения средства уходят на ваш кошелёк — ссылку на транзакцию увидите в заявке.</span></div>
-        </div>
-      </div>
+      ${S.me.isAdmin ? `
+      <button class="btn btn-ghost lc-admin-btn" id="lcOpenAdmin">🛠 <span>Админка и настройки обменника</span></button>` : ''}
       <div class="card">
         <div class="card-title">Связь с нами</div>
         <div class="contacts">
-          ${supportHandle() ? `<a class="contact" href="${esc(supportUrl())}" target="_blank" rel="noopener"><span class="ci">${ICONS.chat}</span><span>Поддержка<small>${esc(supportHandle())} · отвечаем лично</small></span></a>` : ''}
-          <a class="contact" href="${HQ_MAPS}" target="_blank" rel="noopener"><span class="ci">📍</span><span>Штаб-квартира<small>${esc(HQ_ADDRESS)}</small></span></a>
+          <a class="contact" href="${esc(opLink)}" target="_blank" rel="noopener"><span class="ci">🧩</span><span>Оператор<small>${esc(s.operator)}</small></span></a>
+          <a class="contact" href="${esc(s.channel)}" target="_blank" rel="noopener"><span class="ci">📣</span><span>Официальный канал<small>новости и курсы</small></span></a>
+          <a class="contact" href="${esc(s.chat)}" target="_blank" rel="noopener"><span class="ci">💬</span><span>Чат поддержки<small>отвечаем быстро</small></span></a>
         </div>
-        <p class="disclaimer">Канала и общего чата у PRICELEX нет — не поддавайтесь на страницы-двойники. Вопросы и споры решаются через поддержку внутри приложения.</p>
+        <button class="btn btn-ghost" style="margin-top:10px" id="goSupport">${ICONS.chat}<span>Открыть чат поддержки</span></button>
       </div>
-      <div class="card">
-        <details class="rules">
-          <summary><span class="card-title" style="margin:0">Правила платформы</span><span class="rules-toggle">${ICONS.info}<span>Читать</span></span></summary>
-          <div class="rules-body">
-            <div class="rule"><div class="r-n">1. Термины и участники</div>
-              <p>1.1. Платформа — PRICELEX: сервис, который соединяет Пользователя и Брокера, ведёт Заявки и гарантирует сделку общим депозитом брокеров.</p>
-              <p>1.2. Пользователь (Клиент) — кто меняет валюту через Платформу: создаёт Заявку, оплачивает её и получает актив на свой кошелёк.</p>
-              <p>1.3. Брокер — независимый исполнитель из команды Платформы: ведёт Заявку от своего имени и на собственный капитал, принимает оплату и переводит актив Пользователю.</p>
-              <p>1.4. Администрация — команда Платформы: подбирает Брокеров, проверяет оплату, разрешает споры и подтверждает выплаты Брокерам.</p>
-              <p>1.5. Заявка — оформленный обмен: сумма, валюта и адрес получения Пользователя. Гарантийный счёт — счёт Платформы, на котором замораживаются средства Пользователя по активной Заявке. Гарантийный депозит — общий фонд всех Брокеров, которым страхуется каждая сделка.</p>
-            </div>
-            <div class="rule"><div class="r-n">2. Общие положения</div>
-              <p>PRICELEX (далее — «Платформа») выступает посредником, предоставляющим Пользователю доступ к профессиональному опыту независимых брокеров на условиях временной аренды их экспертизы. Брокер сопровождает сделку Пользователя так же, как Пользователь помогает своей бабушке установить мессенджер: объясняет шаги, проверяет реквизиты и доводит операцию до результата. Платформа не является банком, платёжной системой или оператором электронных денежных средств.</p>
-              <p>2.1. Деятельность Платформа ведёт из штаб-квартиры: ${esc(HQ_ADDRESS)} — этот же адрес приведён в контактах приложения. Обращения, вопросы и споры принимаются только через поддержку внутри приложения: вне его Платформа с Пользователем не общается и ничего не запрашивает.</p>
-              <p>2.2. Что получает каждая сторона. Пользователь — живое сопровождение сделки и защиту гарантийным депозитом. Брокер — работу на собственный капитал в рамках своего депозита и вознаграждение по итогам Заявки. Платформа — инфраструктуру Заявок, контроль исполнения и разрешение споров.</p>
-              <p>2.3. Официального канала и общего чата у Платформы нет: любые «канал PRICELEX», «чат сообщества» и рассылки от её имени ведут мошенников.</p>
-              <p>2.4. Доступ открыт по подписке: первые ${accessNow().trialDays} суток — бесплатно, далее минимальный месячный платёж ${fmtRub(accessNow().amountRub)} через Tribute. Одна подписка действует на обе стороны — и на Пользователя, и на Брокера; начатая Заявка доводится до конца без подписки.</p>
-            </div>
-            <div class="rule"><div class="r-n">3. Права и обязанности сторон</div>
-              <p>3.1. Пользователь: указывает достоверные данные и верный адрес получения; самостоятельно сверяет адрес получения (первые и последние шесть символов); оплачивает Заявку в заявленный срок и прикладывает чек; гарантирует законное происхождение средств; хранит ключи, seed-фразы и пароли при себе — Платформа и Брокер их не запрашивают.</p>
-              <p>3.2. Брокер: откликается на Заявку своей ценой из кабинета (в боте или приложении Платформы); сообщает реквизиты для оплаты только внутри Заявки; после подтверждения оплаты переводит актив Пользователю в полном объёме по условиям Заявки; соблюдает конфиденциальность и не выводит общение за пределы инфраструктуры Платформы; отвечает по обязательствам своим депозитом и Гарантийным депозитом.</p>
-              <p>3.3. Платформа: обеспечивает работу инфраструктуры и Гарантийного счёта; подбирает Пользователю Брокера из проверенной команды; проверяет факт оплаты и санкционирует выплату; разрешает споры и компенсирует Пользователю ущерб из Гарантийного депозита, если Брокер не исполнил перевод.</p>
-            </div>
-            <div class="rule"><div class="r-n">4. Заявки и сопровождение</div>
-              <p>4.1. Сделка оформляется Заявкой, в которой Пользователь указывает сумму, валюту и адрес получения. Заявку сопровождает Брокер, чей отклик выбрал Пользователь. Цену за актив называет Брокер в отклике, а Пользователь видит её до подтверждения.</p>
-              <p>4.2. Брокер действует от своего имени как независимый исполнитель. Платформа обеспечивает инфраструктуру, контроль исполнения и разрешение споров.</p>
-              <p>4.3. Реквизиты для оплаты сообщает только Брокер внутри защищённой сессии. Любые реквизиты, полученные из сторонних источников, Платформой не признаются. Реквизиты или адрес изменились в переписке — остановитесь и обратитесь в поддержку приложения.</p>
-              <p>4.4. Каждый шаг Заявки фиксируется в приложении: заявка, чек, ссылка на транзакцию. Эта история служит доказательством при споре.</p>
-            </div>
-            <div class="rule"><div class="r-n">5. Гарантийный (эскроу) счёт и Гарантийный депозит</div>
-              <p>5.1. Средства Пользователя по активной Заявке считаются размещёнными на гарантийном счёте Платформы: они замораживаются на время исполнения и не могут быть использованы ни Брокером, ни третьими лицами.</p>
-              <p>5.2. Администрация Платформы проверяет факт поступления оплаты. Только после подтверждения оплаты средства размораживаются, и Покупателю перечисляется приобретённый актив в полном объёме по условиям Заявки.</p>
-              <p>5.3. Если оплата не поступила в разумный срок, Заявка аннулируется, а заморозка средств снимается без каких-либо удержаний с Пользователя.</p>
-              <p>5.4. Дополнительной защитой служит общий гарантийный депозит всех Брокеров Платформы: его текущий размер — ${depositInlineHtml()}. Если Брокер не исполнил перевод, Платформа компенсирует Пользователю ущерб из этого депозита.</p>
-            </div>
-            <div class="rule"><div class="r-n">6. Вознаграждение Брокера</div>
-              <p>6.1. Курс в приложении — фактический рыночный: Платформа не добавляет к нему наценку или сбор. Вознаграждение Брокера уже содержится в цене его отклика, которую Пользователь видит до подтверждения; скрытых удержаний с Пользователя нет.</p>
-              <p>6.2. Начисленное вознаграждение Брокер вправе запросить к выплате в любое время через официального бота Платформы при накоплении суммы не менее 0,0002 BTC. Выплаты подтверждает Администрация.</p>
-              <p>6.3. Место на площадке Брокеру выдаёт администратор. Брокер пополняет свой депозит через бот на выбранную сумму; после подтверждения администратором Брокер работает с заявками в пределах своего депозита. Сборов за подключение нет; свободную часть депозита Брокер может вывести в любой момент.</p>
-            </div>
-            <div class="rule"><div class="r-n">7. Ответственность сторон</div>
-              <p>7.1. Пользователь гарантирует законное происхождение средств и самостоятельно несёт ответственность за достоверность указанных реквизитов.</p>
-              <p>7.2. Брокер отвечает за добросовестное исполнение Заявки: точность реквизитов, полноту и сроки перевода актива Пользователю.</p>
-              <p>7.3. Платформа отвечает за работу гарантийного счёта и хранение данных в пределах, необходимых для исполнения Заявок. Споры между Пользователем и Брокером разрешает Администрация; её решение по результатам проверки оплаты является окончательным.</p>
-              <p>7.4. Платформа не даёт инвестиционных рекомендаций и не гарантирует доходность каких-либо активов.</p>
-            </div>
-            <div class="rule"><div class="r-n">8. Конфиденциальность и данные</div>
-              <p>8.1. Стороны хранят в тайне данные Заявок и общение внутри них. Брокер не вправе раскрывать данные Пользователя третьим лицам и использовать их вне исполнения Заявки.</p>
-              <p>8.2. Платформа хранит данные в пределах, необходимых для исполнения Заявок и разрешения споров, и не передаёт их третьим лицам, кроме случаев прямого требования закона.</p>
-            </div>
-            <div class="rule"><div class="r-n">9. Заключительные положения</div>
-              <p>9.1. Статус Брокера присваивается Администрацией по итогам рассмотрения заявки с описанием опыта и контактных данных кандидата. Администрация вправе приостановить или прекратить сотрудничество с Брокером при нарушении настоящих Правил.</p>
-              <p>9.2. Используя Платформу, Пользователь и Брокер подтверждают, что ознакомлены с настоящими Правилами и принимают их в полном объёме. Каждая сторона отвечает за свои обязательства в объёме раздела 3: Пользователь — за данные и оплату, Брокер — за исполнение Заявки, Платформа — за гарантийный счёт, контроль и разрешение споров.</p>
-              <p>9.3. Актуальная редакция Правил всегда доступна в этом разделе. Правила применяются к любой Заявке, созданной после их опубликования.</p>
-            </div>
-          </div>
-        </details>
-      </div>
-      <div class="signature">PRICELEX<span>private crypto brokerage · since 2026</span></div>`;
-    // Правила платформы не должны сворачиваться сами: перерисовка (например, после
-    // опроса настроек) возвращает <details> в закрытое состояние, поэтому факт
-    // раскрытия живёт в состоянии приложения и восстанавливается после рендера.
-    const rules = $('#view-info .rules');
-    if (rules) {
-      rules.open = Boolean(S.rulesOpen);
-      rules.addEventListener('toggle', () => { S.rulesOpen = rules.open; });
-    }
+      <div class="card"><div class="about" style="text-align:center;color:var(--mut);font-size:11.5px">VEGA — быстро. Надёжно. Выгодно. ✦</div></div>`;
+    const copy = $('#lcCopyRef');
+    if (copy) copy.addEventListener('click', () => copyText(link, 'Ссылка скопирована'));
+    const goRefs = $('#lcGoRefs');
+    if (goRefs) goRefs.addEventListener('click', () => goTab('refs'));
+    const go = $('#goSupport');
+    if (go) go.addEventListener('click', () => goTab('support'));
+    const openAdmin = $('#lcOpenAdmin');
+    if (openAdmin) openAdmin.addEventListener('click', () => { haptic('light'); openAdminSheet(); });
   }
 
-  /* ---------- отзывы ---------- */
-  const starsHtml = (n, cls = '') => `<span class="stars ${cls}" aria-label="${n} из 5">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= Math.round(n) ? 'on' : ''}">${ICONS.starFill}</i>`).join('')}</span>`;
-  const fmtDay = (ts) => new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
-  const isTypingReview = () => !!(document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('rv-text'));
-  const reviewableOrders = () => S.orders.filter((o) => o.status === 'completed' && !o.review);
-
-  // Отзывы приходят страницами (сервер: 20 свежих, дальше — по курсору next).
-  // Опрос обновляет первую страницу и не теряет то, что догружено «Показать ещё».
-  const olderReview = (a, b) => a.createdAt < b.createdAt || (a.createdAt === b.createdAt && a.id < b.id);
-
-  async function loadReviews() {
-    try {
-      const r = await api('/api/reviews');
-      const fresh = r.reviews || [];
-      const cur = S.reviews;
-      const edge = fresh[fresh.length - 1];
-      const tail = r.hasMore && edge && cur.list.length > fresh.length ? cur.list.filter((x) => olderReview(x, edge)) : [];
-      const next = {
-        list: [...fresh, ...tail],
-        stats: r.stats || { count: 0, avg: 0 },
-        loaded: true,
-        hasMore: tail.length ? cur.hasMore : !!r.hasMore,
-        next: tail.length ? cur.next : r.next || null,
-      };
-      const changed = JSON.stringify(next) !== JSON.stringify(S.reviews);
-      S.reviews = next;
-      if (changed && S.tab === 'reviews' && !isTypingReview()) renderReviews();
-    } catch (e) {
-      // отзывы не критичны для обмена — тихо пропускаем
-    }
-  }
-
-  let reviewsLoadingMore = false;
-  async function loadMoreReviews() {
-    const cur = S.reviews;
-    if (reviewsLoadingMore || !cur.hasMore || !cur.next) return;
-    reviewsLoadingMore = true;
-    const btn = $('#rvMore');
-    if (btn) btn.disabled = true;
-    try {
-      const r = await api('/api/reviews', { query: { before: cur.next } });
-      const seen = new Set(S.reviews.list.map((x) => x.id));
-      const add = (r.reviews || []).filter((x) => !seen.has(x.id));
-      S.reviews.list = [...S.reviews.list, ...add];
-      S.reviews.hasMore = !!r.hasMore;
-      S.reviews.next = r.next || null;
-      if (r.stats) S.reviews.stats = r.stats;
-      // Дописываем карточки в конец, а не перерисовываем экран: лента не прыгает.
-      const box = $('#rvList');
-      if (box && S.tab === 'reviews') box.insertAdjacentHTML('beforeend', add.map(reviewItemHtml).join(''));
-    } catch (e) {
-      toast('Не удалось загрузить отзывы — попробуйте ещё раз');
-    } finally {
-      reviewsLoadingMore = false;
-      syncReviewsMore();
-    }
-  }
-
-  const reviewsMoreHtml = () => {
-    const { list, stats, hasMore } = S.reviews;
-    if (!hasMore) return '';
-    const left = Math.max(0, (Number(stats.count) || 0) - list.length);
-    return `<button class="btn btn-ghost rv-more" id="rvMore" type="button"><span>Показать ещё</span>${left ? `<small class="rv-more-left">${left}</small>` : ''}</button>`;
+  /* ---------- админка в приложении (только для оператора VEGA) ---------- */
+  S.adminOpen = S.adminOpen || false;
+  S.admin = S.admin || null;
+  let adminSheetTimer = null;
+  let adminSheetFrames = [];
+  let adminTab = S.adminTab || 'crypto';
+  const CRYPTO_DIRS = [
+    ['BTC', 'Bitcoin', 'BTC · ведущая сеть', 'btc', '₿'],
+    ['LTC', 'Litecoin', 'LTC · быстрые тройки', 'ltc', 'Ł'],
+  ];
+  const GIFT_DIR = [
+    ['GOOGLE_USD', 'Google Gift Card', 'США · USD', 'google', BRAND_MARKS.google],
+    ['ITUNES_USD', 'iTunes Gift Card', 'США · USD', 'itunes', BRAND_MARKS.itunes],
+    ['XBOX_USD', 'Xbox Gift Card', 'США · USD', 'xbox', BRAND_MARKS.xbox],
+    ['APPLE_STORE_USD', 'Apple Store Gift Card', 'США · USD', 'apple', BRAND_MARKS.apple],
+  ];
+  const giftRateOf = (fee) => {
+    const A = S.admin || {};
+    const currentRate = Number(A.rateGOOGLEUSD) || 0;
+    const currentFee = Number(A.giftPercent) || 0;
+    if (!(currentRate > 0)) return 0;
+    const spotRate = currentRate / (1 - currentFee / 100);
+    const p = Number(fee);
+    const safe = Number.isFinite(p) ? Math.min(Math.max(p, 0), 50) : 0;
+    return spotRate * (1 - safe / 100);
   };
-
-  function syncReviewsMore() {
-    const wrap = $('#rvMoreWrap');
-    if (!wrap) return;
-    wrap.innerHTML = reviewsMoreHtml();
-    const btn = $('#rvMore');
-    if (btn) btn.addEventListener('click', loadMoreReviews);
+  const giftPreviewText = (fee) => {
+    const rate = giftRateOf(fee);
+    const out = floorTo(10 * rate, 8);
+    return `Карта $10 → ${fmtCrypto(out, 'BTC', 8)}`;
+  };
+  function syncAdminSession() {
+    const A = S.admin || {};
+    const on = !!A.online;
+    const sheet = $('#adminSheet');
+    if (sheet) sheet.classList.toggle('trading-on', on);
+    const block = $('#admSession');
+    if (block) block.classList.toggle('on', on);
+    if (block) block.classList.toggle('off', !on);
+    const title = $('#admSessionTitle');
+    if (title) title.textContent = on ? 'Торги открыты' : 'Торги закрыты';
+    const sub = $('#admSessionSub');
+    if (sub) sub.textContent = on
+      ? 'Направления подсвечены — клиенты могут обменивать'
+      : 'Клиенты видят «обмен временно недоступен»';
+    const btn = $('#admSessionBtn');
+    if (btn) btn.innerHTML = on ? '🔴 Закрыть торги' : '🟢 Открыть торги';
   }
 
-  function reviewFormHtml(p, orders) {
-    const d = S.reviewDraft;
-    if (!orders.some((o) => o.id === d.orderId)) d.orderId = orders[0] ? orders[0].id : null;
-    const select = orders.length > 1
-      ? `<label class="f-label"><span>Обмен</span></label><select class="rv-select" id="${p}Order">${orders.map((o) => `<option value="${o.id}" ${o.id === d.orderId ? 'selected' : ''}>#${o.id} · ${fmtRub(o.payRub || o.rub)} → ${fmtCrypto(o.crypto, o.currency)} · ${fmtDate(o.createdAt)}</option>`).join('')}</select>`
-      : '';
-    return `
-      <div class="rv-form">
-        ${select}
-        <div class="rv-stars" id="${p}Stars" role="radiogroup" aria-label="Оценка">
-          ${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-n="${n}" class="${n <= d.rating ? 'on' : ''}" aria-label="Оценка ${n}">${ICONS.starFill}</button>`).join('')}
-        </div>
-        <textarea id="${p}Text" class="rv-text" rows="3" maxlength="1000" placeholder="Как прошла сделка? Что стоит знать другим клиентам?">${esc(d.text)}</textarea>
-        <div class="f-err" id="${p}Err"></div>
-        <button class="btn btn-primary" id="${p}Send">${ICONS.check}<span>Отправить отзыв</span></button>
-        <div class="f-hint">Оставить отзыв можно один раз на каждый обмен.</div>
-      </div>`;
+  function syncAdminTabs() {
+    document.querySelectorAll('#admTabs .adm-tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === adminTab));
+    document.querySelectorAll('#adminSheet .adm-pane').forEach((p) => p.classList.toggle('hidden', p.dataset.pane !== adminTab));
   }
-
-  function wireReviewForm(p, getOrderId) {
-    const stars = $('#' + p + 'Stars');
-    if (!stars) return;
-    stars.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
-      S.reviewDraft.rating = Number(b.dataset.n);
-      haptic('light');
-      stars.querySelectorAll('button').forEach((x) => x.classList.toggle('on', Number(x.dataset.n) <= S.reviewDraft.rating));
-    }));
-    const text = $('#' + p + 'Text');
-    text.addEventListener('input', () => { S.reviewDraft.text = text.value; });
-    const sel = $('#' + p + 'Order');
-    if (sel) sel.addEventListener('change', () => { S.reviewDraft.orderId = Number(sel.value); });
-    $('#' + p + 'Send').addEventListener('click', async () => {
-      const err = $('#' + p + 'Err');
-      const orderId = sel ? Number(sel.value) : getOrderId();
-      const body = { orderId, rating: S.reviewDraft.rating, text: text.value.trim(), startParam };
-      if (body.text.length < 5) { err.textContent = 'Напишите хотя бы пару слов (от 5 символов).'; haptic('error'); return; }
-      const btn = $('#' + p + 'Send');
+  function openAdminSheet() {
+    const sheet = $('#adminSheet');
+    if (!sheet) return;
+    if (adminSheetTimer) { clearTimeout(adminSheetTimer); adminSheetTimer = null; }
+    sheet.classList.remove('hidden');
+    sheet.setAttribute('aria-hidden', 'false');
+    adminSheetFrames = [requestAnimationFrame(() => { adminSheetFrames[1] = requestAnimationFrame(() => sheet.classList.add('open')); })];
+    document.body.classList.add('sheet-lock');
+    S.adminOpen = true;
+    syncAdminTabs();
+    syncTgBack();
+    loadAdminSettings();
+  }
+  function closeAdminSheet() {
+    const sheet = $('#adminSheet');
+    S.adminOpen = false;
+    document.body.classList.remove('sheet-lock');
+    adminSheetFrames.forEach((f) => { try { cancelAnimationFrame(f); } catch (e) {} });
+    adminSheetFrames = [];
+    if (!sheet || sheet.classList.contains('hidden')) { syncTgBack(); return; }
+    sheet.classList.remove('open');
+    sheet.setAttribute('aria-hidden', 'true');
+    if (adminSheetTimer) clearTimeout(adminSheetTimer);
+    adminSheetTimer = setTimeout(() => sheet.classList.add('hidden'), 320);
+    syncTgBack();
+  }
+  function renderAdminDirs(container, keys) {
+    const A = S.admin || {};
+    container.innerHTML = keys
+      .map(([key, label, sub, coin, icon]) => `<button class="adm-toggle ${A.directions && A.directions[key] ? 'on' : ''}" data-dir="${key}" role="switch" aria-checked="${A.directions && A.directions[key] ? 'true' : 'false'}"><span class="adm-dir"><span class="coin-ic ${esc(coin)} adm-coin" aria-hidden="true">${icon}</span><span class="adm-dir-text">${esc(label)}<small>${esc(sub)}</small></span></span><span class="adm-switch" aria-hidden="true"></span></button>`)
+      .join('');
+    container.querySelectorAll('.adm-toggle').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        const key = btn.dataset.dir;
+        const next = !(S.admin && S.admin.directions && S.admin.directions[key]);
+        btn.disabled = true;
+        haptic('light');
+        try {
+          const r = await api('/api/admin/settings', { method: 'POST', body: { enabled: { [key]: next } } });
+          S.admin = r.admin;
+          S.settings = r.settings;
+          renderAdminDirs(container, keys);
+          renderExchange();
+          const productLabel = GIFT_DIR.find(([giftKey]) => giftKey === key)?.[1];
+          toast(next ? `${productLabel || key} включена ✅` : `${productLabel || key} выключена ⛔`);
+        } catch (e) {
+          toast(e.message || 'Не удалось переключить направление');
+          btn.disabled = false;
+        }
+      })
+    );
+  }
+  function renderAdmin() {
+    const A = S.admin;
+    if (!A) return;
+    syncAdminSession();
+    // Валюты
+    renderAdminDirs($('#admCryptoDirs'), CRYPTO_DIRS);
+    // Карты
+    renderAdminDirs($('#admGiftDirs'), GIFT_DIR);
+    $('#admGiftFee').value = A.giftPercent;
+    $('#admGiftErr').textContent = '';
+    updateGiftPreview();
+    // Чат
+    $('#admChatLink').value = A.chat || '';
+    $('#admChatErr').textContent = '';
+  }
+  async function loadAdminSettings(force = false) {
+    if (S.admin && !force) { renderAdmin(); return; }
+    try {
+      const r = await api('/api/admin/settings');
+      S.admin = r.admin;
+      S.settings = r.settings;
+      renderAdmin();
+    } catch (e) {
+      toast('Не удалось загрузить настройки администратора');
+    }
+  }
+  async function saveAdmin(body, errEl, okText) {
+    errEl.textContent = '';
+    try {
+      const r = await api('/api/admin/settings', { method: 'POST', body });
+      S.admin = r.admin;
+      S.settings = r.settings;
+      renderAdmin();
+      renderExchange();
+      toast(okText);
+      return true;
+    } catch (e) {
+      errEl.textContent = e.message;
+      toast(e.message);
+      return false;
+    }
+  }
+  function updateGiftPreview() {
+    const el = $('#admGiftPreview');
+    if (!el) return;
+    el.textContent = giftPreviewText($('#admGiftFee').value);
+  }
+  function wireAdminSheet() {
+    document.querySelectorAll('#admTabs .adm-tab').forEach((b) =>
+      b.addEventListener('click', () => { adminTab = b.dataset.tab; haptic('light'); syncAdminTabs(); })
+    );
+    const closeBtn = $('#adminSheetClose');
+    if (closeBtn) closeBtn.addEventListener('click', () => { haptic('light'); closeAdminSheet(); });
+    const overlay = $('#adminSheetOverlay');
+    if (overlay) overlay.addEventListener('click', closeAdminSheet);
+    $('#admGiftSave').addEventListener('click', (e) => {
+      e.currentTarget.disabled = true;
+      haptic('medium');
+      const fee = $('#admGiftFee').value;
+      saveAdmin(
+        { giftPercent: fee === '' ? 0 : Number(fee) },
+        $('#admGiftErr'),
+        'Настройки карты сохранены ✅'
+      ).finally(() => { $('#admGiftSave').disabled = false; });
+    });
+    $('#admGiftFee').addEventListener('input', updateGiftPreview);
+    $('#admSessionBtn').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const opening = !(S.admin && S.admin.online);
       btn.disabled = true;
       haptic('medium');
       try {
-        const r = await api('/api/reviews', { method: 'POST', body });
-        const i = S.orders.findIndex((x) => x.id === r.order.id);
-        if (i >= 0) S.orders[i] = r.order; else S.orders.unshift(r.order);
-        if (S.order && S.order.id === r.order.id) S.order = r.order;
-        // Отзыв сразу виден автору в общем списке, а сводка пересчитывается по всей
-        // витрине (распределение с сервера), а не по одной загруженной странице.
-        S.reviews.list = [r.review, ...S.reviews.list.filter((x) => x.id !== r.review.id)];
-        const st = S.reviews.stats || {};
-        if (st.dist) {
-          const dist = { ...st.dist, [r.review.rating]: (Number(st.dist[r.review.rating]) || 0) + 1 };
-          const count = (Number(st.count) || 0) + 1;
-          const sum = [1, 2, 3, 4, 5].reduce((a, k) => a + k * (Number(dist[k]) || 0), 0);
-          S.reviews.stats = { count, avg: Math.round((sum / count) * 10) / 10, dist };
+        const r = await api('/api/admin/settings', { method: 'POST', body: { online: opening } });
+        S.admin = r.admin;
+        S.settings = r.settings;
+        renderAdmin();
+        renderExchange();
+        if (opening) {
+          const n = Number(r.announced) || 0;
+          toast(n > 0 ? `Торги открыты 🟢 — объявление отправлено ${n} клиентам ✅` : 'Торги открыты 🟢 — обмен доступен всем ✅');
         } else {
-          const n = S.reviews.list.length;
-          S.reviews.stats = { count: n, avg: Math.round((S.reviews.list.reduce((a, x) => a + x.rating, 0) / n) * 10) / 10 };
+          toast('Торги закрыты 🔴 — приём заявок остановлен');
         }
-        S.reviewDraft = { orderId: null, rating: 5, text: '' };
-        haptic('heavy');
-        toast('Спасибо! Ваш отзыв опубликован');
-        renderOrderStage();
-        if (S.tab === 'reviews') renderReviews();
-      } catch (e) {
-        err.textContent = e.message;
-        haptic('error');
+      } catch (err) {
+        toast(err.message || 'Не удалось изменить статус торгов');
+      } finally {
         btn.disabled = false;
       }
     });
-  }
-
-  function reviewCtaHtml(o) {
-    if (o.review) {
-      return `<div class="card rv-cta done"><div class="rv-cta-t">${ICONS.starFill}<span>Спасибо! Ваш отзыв опубликован в разделе «Отзывы»</span></div></div>`;
-    }
-    return `<div class="card rv-cta"><div class="card-title">Оцените работу брокера</div>${reviewFormHtml('stRv', [o])}</div>`;
-  }
-
-  /* Демо-оператор: карточка ответа площадки прямо в списке отзывов.
-     Работает там, где prompt() недоступен (Telegram WebView, iframe). */
-  function demoReplyPanelHtml() {
-    const latest = (S.reviews.list || []).find((x) => x.id === S.demoReplyFor) || (S.reviews.list || [])[0];
-    if (!latest) return '';
-    const current = (latest.reply && latest.reply.text) || '';
-    return `
-      <div class="card demo-reply">
-        <div class="card-title">Оператор · ответ на отзыв #${latest.id}</div>
-        <div class="rv-who-row"><b>${esc(latest.name)}</b>${starsHtml(latest.rating)}</div>
-        <textarea id="demoReplyText" class="rv-text" rows="3" maxlength="1000" placeholder="Ответ от имени PRICELEX…">${esc(current)}</textarea>
-        <div class="demo-reply-row">
-          <button class="btn btn-primary btn-sm" id="demoReplySave">${ICONS.check}<span>Опубликовать</span></button>
-          <button class="btn btn-ghost btn-sm" id="demoReplyRemove"><span>Снять ответ</span></button>
-          <button class="btn btn-ghost btn-sm" id="demoReplyClose"><span>Закрыть</span></button>
-        </div>
-      </div>`;
-  }
-
-  function wireDemoReply() {
-    const save = $('#demoReplySave');
-    if (!save) return;
-    const close = () => { S.demoReplyFor = null; renderReviews(); };
-    save.addEventListener('click', async () => {
-      const ta = $('#demoReplyText');
-      const text = String(ta ? ta.value : '').trim();
-      if (!text) { ta && ta.focus(); return toast('Напишите текст ответа или снимите его'); }
-      save.disabled = true;
-      try {
-        await api(`/api/admin/review/${S.demoReplyFor}/reply`, { method: 'POST', body: { text } });
-        await loadReviews();
-        toast('Ответ PRICELEX опубликован (демо)');
-      } finally {
-        close();
-      }
+    $('#admChatLink').addEventListener('input', () => { $('#admChatErr').textContent = ''; });
+    $('#admChatSave').addEventListener('click', (e) => {
+      e.currentTarget.disabled = true;
+      haptic('medium');
+      const chat = ($('#admChatLink').value || '').trim();
+      saveAdmin({ chat }, $('#admChatErr'), 'Ссылка на чат сохранена — уже видна всем ✅')
+        .finally(() => { $('#admChatSave').disabled = false; });
     });
-    $('#demoReplyRemove').addEventListener('click', async () => {
-      await api(`/api/admin/review/${S.demoReplyFor}/reply`, { method: 'POST', body: { text: '' } });
-      await loadReviews();
-      toast('Ответ снят (демо)');
-      close();
-    });
-    $('#demoReplyClose').addEventListener('click', close);
   }
 
-  function renderReviews() {
-    const v = $('#view-reviews');
-    if (!v) return;
-    const { list, stats, loaded } = S.reviews;
-    const eligible = reviewableOrders();
-    const hasCompleted = S.orders.some((o) => o.status === 'completed');
-    // Распределение — по всей витрине (stats.dist с сервера); старый ответ без dist —
-    // по загруженному списку.
-    const dist = stats.dist && stats.count ? stats.dist : null;
-    const total = dist ? stats.count : list.length;
-    const distribution = [5, 4, 3, 2, 1].map((rating) => {
-      const count = dist ? Number(dist[rating]) || 0 : list.filter((review) => Number(review.rating) === rating).length;
-      const percent = total ? Math.round((count / total) * 100) : 0;
-      return `<div class="rv-dist-row"><span class="rv-dist-score">${rating} ${ICONS.starFill}</span><span class="rv-dist-track"><i style="width:${percent}%"></i></span><span class="rv-dist-percent">${percent}%</span></div>`;
-    }).join('');
-    v.innerHTML = `
-      <section class="card editorial rv-hero">
-        <div class="ed-art" style="background-image:url('/img/reputation.jpg')" aria-hidden="true"></div>
-        <div class="ed-body">
-          <div class="kicker gold">Репутация</div>
-          <div class="rv-score">
-            <div class="metric">${stats.count ? stats.avg.toFixed(1) : '—'}</div>
-            <div>${starsHtml(stats.avg || 0, 'lg')}<div class="metric-sub">${stats.count ? `${stats.count} ${stats.count % 10 === 1 && stats.count % 100 !== 11 ? 'отзыв' : [2, 3, 4].includes(stats.count % 10) && ![12, 13, 14].includes(stats.count % 100) ? 'отзыва' : 'отзывов'} · только после реального обмена` : 'Отзывы только от клиентов, завершивших обмен'}</div></div>
-          </div>
-          <div class="rv-breakdown" aria-label="Распределение оценок">${distribution}</div>
-        </div>
-      </section>
-      ${eligible.length ? `<div class="card"><div class="card-title">Ваш отзыв</div>${reviewFormHtml('tabRv', eligible)}</div>` : ''}
-      ${!eligible.length ? `<div class="card rv-cta done"><div class="rv-cta-t">${ICONS.star}<span>${hasCompleted ? 'Спасибо — вы уже оценили свои обмены' : 'Оставить отзыв можно после завершённого обмена'}</span></div></div>` : ''}
-      ${S.isDemo && S.demoReplyFor ? demoReplyPanelHtml() : ''}
-      <div class="card-title" style="padding:18px 4px 11px">Отзывы клиентов</div>
-      <div id="rvList">${
-        list.length
-          ? list.map(reviewItemHtml).join('')
-          : `<div class="card"><div class="empty"><div class="e-ic">✦</div>${loaded ? 'Отзывов пока нет — станьте первым, кто оценит PRICELEX.' : 'Загружаем отзывы…'}</div></div>`
-      }</div>
-      <div class="rv-more-wrap" id="rvMoreWrap"></div>`;
-    syncReviewsMore();
-    wireReviewForm('tabRv', () => (eligible[0] ? eligible[0].id : null));
-    wireDemoReply();
-  }
-
-  function reviewItemHtml(r) {
-    return `
-            <article class="card rv-item">
-              <div class="rv-top"><div class="rv-av">${esc((r.name || 'К').trim().charAt(0).toUpperCase())}</div><div class="rv-who"><b>${esc(r.name)}</b><span>${esc(fmtDay(r.createdAt))}</span></div>${starsHtml(r.rating)}</div>
-              <p class="rv-body">${esc(r.text).replace(/\n/g, '<br>')}</p>
-              ${r.reply && r.reply.text ? `<div class="rv-reply"><div class="rv-reply-h">Ответ PRICELEX<span>${esc(fmtDay(r.reply.at))}</span></div><p>${esc(r.reply.text).replace(/\n/g, '<br>')}</p></div>` : ''}
-            </article>`;
+  // Переключение вкладки нижнего меню (для кнопок внутри экранов).
+  function goTab(tab) {
+    S.tab = tab;
+    haptic('light');
+    document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
+    $('#view-' + tab).classList.remove('hidden');
+    renderNav();
+    if (tab === 'history') renderHistory();
+    if (tab === 'refs') renderRefs();
+    if (tab === 'profile') renderProfile();
+    if (tab === 'support') renderSupport();
+    syncTgBack();
   }
 
   /* ---------- поддержка чат ---------- */
   function renderSupport() {
     const v = $('#view-support');
-    const activeOrder = S.order;
-    const bannerHtml = activeOrder ? `
-      <div class="support-order-banner">
-        <span class="sob-shield">🛡️</span>
-        <div class="sob-text">
-          <b>Сделка #${activeOrder.id} · Брокер: ${esc(activeOrder.broker || 'назначается')}</b>
-          <span>Администратор подключен к чату. Брокеры работают под гарантией общего депозита — безопасность сделки застрахована платформой.</span>
-        </div>
-      </div>
-    ` : '';
     v.innerHTML = `
       <div class="card">
         <div class="card-title">Чат поддержки</div>
-        ${bannerHtml}
-        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:12px">Задайте вопрос прямо здесь — администратор на связи.${supportHandle() ? ` Или напишите напрямую в Telegram: ${supportLinkHtml()}.` : ''}</div>
+        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:10px">Задайте вопрос оператору — отвечаем в реальном времени. Обычно отвечаем за 1–3 минуты.</div>
         <div class="chat-box" id="chatBox">
-          <div class="chat-empty" id="chatEmpty"><div class="e-ic">💬</div>Напишите сообщение — мы на связи 24/7</div>
+          <div class="chat-empty" id="chatEmpty">Напишите сообщение — мы на связи 24/7</div>
           <div class="chat-list" id="chatList"></div>
         </div>
         <div class="chat-input">
-          <textarea id="chatInput" placeholder="Напишите сообщение администратору..." rows="1" maxlength="2000"></textarea>
+          <textarea id="chatInput" placeholder="Напишите сообщение..." rows="1" maxlength="2000"></textarea>
           <button class="btn btn-primary btn-sm" id="btnSendChat">${ICONS.send}</button>
         </div>
-        <div class="f-hint" style="margin-top:9px">Поддержка отвечает в этом чате${supportHandle() ? ' и в Telegram' : ''}. Не делитесь приватными ключами.</div>
+        <div class="f-hint" style="margin-top:8px">Поддержка отвечает в этом чате и в Telegram. Не делитесь приватными ключами.</div>
       </div>
     `;
     const input = $('#chatInput');
@@ -3031,7 +1598,7 @@
     if (empty) empty.style.display = 'none';
     list.innerHTML = S.support.map((m) => {
       const isMe = m.from === 'user';
-      return `<div class="msg ${isMe ? 'me' : 'them'}"><div class="msg-bubble">${esc(m.text).replace(/\n/g, '<br>')}</div><div class="msg-time">${fmtDate(m.at)} · ${isMe ? 'Вы' : 'Поддержка'}</div></div>`;
+      return `<div class="msg ${isMe ? 'me' : 'them'}"><div class="msg-bubble">${esc(m.text).replace(/\n/g,'<br>')}</div><div class="msg-time">${fmtDate(m.at)} · ${isMe ? 'Вы' : 'Поддержка'}</div></div>`;
     }).join('');
     const box = $('#chatBox');
     if (box) box.scrollTop = box.scrollHeight;
@@ -3075,48 +1642,8 @@
     }
   }
 
-  /* ---------- плавающая кнопка чата ---------- */
-  // Диалоговая плашка в правом нижнем углу — над таб-баром и safe-area (на
-  // саб-страницах без таб-бара опускается к краю). Строки не переносятся:
-  // плашка растёт по тексту. Пока она на экране, у страницы запас снизу
-  // (body.has-fab), чтобы последний блок прокручивался выше плашки.
-  // Не появляется сразу — только через 20 секунд, когда пользователь уже
-  // осмотрелся («пинг»). Клик открывает чат поддержки; внутри самого чата
-  // плашка уезжает — дублировать себя нечего.
-  const SUPPORT_FAB_DELAY = 20000;
-  function mountSupportFab() {
-    if ($('#supportFab')) return;
-    const el = document.createElement('button');
-    el.type = 'button';
-    el.id = 'supportFab';
-    el.className = 'support-fab';
-    el.setAttribute('aria-label', 'Открыть чат поддержки');
-    el.innerHTML = `
-      <span class="sf-tail" aria-hidden="true"></span>
-      <span class="sf-ic">${ICONS.chat}</span>
-      <span class="sf-copy"><b>Нужна помощь?</b><small>Открыть чат поддержки</small></span>`;
-    el.addEventListener('click', () => { haptic('light'); goTab('support'); });
-    document.body.appendChild(el);
-    updateSupportFab();
-  }
-  function updateSupportFab() {
-    const el = $('#supportFab');
-    if (!el) return;
-    const shown = Boolean(S.supportFabReady) && S.tab !== 'support';
-    el.classList.toggle('show', shown);
-    document.body.classList.toggle('has-fab', shown);
-  }
-  function armSupportFab() {
-    mountSupportFab();
-    setTimeout(() => {
-      S.supportFabReady = true;
-      updateSupportFab();
-      if (!reducedMotion()) haptic('soft'); // тихий «пинг»: помощь дала о себе знать
-    }, SUPPORT_FAB_DELAY);
-  }
-
   function renderDemoAdmin() {
-    if (!S.isDemo) return;
+    if (!S.isDemo || !(S.me && S.me.isAdmin)) return;
     let el = $('#demoAdmin');
     if (!el) {
       el = document.createElement('button');
@@ -3126,47 +1653,32 @@
       document.body.appendChild(el);
     }
     el.onclick = async () => {
-      if (S.tab === 'reviews') {
-        const r = await api('/api/admin/reviews/approve-pending', { method: 'POST' });
-        const m = await api('/api/me');
-        S.orders = m.orders;
-        await loadReviews();
-        if (r.approved) toast(`Оператор одобрил отзывов: ${r.approved} (демо)`);
-        const latest = (S.reviews.list || [])[0];
-        if (!latest) {
-          renderReviews();
-          return toast('Новых отзывов для оператора нет (демо)');
-        }
-        // Ответ собирается в карточке внутри списка отзывов: prompt() в Telegram
-        // и во встроенных WebView блокируется, и ответ площадки просто не появлялся.
-        S.demoReplyFor = latest.id;
-        renderReviews();
-        return;
-      }
       if (!S.order) return toast('Сначала создайте заявку на обмен');
       const o = S.order;
       haptic('medium');
-      if (o.status === 'new') {
-        if (!o.broker) {
-          let r = null;
-          try {
-            r = await api(`/api/admin/order/${o.id}/broker`, { method: 'POST' });
-          } catch {
-            r = await api(`/api/order/${o.id}/assign-broker`, { method: 'POST' });
-          }
-          S.order = r.order;
-          const idx = S.orders.findIndex((x) => x.id === r.order.id);
-          if (idx >= 0) S.orders[idx] = r.order;
-          renderOrderStage();
-          toast(`Брокер ${r.order.broker} подобран (демо)`);
-        } else {
-          const r = await api(`/api/admin/order/${o.id}/req`, { method: 'POST' });
-          S.order = r.order;
-          const idx = S.orders.findIndex((x) => x.id === r.order.id);
-          if (idx >= 0) S.orders[idx] = r.order;
-          renderOrderStage();
-          toast('Оператор выдал реквизиты (демо)');
-        }
+      if (o.status === 'new' && isGiftOrder(o)) {
+        // Демо: оператор подключается к заявке — после этого клиент может отправить код.
+        const r = await api(`/api/admin/order/${o.id}/connect`, { method: 'POST' });
+        S.order = r.order;
+        renderOrderStage();
+        toast('Оператор подключился — клиент может отправить код (демо)');
+      } else if (o.status === 'details' && isGiftOrder(o)) {
+        toast('Оператор на связи — ждём код карты от клиента');
+      } else if (o.status === 'new' && !(o.payRub || o.rub)) {
+        const v = prompt('Сумма к оплате в рублях (на что соглашается клиент):', '5 000');
+        const rub = v === null ? null : parseFloat(String(v).replace(/\s/g, '').replace(',', '.'));
+        if (!(rub > 0)) { toast('Сумма отменена или некорректна'); return; }
+        const r = await api(`/api/admin/order/${o.id}/quote`, { method: 'POST', body: { rub } });
+        S.order = r.order;
+        renderOrderStage();
+        toast('Сумма отправлена клиенту на согласование (демо)');
+      } else if (o.status === 'new') {
+        const r = await api(`/api/admin/order/${o.id}/req`, { method: 'POST' });
+        S.order = r.order;
+        renderOrderStage();
+        toast('Оператор выдал реквизиты (демо)');
+      } else if (o.status === 'quote') {
+        toast('Сумма у клиента на согласовании — жмём «Согласен» внизу заявки');
       } else if (o.status === 'paid') {
         const r = await api(`/api/admin/order/${o.id}/confirm`, { method: 'POST' });
         S.order = r.order;
@@ -3193,17 +1705,6 @@
     $('#syncStatus').classList.toggle('hidden', !message);
   }
 
-  /* ---------- история курса ---------- */
-  async function loadRateHistory() {
-    try {
-      const r = await api('/api/rates/history', { query: { hours: 168 } });
-      S.history.points = Array.isArray(r.points) ? r.points : [];
-      if (S.tab === 'exchange') renderHero();
-    } catch (e) {
-      S.history.points = [];
-    }
-  }
-
   async function pollOrder() {
     const current = S.order;
     if (!current || TERMINAL.includes(current.status)) {
@@ -3217,7 +1718,6 @@
             const i = S.orders.findIndex((o) => o.id === order.id);
             if (i >= 0) S.orders[i] = order; else S.orders.unshift(order);
             renderOrderStage();
-            if (S.tab === 'exchange' && !S.orderOpen) renderExchange();
           }
         } catch {}
       }
@@ -3227,15 +1727,11 @@
       const { order } = await api('/api/order/' + current.id);
       if (S.order !== current) return;
       syncStatus();
-      // Пока идёт приём откликов, список предложений тянем вместе с заявкой.
-      if (order.status === 'collecting') loadBids(order);
-      else stopOfferTicker();
       if (JSON.stringify(order) !== JSON.stringify(current)) {
         S.order = order;
         const i = S.orders.findIndex((o) => o.id === order.id);
         if (i >= 0) S.orders[i] = order; else S.orders.unshift(order);
         renderOrderStage();
-        if (S.tab === 'exchange' && !S.orderOpen) renderExchange();
         if (order.status === 'completed') haptic('heavy');
       }
     } catch (e) {
@@ -3246,34 +1742,24 @@
   async function pollSettings() {
     const s = await api('/api/settings');
     if (JSON.stringify(s) !== JSON.stringify(S.settings)) {
-      const rateChanged = !S.settings || S.settings.rateUpdatedAt !== s.rateUpdatedAt;
       S.settings = s;
       renderHeader();
       renderAnnounce();
       renderFormMeta();
-      if (S.tab === 'exchange') renderHero();
       if (S.tab === 'refs') renderRefs();
-      if (S.tab === 'info') renderInfo();
-      if (rateChanged) loadRateHistory();
+      if (S.tab === 'profile') renderProfile();
     }
   }
 
-  async function pollReviews() {
-    if (S.tab !== 'reviews') return;
-    await loadReviews();
-  }
-
   async function pollProfile() {
-    if (!['history', 'refs', 'reviews', 'profile'].includes(S.tab)) return;
+    if (S.tab !== 'history' && S.tab !== 'refs' && S.tab !== 'profile') return;
     const m = await api('/api/me');
-    const ordersChanged = JSON.stringify(m.orders) !== JSON.stringify(S.orders);
     S.orders = m.orders;
     S.me = m.me;
     if (!S.order) {
       const act = S.orders.find((o) => !TERMINAL.includes(o.status));
       if (act) {
         S.order = act;
-        S.orderOpen = true;
         $('#exForm').classList.add('hidden');
         $('#exOrder').classList.remove('hidden');
         renderOrderStage();
@@ -3282,34 +1768,16 @@
     if (S.tab === 'history') renderHistory();
     else if (S.tab === 'refs') renderRefs();
     else if (S.tab === 'profile') renderProfile();
-    else if (S.tab === 'reviews' && ordersChanged && !isTypingReview()) renderReviews();
-  }
-
-  // Микро-параллакс: глобальная переменная --sy гоняет фоновые кадры (CSS).
-  function initParallax() {
-    if (typeof requestAnimationFrame !== 'function') return;
-    const root = document.documentElement;
-    let queued = false;
-    const upd = () => {
-      queued = false;
-      root.style.setProperty('--sy', String(Math.round(window.scrollY || 0)));
-    };
-    window.addEventListener('scroll', () => {
-      if (!queued) { queued = true; requestAnimationFrame(upd); }
-    }, { passive: true });
-    upd();
   }
 
   function startPolling() {
     const running = new Set();
-    const pollBroker = () => (S.tab === 'broker' && S.brokerApp && S.brokerApp.status === 'pending' ? loadBrokerStatus() : Promise.resolve());
-    const pollOffers = () => (S.tab === 'exchange' && !isOrderPage() ? loadOffers() : Promise.resolve());
-    const refresh = () => Promise.all([pollOrder, pollSettings, pollProfile, pollReviews, () => pollSupport(false), pollBroker, pollOffers].map(async (poll) => {
+    const refresh = () => Promise.all([pollOrder, pollSettings, pollProfile, () => pollSupport(false)].map(async (poll) => {
       if (typeof poll !== 'function') return;
       if (running.has(poll)) return;
       running.add(poll);
       try { await poll(); }
-      catch (e) { console.warn('[PRICELEX] Обновление не удалось:', e.message); }
+      catch (e) { console.warn('[VEGA] Обновление не удалось:', e.message); }
       finally { running.delete(poll); }
     }));
     setInterval(refresh, 3000);
@@ -3317,95 +1785,29 @@
     window.addEventListener('online', refresh);
     window.addEventListener('pageshow', refresh);
     if (tg && tg.onEvent) tg.onEvent('activated', refresh);
-    window.addEventListener('resize', () => { if (S.tab === 'exchange') renderHero(); if (S.tab === 'history') renderHistory(); });
   }
 
-  /* ---------- «дзынь» кассы и отклик на прелоадинге ---------- */
-  // Приложение просыпается звуком кассы: CC0-запись «Cash Register Fake»
-  // (CapsLok, freesound.org/s/184438 — public/sfx/CREDITS.md), 1.5 с, 18 КБ.
-  // Тактильный рисунок идёт в такт записи: мягкий толчок — ход ящика («ка»),
-  // чёткий удар через KACHING_BELL_MS — колокольчик («дзынь»), лёгкий отклик —
-  // на готовности. Импульсов «под луч» по-прежнему нет: блик с герба убран.
-  // В Telegram — HapticFeedback, в обычном браузере — navigator.vibrate;
-  // при prefers-reduced-motion вибрации нет вовсе (звук — не движение, он
-  // остаётся).
-  // Звук интерфейса не должен глушить музыку пользователя: на iOS 17+
-  // audioSession переводится в 'ambient' — «дзынь» подмешивается к плееру и
-  // молчит при беззвучном режиме. WebView Telegram играет звук без жеста;
-  // браузер, который так не разрешает, получает «дзынь» на первом касании,
-  // пока логотип ещё на экране.
-  const KACHING_SRC = '/sfx/kaching.mp3';
-  const KACHING_AT = 140; // старт записи — вместе с мягким толчком
-  const KACHING_BELL_MS = 280; // колокольчик в записи звучит через 0.28 с
-  let kachingAudio = null;
-  let kachingOnTap = null;
-  function prepareKaching() {
-    if (isTestEnv || typeof window.Audio !== 'function') return null;
-    try {
-      if (navigator.audioSession && navigator.audioSession.type !== 'ambient') navigator.audioSession.type = 'ambient';
-    } catch (e) { /* старые движки без Audio Session API */ }
-    try {
-      kachingAudio = new window.Audio(KACHING_SRC);
-      kachingAudio.preload = 'auto';
-      kachingAudio.volume = 0.7;
-    } catch (e) { kachingAudio = null; }
-    return kachingAudio;
+  // Системная кнопка «назад» в Telegram и Escape на внешней клавиатуре.
+  if (tg && tg.BackButton && tg.BackButton.onClick) {
+    try { tg.BackButton.onClick(onTgBackButton); } catch (e) { /* старые клиенты */ }
   }
-  function kachingPlay(onBlocked) {
-    const a = kachingAudio || prepareKaching();
-    if (!a) return;
-    try {
-      a.currentTime = 0;
-      const p = a.play();
-      if (p && typeof p.catch === 'function') p.catch(() => { if (onBlocked) onBlocked(); });
-    } catch (e) { if (onBlocked) onBlocked(); }
-  }
-  function disarmKachingOnTap() {
-    if (!kachingOnTap) return;
-    document.removeEventListener('pointerdown', kachingOnTap, true);
-    document.removeEventListener('keydown', kachingOnTap, true);
-    kachingOnTap = null;
-  }
-  function armKachingOnTap() {
-    const pre = document.getElementById('preloader');
-    if (kachingOnTap || !pre || pre.classList.contains('done')) return;
-    kachingOnTap = () => { disarmKachingOnTap(); kachingPlay(); };
-    document.addEventListener('pointerdown', kachingOnTap, true);
-    document.addEventListener('keydown', kachingOnTap, true);
-  }
-  prepareKaching(); // файл начинает грузиться сразу, к 140 мс он уже в буфере
-
-  const preloaderHaptics = [];
-  function reducedMotion() {
-    try {
-      return Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-    } catch (e) { return false; }
-  }
-  function startPreloaderHaptics() {
-    const still = reducedMotion();
-    preloaderHaptics.push(setTimeout(() => {
-      kachingPlay(armKachingOnTap); // «ка-дзынь»
-      if (!still) haptic('soft'); // ход ящика кассы — приложение проснулось
-    }, KACHING_AT));
-    if (still) return;
-    preloaderHaptics.push(setTimeout(() => haptic('rigid'), KACHING_AT + KACHING_BELL_MS)); // колокольчик
-  }
-  function stopPreloaderHaptics() {
-    while (preloaderHaptics.length) clearTimeout(preloaderHaptics.pop());
-  }
-
-  const initStartTime = Date.now();
-  function hidePreloader(opts = {}) {
-    const el = document.getElementById('preloader');
-    if (!el || el.classList.contains('done')) return;
-    stopPreloaderHaptics();
-    disarmKachingOnTap(); // после логотипа касание уже не звенит
-    el.classList.add('done');
-    el.setAttribute('aria-hidden', 'true');
-    if (!opts.silent && !reducedMotion()) haptic('selection'); // приложение готово
-  }
-  const preloaderFallback = setTimeout(() => hidePreloader(), 8000);
-  startPreloaderHaptics();
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { if (S.adminOpen) closeAdminSheet(); else if (S.giftRules) giftRulesClose(); else if (S.sheet) closeAssetSheet(); }
+  });
+  // Нижняя шторка выбора актива — разовая привязка (она в index.html, вне #view-exchange).
+  const sheetCloseBtn = $('#sheetClose');
+  if (sheetCloseBtn) sheetCloseBtn.addEventListener('click', () => { haptic('light'); closeAssetSheet(); });
+  const sheetOverlay = $('#sheetOverlay');
+  if (sheetOverlay) sheetOverlay.addEventListener('click', closeAssetSheet);
+  const rulesConfirm = $('#giftRulesConfirm');
+  if (rulesConfirm) rulesConfirm.addEventListener('click', createGiftOrder);
+  const rulesCancel = $('#giftRulesCancel');
+  if (rulesCancel) rulesCancel.addEventListener('click', () => { haptic('light'); giftRulesClose(); });
+  const rulesClose = $('#giftRulesClose');
+  if (rulesClose) rulesClose.addEventListener('click', () => { haptic('light'); giftRulesClose(); });
+  const rulesOverlay = $('#giftRulesOverlay');
+  if (rulesOverlay) rulesOverlay.addEventListener('click', giftRulesClose);
+  wireAdminSheet();
 
   (async () => {
     try {
@@ -3413,25 +1815,17 @@
       S.settings = r.settings;
       S.me = r.me;
       S.isDemo = !!r.demo;
-      S.access = r.access || null;
-      S.brokerLogin = r.broker ? r.broker.login : null;
-      S.offerWindowSec = Number(r.settings && r.settings.offerWindowSec) || 120;
       const m = await api('/api/me');
       S.orders = m.orders;
       S.me = m.me;
       S.order = S.orders.find((o) => !TERMINAL.includes(o.status)) || null;
-      S.orderOpen = Boolean(S.order);
       // preload support
       try {
         const sup = await api('/api/support/messages');
         S.support = sup.messages || [];
       } catch {}
-      loadRateHistory();
     } catch (e) {
       document.getElementById('announce').textContent = '⚠️ Не удалось подключиться к серверу. Обновите страницу.';
-      document.getElementById('announce').classList.remove('hidden');
-      clearTimeout(preloaderFallback);
-      hidePreloader({ silent: true }); // ошибка — не отзываемся как о готовности
       return;
     }
     renderHeader();
@@ -3441,39 +1835,11 @@
     renderHistory();
     renderRefs();
     renderSupport();
-    renderInfo();
-    renderBroker();
-    loadBrokerStatus();
-    refreshCaptcha();
+    renderProfile();
     // show correct initial tab
     document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
     $('#view-' + S.tab).classList.remove('hidden');
     renderDemoAdmin();
-    armSupportFab();
-    initParallax();
-    setupSwipeBack();
     startPolling();
-    function tickBrokerLoop() {
-      tickLiveNumbers();
-      setTimeout(tickBrokerLoop, 4500);
-    }
-    setTimeout(tickBrokerLoop, 4500);
-
-    const isTest = typeof navigator !== 'undefined' && (/jsdom/i.test(navigator.userAgent) || navigator.userAgent === '');
-    if (isTest) {
-      clearTimeout(preloaderFallback);
-      hidePreloader();
-    } else {
-      // Кадр держится подольше: большое лого и полный текст должны успеть
-      // прочитаться, а не мелькнуть. Прогресс здесь не изображается —
-      // прелоадер уходит целиком, когда данные готовы.
-      const elapsed = Date.now() - initStartTime;
-      const minDuration = 5200;
-      const remaining = Math.max(0, minDuration - elapsed);
-      setTimeout(() => {
-        clearTimeout(preloaderFallback);
-        hidePreloader();
-      }, remaining);
-    }
   })();
 })();
