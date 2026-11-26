@@ -550,14 +550,35 @@ input[readonly] { color: #9fe8d6 !important; }
 .sheet-foot { margin-top: 12px; padding: 9px 12px; text-align: center; font-size: 10.5px; line-height: 1.5; color: var(--mut); border: 1px dashed var(--line); border-radius: 12px; }
 body.sheet-lock { overflow: hidden; }
 
-/* “Card transfer rules” dialog */
-.rules-body { display: flex; flex-direction: column; gap: 9px; margin-bottom: 14px; }
-.rules-item {
-  font-size: 12.5px; line-height: 1.5; color: var(--txt);
+/* User guide dialog (shown before creating an order) */
+.guide-body { display: flex; flex-direction: column; gap: 14px; margin-bottom: 14px; }
+.guide-intro p { font-size: 12.5px; line-height: 1.55; color: var(--txt); }
+.guide-intro p + p { margin-top: 8px; }
+.guide-intro b { color: #8edfeb; }
+.guide-section {
   background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line);
-  border-radius: 12px; padding: 9px 11px;
+  border-radius: 12px; padding: 11px 12px;
 }
-.rules-item b { color: #8edfeb; }
+.guide-h { font-size: 13px; font-weight: 800; color: #8edfeb; letter-spacing: .02em; margin-bottom: 8px; }
+.guide-section p { font-size: 12.5px; line-height: 1.55; color: var(--txt); }
+.guide-section p + p,
+.guide-section p + ul,
+.guide-section ul + p { margin-top: 7px; }
+.guide-section b { color: #8edfeb; }
+.guide-list { list-style: none; margin: 7px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.guide-list li { font-size: 12.5px; line-height: 1.5; color: var(--txt); padding-left: 14px; position: relative; }
+.guide-list li::before { content: '·'; position: absolute; left: 4px; color: var(--teal); font-weight: 800; }
+.guide-thanks { font-weight: 700; color: var(--txt); }
+.guide-tagline { color: #8edfeb; }
+.guide-final { text-align: center; }
+.guide-final .guide-thanks { margin-bottom: 4px; }
+.guide-consent {
+  display: flex; align-items: flex-start; gap: 10px; margin: 4px 0 8px;
+  padding: 11px 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); border-radius: 12px;
+}
+.guide-consent input { width: 18px; height: 18px; margin-top: 1px; flex: none; accent-color: var(--teal); }
+.guide-consent label { font-size: 12.5px; line-height: 1.45; color: var(--txt); }
+.guide-hint { font-size: 11px; line-height: 1.4; color: var(--mut); text-align: center; margin-bottom: 8px; }
 
 /* client profile */
 .lc-head { display: flex; align-items: center; gap: 12px; }

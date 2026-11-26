@@ -354,11 +354,50 @@ test('HTML админ-панели содержит вкладку промок�
   }
 });
 
+test('руководство пользователя показывается перед сделкой: прокрутка до конца и отметка ознакомления', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const dom = new JSDOM(html);
+  const doc = dom.window.document;
+
+  // Шапка sheet — заголовок сменился на «Руководство пользователя».
+  assert.equal(doc.getElementById('giftRulesTitle')?.textContent, 'Руководство пользователя');
+  // Тело руководства со всеми разделами и обязательный согласительный чекбокс.
+  assert.ok(doc.getElementById('guideBody'), 'контейнер руководства #guideBody присутствует');
+  assert.ok(doc.querySelector('#guideBody .guide-section:last-child .guide-tagline'), 'руководство заканчивается финальным блоком');
+  assert.ok(doc.getElementById('guideConsent'), 'чекбокс ознакомления #guideConsent присутствует');
+  assert.ok(doc.getElementById('guideHint'), 'подсказка-гейт #guideHint присутствует');
+  // Кнопка подтверждения по умолчанию заблокирована — пока гайд не прокручен и не отмечен.
+  const confirm = doc.getElementById('giftRulesConfirm');
+  assert.ok(confirm.hasAttribute('disabled'), 'кнопка создания заявки заблокирована до прокрутки и отметки');
+  // Прежние блочные правила «Как передать карту» заменены руководством.
+  assert.equal(doc.querySelector('#giftRules .rules-body'), null);
+  assert.equal(doc.getElementById('giftRulesBrand'), null);
+  // Разделы о курсе и о Bitcoin добавлены в руководство.
+  const headings = [...doc.querySelectorAll('#guideBody .guide-section .guide-h')].map((h) => h.textContent);
+  assert.ok(headings.some((h) => h.includes('Почему курс PRICELEX может быть выше рыночного')), 'раздел о курсе присутствует');
+  assert.ok(headings.some((h) => h.includes('Важная информация о Bitcoin')), 'раздел о Bitcoin присутствует');
+  // Финальный блок-прощание остаётся последним разделом руководства.
+  assert.ok(doc.querySelector('#guideBody .guide-section:last-child .guide-tagline'), 'руководство заканчивается финальным блоком');
+});
+
 test('тексты интерфейса доступны оператору, сохраняются и сбрасываются; клиент менять их не может', async () => {
   const list = await req('GET', '/api/admin/texts');
   assert.equal(list.status, 200);
   const item = list.data.texts.find((t) => t.text === 'ПРИВАТНЫЙ ОБМЕН ЦИФРОВЫХ ПОДАРОЧНЫХ КАРТ');
   assert.ok(item);
+  // Единица редактирования — целый блок, а не фрагмент внутри него: абзац руководства
+  // с inline-выделением <b> собирается целиком, отдельные куски до/после <b> не
+  // являются самостоятельными id.
+  const nom = list.data.texts.find((t) => t.text === 'Требования к номиналу: сумма подарочной карты должна быть кратна 10 USD.');
+  assert.ok(nom, 'абзац руководства с inline-выделением должен быть одним блоком');
+  assert.equal(list.data.texts.some((t) => t.text === 'Требования к номиналу:'), false);
+  // Серверный info-note карты рендерится в DOM и редактируется как целый блок.
+  const info = list.data.texts.find((t) => t.text.includes('Где и по какому курсу вы купили карту — нам не важно'));
+  assert.ok(info, 'CARD_INFO_NOTE должен быть в каталоге целым блоком');
+  // Новые разделы руководства — тоже редактируемые целые блоки (заголовки и абзацы).
+  assert.ok(list.data.texts.find((t) => t.text === '13. Почему курс PRICELEX может быть выше рыночного?'), 'заголовок раздела о курсе — редактируемый блок');
+  assert.ok(list.data.texts.find((t) => t.text === 'Минимальный цифровой след. Мы придерживаемся принципа минимизации данных и не запрашиваем информацию, которая не требуется для проведения сделки.'), 'пункт списка с <b>-вводкой — один блок');
+  assert.ok(list.data.texts.find((t) => t.text.includes('Bitcoin — волатильный цифровой актив')), 'абзац о волатильности Bitcoin редактируется как блок');
   assert.equal((await req('GET', '/api/admin/texts', { demo: CLIENT_DEMO })).status, 403);
   assert.equal((await req('PUT', '/api/admin/texts', { demo: CLIENT_DEMO, body: { id: item.id, value: 'Новое название' } })).status, 403);
   assert.equal ( (await req('PUT', '/api/admin/texts', { body: { id: 'unknown', value: 'Текст' } })).status, 400);

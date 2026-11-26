@@ -802,17 +802,47 @@
     }
   }
 
+  // Guide gate: before an order is created the user must scroll the user guide to
+  // the very end and tick the "I have read the guide" checkbox. Only then does the
+  // confirm button become enabled. The panel itself is the scroll container.
+  let guideReachedEnd = false;
+  let guideAccepted = false;
+  function guideUpdateConfirm() {
+    const btn = $('#giftRulesConfirm');
+    if (!btn) return;
+    const ready = guideReachedEnd && guideAccepted;
+    btn.disabled = !ready;
+    const hint = $('#guideHint');
+    if (hint) hint.textContent = ready
+      ? 'Можно создавать заявку.'
+      : guideReachedEnd
+        ? 'Отметьте ознакомление с руководством, чтобы продолжить.'
+        : 'Прокрутите руководство до самого конца, чтобы продолжить.';
+  }
+  function guideCheckScroll() {
+    const panel = document.querySelector('#giftRules .sheet-panel');
+    if (!panel) return;
+    // If the guide fits without scrolling, the end is already reached.
+    const atEnd = panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 4;
+    if (atEnd && !guideReachedEnd) { guideReachedEnd = true; guideUpdateConfirm(); }
+  }
   function giftRulesOpen() {
     const dlg = $('#giftRules');
     if (!dlg) return;
     const dir = isGiftDir(currentDir()) ? currentDir() : currentSellDir();
     S.giftRuleKey = dir && dir.key;
-    const brand = $('#giftRulesBrand');
-    if (brand && dir) brand.textContent = dir.label;
     if (rulesCloseTimer) { clearTimeout(rulesCloseTimer); rulesCloseTimer = null; }
+    // Reset the guide gate each time the sheet opens.
+    guideReachedEnd = false;
+    guideAccepted = false;
+    const consent = $('#guideConsent');
+    if (consent) consent.checked = false;
+    const panel = document.querySelector('#giftRules .sheet-panel');
+    if (panel) panel.scrollTop = 0;
+    guideUpdateConfirm();
     dlg.classList.remove('hidden');
     dlg.setAttribute('aria-hidden', 'false');
-    rulesFrames = [requestAnimationFrame(() => { rulesFrames[1] = requestAnimationFrame(() => dlg.classList.add('open')); })];
+    rulesFrames = [requestAnimationFrame(() => { rulesFrames[1] = requestAnimationFrame(() => { dlg.classList.add('open'); guideCheckScroll(); }); })];
     document.body.classList.add('sheet-lock');
     S.giftRules = true;
     syncTgBack();
@@ -860,8 +890,9 @@
     giftRulesOpen();
   }
 
-  // The order is created only after the rules are confirmed in the dialog.
+  // The order is created only after the guide is scrolled through and confirmed.
   async function createGiftOrder() {
+    if (!guideReachedEnd || !guideAccepted) return;
     const s = S.settings;
     const err = $('#giftErr');
     const dir = dirs().find((d) => d.key === S.giftRuleKey) || (isGiftDir(currentDir()) ? currentDir() : currentSellDir());
@@ -1953,7 +1984,7 @@
         const label = document.createElement('label');
         label.textContent = item.text;
         const input = document.createElement('textarea');
-        input.rows = 2;
+        input.rows = Math.min(8, Math.max(2, Math.ceil(item.text.length / 48)));
         input.maxLength = 1000;
         input.value = data.overrides[item.id] ?? item.text;
         input.setAttribute('aria-label', 'Изменить: ' + item.text);
@@ -1982,37 +2013,65 @@
     } catch (e) { $('#admTextStatus').textContent = e.message; }
   }
 
-  // Replace fixed copy as text, never as HTML. Preserve source values so that
-  // subsequent edits and resets also update already-rendered screens.
-  const copyNodes = new WeakMap();
+  // Replace fixed copy at the block level: the editable unit is a whole element
+  // (heading, paragraph, guide section, info-note, button label), never a sentence
+  // fragment inside it. Overrides are applied as text — never as HTML — so operator
+  // input cannot inject markup. Source values are remembered per element so that
+  // later edits and resets also update already-rendered screens.
+  const normText = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+  const copyBlocks = new WeakMap(); // element -> { source, applied }
+  const copyAttrs = new WeakMap();  // element -> { [attr]: { source, applied } }
   function applyCopy() {
-    const replacements = new Map(((S.settings && S.settings.texts) || []).map((x) => [x.text, x.value]));
-    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
-    let node;
-    while ((node = walk.nextNode())) {
-      const element = node.nodeType === 1 ? node : node.parentElement;
-      if (!element || element.closest('#adminSheet, script, style, .rev-text, .rev-name, .msg-bubble') || (node.nodeType === 3 && element.closest('input, textarea'))) continue;
-      if (node.nodeType === 3) {
-        const old = copyNodes.get(node);
-        const current = node.nodeValue;
-        const source = old && current === old.applied ? old.source : current;
-        const trimmed = source.trim();
-        const replacement = replacements.get(trimmed);
-        const applied = replacement === undefined ? source : source.replace(trimmed, replacement);
-        copyNodes.set(node, { source, applied });
-        if (current !== applied) node.nodeValue = applied;
-      } else {
-        for (const attr of ['placeholder', 'aria-label', 'title']) {
-          if (!node.hasAttribute(attr)) continue;
-          let state = copyNodes.get(node) || {};
-          const current = node.getAttribute(attr);
-          const prev = state[attr];
-          const source = prev && current === prev.applied ? prev.source : current;
-          const applied = replacements.has(source) ? replacements.get(source) : source;
-          state[attr] = { source, applied }; copyNodes.set(node, state);
-          if (current !== applied) node.setAttribute(attr, applied);
-        }
+    const list = (S.settings && S.settings.texts) || [];
+    if (!list.length) return;
+    // catalogue.text is already normalized server-side; values are raw operator text.
+    const override = new Map();
+    for (const { text, value } of list) {
+      if (typeof text === 'string' && typeof value === 'string') override.set(text, value);
+    }
+    if (!override.size) return;
+
+    // Collect elements whose full text content matches an overridden block, and
+    // apply attribute overrides (placeholder/aria-label/title) along the way.
+    const candidates = [];
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+    let el;
+    while ((el = walk.nextNode())) {
+      if (el.closest('#adminSheet, script, style, .rev-text, .rev-name, .msg-bubble')) continue;
+      if (typeof el.matches === 'function' && el.matches('input, textarea')) continue;
+      const norm = normText(el.textContent);
+      if (norm && override.has(norm)) candidates.push({ el, norm });
+      for (const attr of ['placeholder', 'aria-label', 'title']) {
+        if (!el.hasAttribute(attr)) continue;
+        const state = copyAttrs.get(el) || {};
+        const prev = state[attr];
+        const current = el.getAttribute(attr);
+        const source = prev && current === prev.applied ? prev.source : current;
+        const applied = override.has(source) ? override.get(source) : source;
+        state[attr] = { source, applied };
+        copyAttrs.set(el, state);
+        if (current !== applied) el.setAttribute(attr, applied);
       }
+    }
+
+    // Keep the innermost element for each block: if a descendant shares the same
+    // normalized text, the parent is skipped (e.g. <button><span>label</span></button>
+    // — replace the span, preserve the button structure).
+    for (let i = 0; i < candidates.length; i++) {
+      const a = candidates[i];
+      for (let j = 0; j < candidates.length; j++) {
+        if (i !== j && a.el.contains(candidates[j].el) && candidates[j].norm === a.norm) { a.skip = true; break; }
+      }
+    }
+    for (const { el, norm, skip } of candidates) {
+      if (skip) continue;
+      const prev = copyBlocks.get(el);
+      const current = el.textContent;
+      const source = prev && current === prev.applied ? prev.source : norm;
+      const value = override.get(source);
+      const applied = value === undefined ? source : value;
+      copyBlocks.set(el, { source, applied });
+      if (current !== applied) el.textContent = applied;
     }
   }
   const copyObserver = new MutationObserver(() => applyCopy());
@@ -2450,6 +2509,16 @@
   if (rulesClose) rulesClose.addEventListener('click', () => { haptic('light'); giftRulesClose(); });
   const rulesOverlay = $('#giftRulesOverlay');
   if (rulesOverlay) rulesOverlay.addEventListener('click', giftRulesClose);
+  // Guide gate: enable confirm only after the guide is scrolled to the end and the
+  // consent checkbox is ticked.
+  const guidePanel = document.querySelector('#giftRules .sheet-panel');
+  if (guidePanel) guidePanel.addEventListener('scroll', guideCheckScroll, { passive: true });
+  const guideConsentEl = $('#guideConsent');
+  if (guideConsentEl) guideConsentEl.addEventListener('change', () => {
+    guideAccepted = guideConsentEl.checked;
+    if (guideAccepted) haptic('light');
+    guideUpdateConfirm();
+  });
   const revClose = $('#reviewSheetClose');
   if (revClose) revClose.addEventListener('click', () => { haptic('light'); closeReviewSheet(); });
   const revOverlay = $('#reviewSheetOverlay');
