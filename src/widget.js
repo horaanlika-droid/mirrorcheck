@@ -53,7 +53,7 @@ const buildWidget = (html, chatData) => {
   return { html, chatData: cd };
 };
 
-/* ---------- общие стили (компактная тёмная карточка VEGA) ---------- */
+/* ---------- общие стили (компактная тёмная карточка PRICELEX) ---------- */
 
 const SHELL_CSS =
   'body{margin:0;background:transparent;font-family:system-ui,sans-serif}' +
@@ -75,7 +75,7 @@ const GRP =
 // chatData передаётся и парсится виджетом в рантайме (TelegramWidget.chatData → JSON.parse),
 // поэтому весь внутренний JS статичен — нет подстановок на момент сборки.
 const ratesHtml = () => `<!doctype html><meta charset="utf-8"><style>${SHELL_CSS}</style>
-<div class="c"><div class="h">✦ VEGA · КУРСЫ</div><div id="r"></div>
+<div class="c"><div class="h">✦ PRICELEX · КУРСЫ</div><div id="r"></div>
 <button class="bt" id="ex">💱 Выкупить карту</button></div>
 <script>var W=window.TelegramWidget,d={};try{d=JSON.parse(W.chatData||"{}" )}catch(e){}
 function g(n){n=Math.round(Number(n)||0);var s=String(Math.abs(n)),r="";while(s.length>3){r=" "+s.slice(-3)+r;s=s.slice(0,-3)}return (n<0?"-":"")+s+r}
@@ -85,7 +85,7 @@ document.getElementById("r").innerHTML='<div class="r"><span>🎁 USD gift-ка�
 document.getElementById("ex").addEventListener("click",function(){W.request("ex")});</script>`;
 
 const orderHtml = () => `<!doctype html><meta charset="utf-8"><style>${SHELL_CSS}</style>
-<div class="c"><div class="h">✦ VEGA · ЗАЯВКА <span id="i"></span></div>
+<div class="c"><div class="h">✦ PRICELEX · ЗАЯВКА <span id="i"></span></div>
 <div class="st" id="st"></div><div class="s" id="sub"></div>
 <button class="bt" id="paid">✅ Я оплатил</button>
 <button class="bt w" id="ref">🔄 Обновить</button>
@@ -125,7 +125,7 @@ const trySend = async (chatId, built, caption) => {
   }
 };
 
-// Виджет «Курсы VEGA». Возвращает false → вызывающий показывает обычное меню.
+// Виджет «Курсы PRICELEX». Возвращает false → вызывающий показывает обычное меню.
 const trySendRatesWidget = async (ctx) => {
   if (!widgetsEnabled()) return false;
   const built = buildWidget(ratesHtml(), ratesChatData());
@@ -137,7 +137,7 @@ const trySendOrderWidget = async (ctx, o) => {
   if (!widgetsEnabled()) return false;
   if (['completed', 'rejected', 'cancelled'].includes(o.status)) return false;
   const built = buildWidget(orderHtml(), orderChatData(o));
-  return trySend(chatIdOf(ctx), built, `✦ VEGA · Заявка #${o.id}`);
+  return trySend(chatIdOf(ctx), built, `✦ PRICELEX · Заявка #${o.id}`);
 };
 
 /* ---------- обработка widget_query ---------- */

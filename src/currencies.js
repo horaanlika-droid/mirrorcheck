@@ -190,15 +190,11 @@ const positiveRate = (value) => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
-// Рыночный BTC за $1: BTC/USD = (USD → ₽) ÷ (BTC → ₽).
+// Direct BTC value of one US dollar: 1 / BTCUSD.
 function giftSpotRate(settings) {
   if (!settings) return null;
-  const btcRub = positiveRate(settings.baseRateBTC) || positiveRate(settings.rateBTC);
-  const usdRub =
-    positiveRate(settings.baseRateUSD) ||
-    positiveRate(settings.rateUSD);
-  if (!(btcRub > 0) || !(usdRub > 0)) return null;
-  return usdRub / btcRub;
+  const btcUsd = positiveRate(settings.btcUsd);
+  return btcUsd > 0 ? 1 / btcUsd : null;
 }
 
 // BTC за $1 номинала после скидки giftPercent.
@@ -227,13 +223,11 @@ function giftPayout(settings, units, currency = GIFT_KEY) {
   const n = Number(units);
   if (!Number.isFinite(n) || n <= 0) return null;
   const crypto = Math.floor(n * cardRate * 1e8 + 1e-6) / 1e8;
-  const btcRub = positiveRate(settings.baseRateBTC) || positiveRate(settings.rateBTC);
   return {
     crypto,
     rate: cardRate,
     cardRate,
-    btcRub,
-    rub: btcRub ? Math.round(crypto * btcRub) : null,
+    btcUsd: positiveRate(settings.btcUsd),
   };
 }
 

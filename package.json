@@ -1,7 +1,7 @@
 {
   "name": "mirrorcheck",
   "version": "1.0.0",
-  "description": "VEGA — обменник USD gift-карт (Google, iTunes, Xbox, Apple Store) → BTC: TG Web App + админ-бот. Рубли не принимаются.",
+  "description": "PRICELEX — обмен USD gift-карт (Google, iTunes, Xbox, Apple Store) → BTC: Telegram Web App + операторский бот. Расчёт в BTC/USD, без фиатных выплат.",
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
@@ -15,7 +15,7 @@
     "type": "git",
     "url": "git+https://github.com/horaanlika-droid/mirrorcheck.git"
   },
-  "keywords": ["telegram", "web-app", "gift-card", "btc", "vega"],
+  "keywords": ["telegram", "web-app", "gift-card", "btc", "pricelex"],
   "author": "",
   "license": "ISC",
   "bugs": {

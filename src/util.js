@@ -1,10 +1,8 @@
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const fmtRub = (n) => Math.round(Number(n) || 0).toLocaleString('ru-RU') + ' ₽';
-
-// Точность отображения: BTC/LTC — 8 знаков, USDT — 2 (копейки стейблкоина).
-// dec — желаемое число знаков (например из реестра направлений), если известно.
+// Crypto amount formatting; BTC payouts use eight decimal places.
+// dec overrides the automatic precision when the caller knows the asset precision.
 const fmtCrypto = (v, cur, dec) => {
   const n = Number(v) || 0;
   const d = Number.isFinite(dec) ? Number(dec) : n >= 1000 ? 2 : n >= 1 ? 4 : 6;
@@ -35,10 +33,10 @@ const plural = (n, forms) => {
 };
 
 const parseNum = (s) => {
-  const value = String(s).replace(/\s|₽|руб\.?/gi, '').replace(',', '.');
+  const value = String(s).replace(/\s/g, '').replace(',', '.');
   if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) return NaN;
   const n = Number(value);
   return isFinite(n) ? n : NaN;
 };
 
-module.exports = { esc, fmtRub, fmtCrypto, fmtDate, fmtSize, plural, parseNum };
+module.exports = { esc, fmtCrypto, fmtDate, fmtSize, plural, parseNum };

@@ -11,7 +11,6 @@ const rates = require('./rates');
 const clientOrder = (o) => ({
   id: o.id,
   direction: o.direction || 'sell',
-  rub: o.rub,
   currency: o.currency,
   network: o.network || null,
   currencyLabel: currencies.label(o.currency),
@@ -26,7 +25,6 @@ const clientOrder = (o) => ({
   rate: o.rate,
   status: o.status,
   requisites: o.requisites,
-  payRub: o.payRub,
   receipt: o.receipt || null,
   txUrl: o.txUrl || null,
   createdAt: o.createdAt,
@@ -78,7 +76,7 @@ function startWeb() {
           store.mutate((db) => {
             db.settings.publicUrl = url;
           });
-          console.log('[VEGA] публичный адрес определён автоматически:', url);
+          console.log('[PRICELEX] публичный адрес определён автоматически:', url);
           bus.emit('public_url', url);
         }
       }
@@ -145,12 +143,12 @@ function startWeb() {
   app.get('/api/admin/settings', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
-    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора VEGA' });
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора PRICELEX' });
     res.json({ admin: adminSettingsBlock(), settings: store.publicSettings() });
   });
 
   const CLIENTS_ANNOUNCE_OPEN =
-    '🟢 <b>VEGA: выкуп карт открыт!</b>\n\n' +
+    '🟢 <b>PRICELEX: выкуп карт открыт!</b>\n\n' +
     'Снова принимаем заявки на выкуп USD gift-карт Google, iTunes, Xbox и Apple Store 🎁\n' +
     'Выплата в BTC без документов и регистрации — в приложении и в боте.';
 const DIRECTION_KEYS = currencies.list().map((p) => p.key);
@@ -160,7 +158,7 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
   app.post('/api/admin/settings', async (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
-    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора VEGA' });
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора PRICELEX' });
     const body = req.body || {};
     const patch = {};
     // 1) Направления (вкл/выкл)
@@ -225,11 +223,11 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     const a = needAuth(req, res);
     if (!a) return;
     if (config.botToken && !admins.has(String(a.user.id))) {
-      return res.status(403).json({ error: 'Только для оператора VEGA' });
+      return res.status(403).json({ error: 'Только для оператора PRICELEX' });
     }
     const chat = String(req.body?.chat || '').trim().slice(0, 300);
       if (chat.length < 8 || !(chat.startsWith('https://') || /^@[A-Za-z0-9_]{5,32}$/.test(chat))) {
-      return res.status(400).json({ error: 'Укажите ссылку t.me/… или юзернейм @… (например https://t.me/+abc или @vega_support)' });
+      return res.status(400).json({ error: 'Укажите ссылку t.me/… или юзернейм @… (например https://t.me/+abc или @support_team)' });
     }
     store.mutate((db) => { db.settings.chat = chat; });
     res.json({ settings: store.publicSettings() });
@@ -286,7 +284,6 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
       userName: user.name,
       userUsername: user.username,
       expiresAt: Date.now() + ttlMinutes * 60 * 1000, // час на сделку
-      rub: payout.rub, // справочная сумма выплаты в ₽
       units,
       currency: pair.currency,
       giftCode,
@@ -451,21 +448,21 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
   const publicDir = path.join(__dirname, '..', 'public');
   const indexFile = path.join(publicDir, 'index.html');
 
-  app.get('/health', (_req, res) => res.json({ ok: true, name: 'VEGA' }));
+  app.get('/health', (_req, res) => res.json({ ok: true, name: 'PRICELEX' }));
   app.use(express.static(publicDir));
   app.use((req, res) => res.sendFile(indexFile));
 
   const server = app.listen(config.port, config.host, () => {
     console.log(
-      `[VEGA] веб-сервер слушает ${config.host}:${config.port} (источник порта: ${config.portSource})`
+      `[PRICELEX] веб-сервер слушает ${config.host}:${config.port} (источник порта: ${config.portSource})`
     );
-    console.log('[VEGA] откройте этот URL в браузере — должна открыться страница обменника, а не «Bot is running»');
+    console.log('[PRICELEX] откройте этот URL в браузере — должна открыться страница обменника, а не «Bot is running»');
   });
   server.on('error', (e) => {
-    console.error(`[VEGA] не удалось занять ${config.host}:${config.port}:`, e.message);
+    console.error(`[PRICELEX] не удалось занять ${config.host}:${config.port}:`, e.message);
     if (e && e.code === 'EADDRINUSE') {
       console.error(
-        '[VEGA] Порт занят. На бот-хостинге в Startup укажите Main File = index.js и не задавайте PORT вручную — нужен SERVER_PORT панели.'
+        '[PRICELEX] Порт занят. На бот-хостинге в Startup укажите Main File = index.js и не задавайте PORT вручную — нужен SERVER_PORT панели.'
       );
     }
     process.exit(1);

@@ -1,4 +1,4 @@
-// Клиентский бот VEGA — тот же обменник без Mini App, для тех, кто не хочет открывать приложение.
+// Клиентский бот PRICELEX — тот же обменник без Mini App, для тех, кто не хочет открывать приложение.
 // Флоу: /start → меню → подарочная карта → номинал → Bitcoin-кошелёк → заявка,
 // «Мои заявки», «Поддержка», «Реферальная программа», «Инфо». Всё на обычных сообщениях
 // и кнопках — работает у любого клиента Telegram без Mini App и без виджетов.
@@ -8,7 +8,7 @@ const config = require('./config');
 const store = require('./store');
 const bus = require('./bus');
 const currencies = require('./currencies');
-const { esc, fmtRub, fmtCrypto, fmtDate, parseNum } = require('./util');
+const { esc, fmtCrypto, fmtDate, parseNum } = require('./util');
 const widget = require('./widget');
 
 const clientFlows = new Map(); // userId -> FSM state
@@ -92,7 +92,7 @@ function clientMenu(ctx) {
   const s = store.get().settings;
   const online = s.online ? '🟢 Обменник <b>ОНЛАЙН</b>' : '🔴 Обменник <b>ОФФЛАЙН</b>';
   return show(ctx,
-    `🌌 <b>VEGA | Official</b> — обменник\n${online}\n\n` +
+    `🌌 <b>PRICELEX | Official</b> — обменник\n${online}\n\n` +
     `Выкупаем подарочные карты Google, iTunes, Xbox и Apple Store (регион США, USD) с выплатой в BTC.\n` +
     `Что будем делать?`,
     menuKb(s));
@@ -176,7 +176,6 @@ function createGiftOrder(ctx, units, wallet, pair) {
     userName: ctx.from.first_name || 'Клиент',
     userUsername: ctx.from.username || null,
     expiresAt: Date.now() + (Number(pair.ttlMinutes) || 60) * 60 * 1000,
-    rub: payout.rub,
     units,
     currency: pair.currency,
     wallet,
@@ -321,7 +320,7 @@ async function clientCancel(ctx, id) {
 function infoScreen(ctx) {
   const s = store.get().settings;
   return show(ctx,
-    `ℹ️ <b>VEGA | Official</b>\n\n` +
+    `ℹ️ <b>PRICELEX | Official</b>\n\n` +
     `Курс выплаты и комиссию уточняйте в заявке — выплата только в BTC.\n\n` +
     `Статус: ${s.online ? '🟢 Онлайн' : '🔴 Оффлайн'}\n` +
     `${s.announcement ? `📢 ${esc(s.announcement)}\n\n` : '\n'}` +
@@ -346,7 +345,7 @@ function refsScreen(ctx) {
 function supportPrompt(ctx) {
   clientFlows.set(uidOf(ctx), { type: 'support' });
   return show(ctx,
-    `💬 <b>Поддержка VEGA</b>\n\nНапишите ваш вопрос одним сообщением — передадим оператору.\nОтвет придёт сюда и в приложение.\n\n/cancel — отмена`,
+    `💬 <b>Поддержка PRICELEX</b>\n\nНапишите ваш вопрос одним сообщением — передадим оператору.\nОтвет придёт сюда и в приложение.\n\n/cancel — отмена`,
     new InlineKeyboard().text('↩️ В меню', 'c:menu'));
 }
 
