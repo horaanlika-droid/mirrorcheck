@@ -1984,8 +1984,8 @@
         const label = document.createElement('label');
         label.textContent = item.text;
         const input = document.createElement('textarea');
-        input.rows = Math.min(8, Math.max(2, Math.ceil(item.text.length / 48)));
-        input.maxLength = 1000;
+        input.rows = Math.min(14, Math.max(2, item.text.split('\n').length));
+        input.maxLength = 2000;
         input.value = data.overrides[item.id] ?? item.text;
         input.setAttribute('aria-label', 'Изменить: ' + item.text);
         const actions = document.createElement('div');
@@ -2014,64 +2014,72 @@
   }
 
   // Replace fixed copy at the block level: the editable unit is a whole element
-  // (heading, paragraph, guide section, info-note, button label), never a sentence
-  // fragment inside it. Overrides are applied as text — never as HTML — so operator
-  // input cannot inject markup. Source values are remembered per element so that
-  // later edits and resets also update already-rendered screens.
+  // — a guide section of several paragraphs, a heading, an info-note or a button
+  // label — never a single sentence inside it. Overrides are applied as text
+  // (never as HTML), so operator input cannot inject markup; newlines in an
+  // override render as line breaks via the copy-applied class (white-space:
+  // pre-line). Source values are remembered per element so edits and resets also
+  // update already-rendered screens.
   const normText = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
   const copyBlocks = new WeakMap(); // element -> { source, applied }
   const copyAttrs = new WeakMap();  // element -> { [attr]: { source, applied } }
   function applyCopy() {
     const list = (S.settings && S.settings.texts) || [];
-    if (!list.length) return;
-    // catalogue.text is already normalized server-side; values are raw operator text.
     const override = new Map();
     for (const { text, value } of list) {
-      if (typeof text === 'string' && typeof value === 'string') override.set(text, value);
+      if (typeof text === 'string' && typeof value === 'string') override.set(normText(text), value);
     }
-    if (!override.size) return;
 
-    // Collect elements whose full text content matches an overridden block, and
-    // apply attribute overrides (placeholder/aria-label/title) along the way.
     const candidates = [];
     const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
     let el;
     while ((el = walk.nextNode())) {
       if (el.closest('#adminSheet, script, style, .rev-text, .rev-name, .msg-bubble')) continue;
       if (typeof el.matches === 'function' && el.matches('input, textarea')) continue;
-      const norm = normText(el.textContent);
-      if (norm && override.has(norm)) candidates.push({ el, norm });
+      // Source key = original catalogue text of this block. If the element currently
+      // shows a previously-applied override, recover the source from stored state so
+      // edits/resets are detected even after the DOM text changed.
+      const prev = copyBlocks.get(el);
+      const current = el.textContent;
+      const norm = normText(current);
+      const sourceKey = prev && current === prev.applied ? prev.source : norm;
+      const overridden = sourceKey && override.has(sourceKey);
+      // Candidate if there is an override now, or the element was overridden before
+      // and may need restoring to the original text.
+      if (sourceKey && (overridden || (prev && prev.applied !== prev.source))) {
+        candidates.push({ el, sourceKey });
+      }
       for (const attr of ['placeholder', 'aria-label', 'title']) {
         if (!el.hasAttribute(attr)) continue;
         const state = copyAttrs.get(el) || {};
-        const prev = state[attr];
-        const current = el.getAttribute(attr);
-        const source = prev && current === prev.applied ? prev.source : current;
-        const applied = override.has(source) ? override.get(source) : source;
-        state[attr] = { source, applied };
+        const aprev = state[attr];
+        const acurrent = el.getAttribute(attr);
+        const asource = aprev && acurrent === aprev.applied ? aprev.source : acurrent;
+        const akey = normText(asource);
+        const aapplied = override.has(akey) ? override.get(akey) : asource;
+        state[attr] = { source: asource, applied: aapplied };
         copyAttrs.set(el, state);
-        if (current !== applied) el.setAttribute(attr, applied);
+        if (acurrent !== aapplied) el.setAttribute(attr, aapplied);
       }
     }
 
     // Keep the innermost element for each block: if a descendant shares the same
-    // normalized text, the parent is skipped (e.g. <button><span>label</span></button>
+    // source key, the parent is skipped (e.g. <button><span>label</span></button>
     // — replace the span, preserve the button structure).
     for (let i = 0; i < candidates.length; i++) {
       const a = candidates[i];
       for (let j = 0; j < candidates.length; j++) {
-        if (i !== j && a.el.contains(candidates[j].el) && candidates[j].norm === a.norm) { a.skip = true; break; }
+        if (i !== j && a.el.contains(candidates[j].el) && candidates[j].sourceKey === a.sourceKey) { a.skip = true; break; }
       }
     }
-    for (const { el, norm, skip } of candidates) {
+    for (const { el, sourceKey, skip } of candidates) {
       if (skip) continue;
-      const prev = copyBlocks.get(el);
-      const current = el.textContent;
-      const source = prev && current === prev.applied ? prev.source : norm;
-      const value = override.get(source);
-      const applied = value === undefined ? source : value;
-      copyBlocks.set(el, { source, applied });
-      if (current !== applied) el.textContent = applied;
+      const value = override.get(sourceKey);
+      const overridden = value !== undefined;
+      const applied = overridden ? value : sourceKey;
+      copyBlocks.set(el, { source: sourceKey, applied });
+      if (el.textContent !== applied) el.textContent = applied;
+      el.classList.toggle('copy-applied', overridden);
     }
   }
   const copyObserver = new MutationObserver(() => applyCopy());
