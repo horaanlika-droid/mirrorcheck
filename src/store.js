@@ -97,6 +97,17 @@ function load() {
         if (o.txUrl === undefined) o.txUrl = null;
         if (o.txHash === undefined) o.txHash = null;
       }
+      // Миграция текстовых override'ов на блочную модель: старые override'ы были
+      // привязаны к id отдельных фрагментов (предложений) внутри блока. Новая модель
+      // редактирует блок целиком, поэтому id изменились. Восстановить старое значение
+      // по хэшу фрагмента невозможно — сбрасываем override'ы, не соответствующие ни
+      // одному блоку текущего каталога; оператор переводирует их заново целыми блоками.
+      if (s.textOverrides && typeof s.textOverrides === 'object') {
+        const known = new Set(textCatalogue().map((t) => t.id));
+        for (const id of Object.keys(s.textOverrides)) {
+          if (!known.has(id)) delete s.textOverrides[id];
+        }
+      }
       return;
     }
   } catch (e) {
