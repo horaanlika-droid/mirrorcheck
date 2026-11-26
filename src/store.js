@@ -5,6 +5,13 @@ const currencies = require('./currencies');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
+// Объявление сверху на сайте и в ботах. Старый текст «официально начинает работу»
+// автоматически заменяется на новый при загрузке существующей базы.
+const ANNOUNCE_DEFAULT =
+  '🎁 Принимаете оплату подарочными картами? Быстро и с прозрачным расчётом обменяем их на Bitcoin: без блокировок счетов, с минимальным цифровым следом и моментальным выводом на ваш кошелёк.';
+const ANNOUNCE_LEGACY =
+  '🚀 PRICELEX официально начинает работу! Выкупаем USD gift-карты Google, iTunes, Xbox и Apple Store с выплатой в BTC. Карты региона США, номинал от $10 и кратно $10.';
+
 const defaults = () => {
   const settings = {
     // Direct BTC/USD spot price; gift-card payout is calculated without fiat conversion.
@@ -18,8 +25,7 @@ const defaults = () => {
     rateUpdatedAt: null,
     rateSource: 'manual',
     online: true,
-    announcement:
-      '🚀 PRICELEX официально начинает работу! Выкупаем USD gift-карты Google, iTunes, Xbox и Apple Store с выплатой в BTC. Карты региона США, номинал от $10 и кратно $10.',
+    announcement: ANNOUNCE_DEFAULT,
     refPercent: 1,
     operator: '@VEGA_obmen',
     channel: 'https://t.me/VEGA_Official_65',
@@ -52,6 +58,9 @@ function load() {
       db.settings = Object.assign(defaults().settings, raw.settings || {});
       // Миграция старых баз
       if (!Array.isArray(db.support)) db.support = [];
+      if (db.settings.announcement === ANNOUNCE_LEGACY) {
+        db.settings.announcement = ANNOUNCE_DEFAULT;
+      }
       if (!db.settings.enabled || typeof db.settings.enabled !== 'object') {
         db.settings.enabled = defaults().settings.enabled;
       } else {
