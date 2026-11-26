@@ -127,9 +127,9 @@ async function broadcast(text, options = {}) {
 
 // Объявление всем клиентам, которые когда-либо открывали бота/приложение.
 const CLIENTS_ANNOUNCE_OPEN =
-  '🟢 <b>Pricelex Worldwide: gift cards are open!</b>\n\n' +
-  'We are accepting USD gift card redemption orders again — Google, iTunes, Xbox and Apple Store 🎁\n' +
-  'BTC payouts, no documents or registration — in the app and in the bot.';
+  '🟢 <b>Pricelex Worldwide: приём карт открыт!</b>\n\n' +
+  'Снова принимаем подарочные карты Google, iTunes, Xbox и Apple Store региона США в USD 🎁\n' +
+  'У каждой карты свой курс, выплата в BTC, без документов и регистрации — в приложении и в боте.';
 
 async function announceToClients(text) {
   if (!bot) return { sent: 0, failed: 0 };
@@ -170,10 +170,10 @@ async function sendReceiptToAdmins(o) {
 async function notifyClientConnected(o) {
   try {
     await bot.api.sendMessage(o.userId,
-      `🤝 <b>The operator is online for order #${o.id}</b>\n\n` +
-      `You can now send the ${dirLabel(o)} card code (face value $${giftUnits(o)}) — in the app or right here, via /menu → 📦 My orders.\n` +
-      `After you send the code, the operator will verify the card and pay out <b>${payoutText(o)}</b> to the wallet <code>${esc(o.wallet)}</code>.\n\n` +
-      `Don't share the card code with anyone except the Pricelex Worldwide operator.`,
+      `🤝 <b>Оператор подключился к заявке #${o.id}</b>\n\n` +
+      `Теперь можно отправить код карты ${dirLabel(o)} номиналом $${giftUnits(o)} — в приложении или прямо здесь, через /menu → 📦 Мои заявки.\n` +
+      `После отправки кода оператор проверит карту и выплатит <b>${payoutText(o)}</b> на кошелёк <code>${esc(o.wallet)}</code>.\n\n` +
+      `Не передавайте код карты никому, кроме оператора Pricelex Worldwide.`,
       { parse_mode: 'HTML' });
     return true;
   } catch (e) {
@@ -185,7 +185,7 @@ async function notifyClientConnected(o) {
 async function notifyClientTx(o) {
   try {
     await bot.api.sendMessage(o.userId,
-      `🔗 <b>The transaction for order #${o.id} has been sent</b>\n\n${esc(o.txUrl)}\n\nCheck the incoming ${payoutText(o)} at the wallet:\n<code>${esc(o.wallet)}</code>`,
+      `🔗 <b>Транзакция по заявке #${o.id} отправлена</b>\n\n${esc(o.txUrl)}\n\nПроверьте поступление ${payoutText(o)} на кошелёк:\n<code>${esc(o.wallet)}</code>`,
       { parse_mode: 'HTML' });
     return true;
   } catch (e) {
@@ -239,7 +239,7 @@ async function onSupportMessage({ message, user }) {
     // admin reply -> try to notify client via bot
     try {
       await bot.api.sendMessage(message.userId,
-        `💬 <b>Pricelex Worldwide Support:</b>\n${esc(message.text)}`,
+        `💬 <b>Поддержка Pricelex Worldwide:</b>\n${esc(message.text)}`,
         { parse_mode: 'HTML' });
     } catch (e) {
       console.error(`[bot] support reply → client ${message.userId}:`, e.message);
@@ -299,13 +299,13 @@ async function supportThreadView(ctx, userId, edit = true) {
 
 /* ---------- меню ---------- */
 
-// Курсы включённых направлений — одна строка в главном меню (BTC за $1 карты).
+// Курсы включённых направлений — у каждой карты своя строка (BTC за $1 номинала).
 function rateLine(s) {
   return currencies
     .list()
     .filter((p) => currencies.isEnabled(s, p.key) && currencies.rateOf(s, p.currency) > 0)
-    .map((p) => `${p.symbol} 1 $ = ${fmtCrypto(s.rateGOOGLEUSD || 0, 'BTC', 8)}`)
-    .join(' · ');
+    .map((p) => `${p.symbol} ${p.label.replace(' Gift Card', '')}: 1 $ = ${fmtCrypto(currencies.rateOf(s, p.currency), 'BTC', 8)}`)
+    .join('\n');
 }
 
 async function mainMenu(ctx, edit = false) {
@@ -351,19 +351,23 @@ async function ordersMenu(ctx, edit = true) {
   else await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
 }
 
-// Настройки: переключатель ✅/⛔ конкретной карты и комиссия gift-карт.
+// Настройки: переключатель ✅/⛔ конкретной карты и СВОЙ курс для каждой карты.
 function settingsKb(s) {
   const on = (key) => (currencies.isEnabled(s, key) ? '✅' : '⛔');
-  return new InlineKeyboard()
+  const kb = new InlineKeyboard()
     .row()
     // Включение/выключение выкупа конкретной карты — для каждого направления отдельно.
     .text(`${on('GOOGLE_USD')} Google Gift`, 's:dir_GOOGLE_USD')
     .text(`${on('ITUNES_USD')} iTunes`, 's:dir_ITUNES_USD')
     .row()
     .text(`${on('XBOX_USD')} Xbox`, 's:dir_XBOX_USD')
-    .text(`${on('APPLE_STORE_USD')} Apple Store`, 's:dir_APPLE_STORE_USD')
-    .row()
-    .text(`🎁 Gift комиссия ${s.giftPercent ?? 0}%`, 's:fee_gift')
+    .text(`${on('APPLE_STORE_USD')} Apple Store`, 's:dir_APPLE_STORE_USD');
+  // Отдельная кнопка скидки/курса на каждый бренд: меняем один — остальные не трогаем.
+  for (const p of currencies.list()) {
+    const short = p.label.replace(' Gift Card', '');
+    kb.row().text(`💱 ${short}: скидка ${currencies.feeOf(s, p.key)}% · ${fmtCrypto(currencies.rateOf(s, p.currency) || 0, 'BTC', 8)}`, `s:fee_${p.key}`);
+  }
+  return kb
     .row()
     .text('🔄 Обновить курс', 's:refresh')
     .row()
@@ -380,16 +384,18 @@ function settingsKb(s) {
 
 function settingsText(s) {
   const base = Number(s.btcUsd) > 0 ? `$${Number(s.btcUsd).toLocaleString('en-US', { maximumFractionDigits: 2 })} за BTC` : 'ещё не подтянут';
-  const giftRate = Number(s.rateGOOGLEUSD) > 0 ? fmtCrypto(s.rateGOOGLEUSD, 'BTC', 8) : '—';
-  const giftExample = currencies.giftPayout(s, 10);
+  const cards = currencies.list().map((p) => {
+    const rate = currencies.rateOf(s, p.currency);
+    const example = currencies.giftPayout(s, 10, p.currency);
+    return `• ${esc(p.label)}: <b>1 $ = ${rate ? fmtCrypto(rate, 'BTC', 8) : '—'}</b> ` +
+      `(скидка ${currencies.feeOf(s, p.key)}% · $10 = ${example ? fmtCrypto(example.crypto, 'BTC', 8) : '—'}) ${currencies.isEnabled(s, p.key) ? '✅' : '⛔'}`;
+  }).join('\n');
   return (
     `⚙️ <b>Настройки</b> (применяются мгновенно)\n\n` +
     `📊 Спотовый курс BTC/USD: <b>${base}</b>\n` +
     (s.rateUpdatedAt ? `Обновлён: ${fmtDate(s.rateUpdatedAt)} (${esc(s.rateSource || '?')})\n` : '') +
-    `🎁 Gift-карты: <b>${giftRate} за $1</b> номинала ` +
-    `(комиссия ${s.giftPercent ?? 0}% · карта $10 = ${giftExample ? fmtCrypto(giftExample.crypto, 'BTC', 8) : '—'})\n` +
-    `🕹 Карты: ${currencies.list().map((p) => `${p.label} ${currencies.isEnabled(s, p.key) ? '✅' : '⛔'}`).join(' · ')}\n` +
-    `🎁 Реферальный процент: <b>${s.refPercent}%</b>\n` +
+    `\n🎁 <b>Курс каждой карты — отдельный:</b>\n${cards}\n` +
+    `\n🎁 Реферальный процент: <b>${s.refPercent}%</b>\n` +
     `Статус: ${s.online ? '🟢 Онлайн' : '🔴 Оффлайн'}\n` +
     `📇 ${esc(s.operator)} · 📣 ${esc(s.channel)}\n💬 ${esc(s.chat)}`
   );
@@ -432,18 +438,21 @@ async function linksMenu(ctx, edit = true) {
 /* ---------- FSM ввода от админа ---------- */
 
 const SET_FIELDS = {
-  // Комиссия gift применяется к USD-эквиваленту карты перед выплатой в BTC.
-  fee_gift: {
-    label: 'комиссию на USD gift-карты в % от BTC-эквивалента номинала (0–50; например 15 = минус 15% от выплаты)',
-    num: true,
-    key: 'giftPercent',
-    discount: true,
-  },
   ref: { label: 'реферальный процент (например 1)', num: true, key: 'refPercent' },
   op: { label: 'юзернейм оператора (например @operator)' },
   ch: { label: 'ссылку на канал' },
   chat: { label: 'ссылку на чат' },
 };
+
+// Скидка (а значит и курс) настраивается для КАЖДОЙ карты отдельно.
+for (const p of currencies.list()) {
+  SET_FIELDS[`fee_${p.key}`] = {
+    label: `скидку для ${p.label} в % от BTC-эквивалента номинала (0–50; курс этой карты пересчитается, остальные не изменятся)`,
+    num: true,
+    discount: true,
+    feeKey: p.key,
+  };
+}
 
 async function txPrompt(ctx, o) {
   flows.set(ctx.from.id, { type: 'tx', orderId: o.id, version: o.version || 0 });
@@ -506,13 +515,18 @@ async function handleAdminText(ctx) {
         const n = parseNum(text);
         if (!isFinite(n) || n < 0 || n > 50) {
           return ctx.reply(field.discount
-            ? 'Комиссия на гифт-карты — число от 0 до 50 %. Она удерживается из BTC-эквивалента номинала (например, 15 = минус 15% от выплаты).'
-            : 'Комиссия — число от 0 до 50. Пример: 2');
+            ? 'Скидка карты — число от 0 до 50 %. Она удерживается из BTC-эквивалента номинала (например, 15 = минус 15% от выплаты). Курс меняется только у выбранной карты.'
+            : 'Процент — число от 0 до 50. Пример: 2');
         }
         store.mutate((db) => {
-          db.settings[field.key || f.type.slice(4)] = n;
+          if (field.feeKey) {
+            db.settings.cardFees = db.settings.cardFees || {};
+            db.settings.cardFees[field.feeKey] = n;
+            db.settings.cardRates = currencies.allCardRates(db.settings);
+          } else {
+            db.settings[field.key || f.type.slice(4)] = n;
+          }
         });
-        if (f.type.startsWith('set:fee')) rates.recomputeGiftRate();
       } else {
         store.mutate((db) => {
           db.settings[field.key || f.type.slice(4)] = text.slice(0, 500);
@@ -658,7 +672,7 @@ function register() {
       try {
         const { source } = await rates.refreshRates();
         await settingsMenu(ctx, true);
-        return ctx.reply(`✅ Официальный курс обновлён (источник: ${source}). Курс выплат за карты пересчитан с комиссией.`, { reply_markup: homeKb() });
+        return ctx.reply(`✅ Официальный курс обновлён (источник: ${source}). Курсы всех карт пересчитаны с их индивидуальными скидками.`, { reply_markup: homeKb() });
       } catch (e) {
         return ctx.reply(`⚠️ Не удалось обновить курс: ${e.message}. Действуют прежние курсы.`, { reply_markup: homeKb() });
       }

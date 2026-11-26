@@ -7,11 +7,11 @@ const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 const defaults = () => {
   const settings = {
-    // Direct BTC/USD spot price; gift-card payout is calculated without fiat conversion.
-    btcUsd: 100000, // fallback until the first live market update
-    // All USD gift cards share the same BTC rate per $1 and the same fee.
-    giftPercent: 0, // exchange fee for cards, % of the BTC equivalent of the face value (0–50)
-    rateGOOGLEUSD: null, // BTC per $1 of face value (recalculated from rates and fee)
+    // Прямой спот BTC/USD; выплата за карту считается без фиатной прослойки.
+    btcUsd: 100000, // запасной курс до первого обновления с бирж
+    // У каждой карты своя скидка к споту (%) и свой итоговый курс (BTC за $1 номинала).
+    cardFees: Object.fromEntries(currencies.GIFT_KEYS.map((key) => [key, 0])),
+    cardRates: {}, // заполняется ниже из спота и скидок
     enabled: {
       GOOGLE_USD: true, ITUNES_USD: true, XBOX_USD: true, APPLE_STORE_USD: true,
     },
@@ -25,7 +25,7 @@ const defaults = () => {
     publicUrl: null,
     botUsername: null,
   };
-  settings.rateGOOGLEUSD = currencies.giftRateFromPercent(settings.giftPercent, settings);
+  settings.cardRates = currencies.allCardRates(settings);
   return {
     seq: 1,
     supportSeq: 1,
@@ -48,8 +48,9 @@ function load() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     if (fs.existsSync(DB_FILE)) {
       const raw = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+      const rawSettings = raw.settings || {};
       db = Object.assign(defaults(), raw);
-      db.settings = Object.assign(defaults().settings, raw.settings || {});
+      db.settings = Object.assign(defaults().settings, rawSettings);
       // Migration of old databases
       if (!Array.isArray(db.support)) db.support = [];
       if (!Array.isArray(db.reviews)) db.reviews = [];
@@ -65,7 +66,25 @@ function load() {
         }
       }
       if (!Number.isFinite(db.supportSeq)) db.supportSeq = (db.support?.length || 0) + 1;
-      db.settings.rateGOOGLEUSD = currencies.giftRateFromPercent(db.settings.giftPercent, db.settings);
+      // Миграция старых баз: общая комиссия giftPercent и общий курс rateGOOGLEUSD
+      // раскладываются в индивидуальные настройки каждой карты. Смотрим именно на
+      // raw.settings: defaults() уже подставил cardFees с нулями, и по одному лишь
+      // наличию этого поля не отличить старую базу от новой.
+      const s = db.settings;
+      const legacyFee = currencies.clampFee(rawSettings.giftPercent);
+      if (!rawSettings.cardFees || typeof rawSettings.cardFees !== 'object') {
+        s.cardFees = Object.fromEntries(currencies.GIFT_KEYS.map((key) => [key, legacyFee]));
+      } else {
+        for (const key of currencies.GIFT_KEYS) {
+          s.cardFees[key] = currencies.clampFee(
+            s.cardFees[key] === undefined ? legacyFee : s.cardFees[key]
+          );
+        }
+      }
+      // Курс всегда выводится из спота и скидки конкретной карты.
+      s.cardRates = currencies.allCardRates(s);
+      delete s.giftPercent;
+      delete s.rateGOOGLEUSD;
       for (const o of db.orders || []) {
         if (o.txUrl === undefined) o.txUrl = null;
         if (o.txHash === undefined) o.txHash = null;
@@ -124,7 +143,7 @@ function touchUser(u, refParam) {
     if (!user) {
       user = d.users[id] = {
         id,
-        name: u.first_name || u.name || 'Client',
+        name: u.first_name || u.name || 'Клиент',
         username: u.username || null,
         referrer: null,
         referredCount: 0,
@@ -167,7 +186,7 @@ function createOrder(o) {
     const order = {
       id: d.seq++,
       userId: o.userId,
-      userName: o.userName || 'Client',
+      userName: o.userName || 'Клиент',
       userUsername: o.userUsername || null,
       direction: 'sell', // gift card sale for BTC only
       payoutCurrency: 'BTC',
@@ -342,7 +361,7 @@ function createReview({ userId, orderId, name, rating, text, source }) {
       id: d.reviewSeq++,
       userId: userId != null ? String(userId) : null,
       orderId: orderId != null ? Number(orderId) : null,
-      name: String(name || 'Client').trim().slice(0, 60) || 'Client',
+      name: String(name || 'Клиент').trim().slice(0, 60) || 'Клиент',
       rating: Math.min(5, Math.max(1, Math.round(Number(rating) || 0))),
       text: String(text || '').trim().slice(0, 1000),
       at: Date.now(),

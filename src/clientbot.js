@@ -1,8 +1,8 @@
-// Pricelex Worldwide client bot — the same exchange without the Mini App, for those who don't want to open the app.
-// Flow: /start → menu → gift card → amount → Bitcoin wallet → order,
-// "My orders", "Support", "Referral program", "Info". All in plain messages
-// and buttons — works in any Telegram client without the Mini App and without widgets.
-// Only redemption of USD gift cards (Google, iTunes, Xbox, Apple Store) for BTC payouts.
+// Клиентский бот Pricelex Worldwide — тот же обмен без Mini App, для тех, кто не хочет открывать приложение.
+// Поток: /start → меню → карта → номинал → Bitcoin-кошелёк → заявка,
+// «Мои заявки», «Поддержка», «Реферальная программа», «Информация». Обычными сообщениями
+// и кнопками — работает в любом клиенте Telegram без Mini App и без виджетов.
+// Только выкуп USD-подарочных карт (Google, iTunes, Xbox, Apple Store) с выплатой в BTC.
 const { InlineKeyboard } = require('grammy');
 const config = require('./config');
 const store = require('./store');
@@ -11,7 +11,7 @@ const currencies = require('./currencies');
 const { esc, fmtCrypto, fmtDate, parseNum } = require('./util');
 const widget = require('./widget');
 
-const clientFlows = new Map(); // userId -> FSM state
+const clientFlows = new Map(); // userId -> состояние FSM
 const isPrivate = (ctx) => ctx.chat?.type === 'private' && ctx.from;
 const uidOf = (ctx) => String(ctx.from.id);
 const isGiftOrder = (o) => o && o.direction === 'sell';
@@ -19,50 +19,55 @@ const giftLabel = (o) => currencies.label(o.currency);
 const giftUnits = (o) => Number(o.units) || 0;
 const payoutOf = (o, amount = o.crypto) => fmtCrypto(amount, 'BTC', currencies.displayDecimals());
 
-/* ---------- content ---------- */
+/* ---------- тексты ---------- */
 
-// The gift-card advantage: a minimal digital footprint.
+// Преимущество подарочных карт — минимальный цифровой след.
 const GIFT_PRIVACY =
-  '🛡 <b>Minimal digital footprint</b>\n' +
-  '• You can buy the card with cash — it is in no way tied to your bank account or passport.\n' +
-  '• We don\'t ask for documents or registration: just the card code and a Bitcoin wallet address.\n' +
-  '• Payout goes straight to your wallet — no banks, no exchanges, no intermediaries.\n' +
-  '• Fewer points where your data is recorded — a smaller digital footprint.';
+  '🛡 <b>Минимальный цифровой след</b>\n' +
+  '• Где и по какому курсу вы купили карту — нам не важно. Хоть на маркетплейсе, хоть у знакомых, хоть за наличные: важен только рабочий код.\n' +
+  '• Мы не просим документы и регистрацию: только код карты и адрес Bitcoin-кошелька.\n' +
+  '• Выплата приходит прямо на ваш кошелёк — без банков, бирж и посредников.\n' +
+  '• Меньше мест, где фиксируются ваши данные, — меньше цифровой след.';
 
-/* ---------- state ---------- */
+/* ---------- состояние ---------- */
 
 const ensureUser = (ctx, refParam = '') =>
-  store.touchUser({ id: ctx.from.id, first_name: ctx.from.first_name || 'Client', username: ctx.from.username || null }, refParam);
+  store.touchUser({ id: ctx.from.id, first_name: ctx.from.first_name || 'Клиент', username: ctx.from.username || null }, refParam);
 
 const availableGift = () =>
   currencies.list().filter(
     (p) => currencies.isEnabled(store.get().settings, p.key) && currencies.rateOf(store.get().settings, p.currency) > 0
   );
 
-/* ---------- keyboards ---------- */
+// У каждой карты свой курс — показываем их списком.
+const rateListText = () => availableGift()
+  .map((p) => `• ${esc(p.label)}: <b>1 $ = ${esc(fmtCrypto(currencies.rateOf(store.get().settings, p.currency), 'BTC', 8))}</b>`)
+  .join('\n');
+
+/* ---------- клавиатуры ---------- */
 
 function menuKb(s) {
   const kb = new InlineKeyboard()
-    .text('💱 Sell a gift card', 'c:exchange').text('📦 My orders', 'c:orders').row()
-    .text('💬 Support', 'c:support').text('ℹ️ Info', 'c:info').row()
-    .text('🎁 Referral program', 'c:refs');
-  // Telegram only accepts web_app buttons over https — otherwise the whole message is rejected and the client sees silence.
-  if (s.publicUrl && /^https:\/\//i.test(s.publicUrl)) kb.row().webApp('📱 Open the app', s.publicUrl);
+    .text('💱 Сдать карту', 'c:exchange').text('📦 Мои заявки', 'c:orders').row()
+    .text('💬 Поддержка', 'c:support').text('ℹ️ Информация', 'c:info').row()
+    .text('🎁 Реферальная программа', 'c:refs');
+  // Telegram принимает кнопки web_app только по https — иначе всё сообщение отклоняется и клиент видит тишину.
+  if (s.publicUrl && /^https:\/\//i.test(s.publicUrl)) kb.row().webApp('📱 Открыть приложение', s.publicUrl);
   return kb;
 }
 
-const backMenuKb = () => new InlineKeyboard().text('↩️ Menu', 'c:menu');
+const backMenuKb = () => new InlineKeyboard().text('↩️ Меню', 'c:menu');
 
 function assetKb() {
   const kb = new InlineKeyboard();
   for (const p of availableGift()) {
     kb.text(`🎁 ${p.label}`, `c:buy:${p.key}`).row();
   }
-  kb.text('↩️ Menu', 'c:menu');
+  kb.text('↩️ Меню', 'c:menu');
   return kb;
 }
 
-/* ---------- screen rendering (message is edited on callbacks) ---------- */
+/* ---------- отрисовка экранов (сообщение редактируется по колбэкам) ---------- */
 
 async function show(ctx, text, kb) {
   const opts = { parse_mode: 'HTML', reply_markup: kb };
@@ -70,19 +75,19 @@ async function show(ctx, text, kb) {
     try {
       return await ctx.editMessageText(text, opts);
     } catch (e) {
-      /* message is identical or too old — just send a new one */
+      /* сообщение не изменилось или слишком старое — просто отправляем новое */
     }
   }
   try {
     return await ctx.reply(text, opts);
   } catch (e) {
-    // Telegram rejected reply_markup (e.g. a non-https web_app link) —
-    // reply without buttons so the client is not left without an answer.
-    console.error('[clientbot] reply rejected by Telegram:', e && e.message);
+    // Telegram отклонил reply_markup (например, ссылка web_app не https) —
+    // отвечаем без кнопок, чтобы клиент не остался без ответа.
+    console.error('[clientbot] ответ отклонён Telegram:', e && e.message);
     try {
       return await ctx.reply(text, { parse_mode: 'HTML' });
     } catch (e2) {
-      console.error('[clientbot] reply without keyboard also rejected:', e2 && e2.message);
+      console.error('[clientbot] ответ без клавиатуры тоже отклонён:', e2 && e2.message);
       return null;
     }
   }
@@ -90,42 +95,45 @@ async function show(ctx, text, kb) {
 
 function clientMenu(ctx) {
   const s = store.get().settings;
-  const online = s.online ? '🟢 Exchange <b>ONLINE</b>' : '🔴 Exchange <b>OFFLINE</b>';
+  const online = s.online ? '🟢 Обмен <b>ОНЛАЙН</b>' : '🔴 Обмен <b>ОФФЛАЙН</b>';
   return show(ctx,
-    `🌌 <b>Pricelex Worldwide | Official</b> — exchange\n${online}\n\n` +
-    `We buy Google, iTunes, Xbox and Apple Store gift cards (US region, USD) with BTC payouts.\n` +
-    `What would you like to do?`,
+    `🌌 <b>Pricelex Worldwide | Official</b> — обмен\n${online}\n\n` +
+    `Выкупаем подарочные карты Google, iTunes, Xbox и Apple Store (регион США, USD) с выплатой в BTC.\n` +
+    `У каждой карты свой курс.\n\n` +
+    `Что хотите сделать?`,
     menuKb(s));
 }
 
 function assetScreen(ctx) {
   const s = store.get().settings;
   if (!s.online) {
-    return show(ctx, '⛔ <b>Exchange is temporarily unavailable.</b>\nWe will be back soon — please check again later.', backMenuKb());
+    return show(ctx, '⛔ <b>Обмен временно недоступен.</b>\nСкоро вернёмся — загляните чуть позже.', backMenuKb());
   }
   if (!availableGift().length) {
-    return show(ctx, '💱 <b>Directions are temporarily unavailable.</b>\nPlease check back soon.', backMenuKb());
+    return show(ctx, '💱 <b>Направления временно недоступны.</b>\nЗагляните чуть позже.', backMenuKb());
   }
-  return show(ctx, '💱 <b>Choose a card</b>\n\nPick which card you are selling:', assetKb());
+  return show(ctx,
+    `💱 <b>Выберите карту</b>\n\nКакую карту сдаёте? Курс у каждой карты свой:\n\n${rateListText()}`,
+    assetKb());
 }
 
-/* ---------- order: gift card → BTC ---------- */
+/* ---------- заявка: карта → BTC ---------- */
 
-// The first thing the client sees: the card-transfer rules dialog.
+// Первый экран — правила передачи карты.
 function giftRules(ctx, pair) {
   clientFlows.delete(uidOf(ctx));
   const label = pair?.label || currencies.gift().label;
   return show(ctx,
-    `🎁 <b>Sell ${esc(label)}</b>\n\n` +
-    `<b>Card transfer rules:</b>\n` +
-    `1. The card must be a <b>${esc(label)}</b> for the <b>US</b> region, in <b>USD</b>, with a full unused balance. Cards from other regions or currencies are not accepted.\n` +
-    `2. First the order is created, then <b>the operator joins</b>. <b>Don't send anything and don't share the code with anyone until they ask.</b>\n` +
-    `3. You send the card code here (or in the app) <b>only after the operator joins</b>. They will verify the card (usually 5–15 minutes).\n` +
-    `4. Payout is in <b>BTC</b> to your Bitcoin wallet. The amount is based on the current BTC/USD rate.\n` +
-    `5. Support never asks for the code or money outside the order. Don't share the code with anyone except the operator within the order.\n` +
-    `6. You have <b>1 hour</b> from order creation to complete the deal. If the card is invalid, the order is rejected without payout.\n\n` +
+    `🎁 <b>Сдать ${esc(label)}</b>\n\n` +
+    `<b>Правила передачи карты:</b>\n` +
+    `1. Карта должна быть <b>${esc(label)}</b> региона <b>США</b>, в <b>USD</b>, с полным неиспользованным балансом. Карты других регионов и валют не принимаем.\n` +
+    `2. Сначала создаётся заявка, затем <b>подключается оператор</b>. <b>Ничего не отправляйте и никому не сообщайте код, пока оператор не попросит.</b>\n` +
+    `3. Код карты вы отправляете здесь (или в приложении) <b>только после подключения оператора</b>. Он проверит карту (обычно 5–15 минут).\n` +
+    `4. Выплата в <b>BTC</b> на ваш Bitcoin-кошелёк. Сумма считается по текущему курсу этой карты.\n` +
+    `5. Поддержка никогда не просит код или деньги вне заявки. Не передавайте код никому, кроме оператора внутри заявки.\n` +
+    `6. На сделку даётся <b>1 час</b> с момента создания заявки. Если карта окажется недействительной, заявку отклонят без выплаты.\n\n` +
     GIFT_PRIVACY,
-    new InlineKeyboard().text('✅ Got it — choose amount', `c:giftnom:${pair.key}`).row().text('↩️ Back to cards', 'c:exchange'));
+    new InlineKeyboard().text('✅ Понятно — выбрать номинал', `c:giftnom:${pair.key}`).row().text('↩️ К списку карт', 'c:exchange'));
 }
 
 function giftIntro(ctx, pair) {
@@ -134,46 +142,46 @@ function giftIntro(ctx, pair) {
   clientFlows.set(uidOf(ctx), { type: 'gift_select', key: pair.key });
   const kb = new InlineKeyboard()
     .text('$10', `c:units:${pair.key}:10`).text('$20', `c:units:${pair.key}:20`).text('$50', `c:units:${pair.key}:50`).text('$100', `c:units:${pair.key}:100`).row()
-    .text('Other amount', `c:giftnum:${pair.key}`).row()
-    .text('↩️ Back to cards', 'c:exchange');
+    .text('Другой номинал', `c:giftnum:${pair.key}`).row()
+    .text('↩️ К списку карт', 'c:exchange');
   return show(ctx,
     `${esc(pair.label)} → BTC\n\n` +
-    `You give us the code for a ${esc(pair.label)} card denominated in <b>USD</b> — we pay out BTC to your Bitcoin wallet.\n\n` +
-    `💱 Payout rate: <b>1 $ = ${esc(fmtCrypto(rate, 'BTC', 8))}</b>. The BTC/USD rate updates automatically.\n` +
-    `⏱ 1 hour per deal from creation.\n` +
-    `✅ US-region cards in US dollars (USD) only.\n\n` +
+    `Вы отдаёте код карты ${esc(pair.label)} номиналом в <b>USD</b> — мы выплачиваем BTC на ваш Bitcoin-кошелёк.\n\n` +
+    `💱 Курс этой карты: <b>1 $ = ${esc(fmtCrypto(rate, 'BTC', 8))}</b>. Курс обновляется автоматически.\n` +
+    `⏱ На сделку — 1 час с момента создания заявки.\n` +
+    `✅ Только карты региона США в долларах (USD).\n\n` +
     GIFT_PRIVACY + `\n\n` +
-    `Choose the amount:`,
+    `Выберите номинал:`,
     kb);
 }
 
-// The order is created WITHOUT a code: the client sends it only after the operator joins.
+// Заявка создаётся БЕЗ кода: клиент отправляет код только после подключения оператора.
 function askGiftWallet(ctx, units, pair) {
   clientFlows.set(uidOf(ctx), { type: 'gift_wallet', units, key: pair.key });
   return show(ctx,
-    `👛 <b>Bitcoin wallet address</b>\n\n` +
-    `Where should we send the BTC? Send your Bitcoin address: <b>bc1…</b>, <b>1…</b> or <b>3…</b>.\n\n` +
-    `/cancel — cancel`,
-    new InlineKeyboard().text('↩️ Back to amount', `c:giftnom:${pair.key}`));
+    `👛 <b>Адрес Bitcoin-кошелька</b>\n\n` +
+    `Куда отправить BTC? Пришлите Bitcoin-адрес: <b>bc1…</b>, <b>1…</b> или <b>3…</b>.\n\n` +
+    `/cancel — отмена`,
+    new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`));
 }
 
 function createGiftOrder(ctx, units, wallet, pair) {
   const s = store.get().settings;
-  if (!s.online) return { error: 'Exchange is temporarily unavailable — please try again later.' };
-  if (!pair || pair.kind !== 'gift') return { error: 'Unknown gift card type.' };
-  if (!currencies.isEnabled(s, pair.key)) return { error: 'This card is currently unavailable for sale.' };
+  if (!s.online) return { error: 'Обмен временно недоступен — попробуйте позже.' };
+  if (!pair || pair.kind !== 'gift') return { error: 'Неизвестный тип карты.' };
+  if (!currencies.isEnabled(s, pair.key)) return { error: 'Эта карта сейчас недоступна для выкупа.' };
   const unitsError = currencies.validateUnits(units);
   if (unitsError) return { error: unitsError };
   const walletError = currencies.validateWallet(wallet);
   if (walletError) return { error: walletError };
   const payout = currencies.giftPayout(s, units, pair.currency);
   if (!payout || !(payout.crypto > 0)) {
-    return { error: 'BTC payout rate is temporarily unavailable — please try again later.' };
+    return { error: 'Курс выплаты в BTC временно недоступен — попробуйте позже.' };
   }
   const usr = ensureUser(ctx);
   const order = store.createOrder({
     userId: uidOf(ctx),
-    userName: ctx.from.first_name || 'Client',
+    userName: ctx.from.first_name || 'Клиент',
     userUsername: ctx.from.username || null,
     expiresAt: Date.now() + (Number(pair.ttlMinutes) || 60) * 60 * 1000,
     units,
@@ -187,7 +195,7 @@ function createGiftOrder(ctx, units, wallet, pair) {
   return { order };
 }
 
-/* ---------- "My orders" ---------- */
+/* ---------- «Мои заявки» ---------- */
 
 const statusIcon = (o) => {
   if (o.status === 'completed') return '🟢';
@@ -206,15 +214,15 @@ function ordersList(ctx) {
   const shown = [...active, ...recent].slice(0, 8);
   if (!shown.length) {
     return show(ctx,
-      '📦 <b>You have no orders yet.</b>\nCreate your first exchange — it will appear here.',
-      new InlineKeyboard().text('💱 Sell a gift card', 'c:exchange').text('↩️ Menu', 'c:menu'));
+      '📦 <b>У вас пока нет заявок.</b>\nСоздайте первый обмен — он появится здесь.',
+      new InlineKeyboard().text('💱 Сдать карту', 'c:exchange').text('↩️ Меню', 'c:menu'));
   }
   const kb = new InlineKeyboard();
   for (const o of shown) {
     kb.text(`${statusIcon(o)} #${o.id} · ${shortOf(o)} · ${amountOf(o)}`, `c:order:${o.id}`).row();
   }
-  kb.text('💱 Sell a gift card', 'c:exchange').text('↩️ Menu', 'c:menu');
-  return show(ctx, `📦 <b>Your orders</b>\n\n${active.length ? `Active: ${active.length}` : 'No active orders'}. Tap an order to open it:`, kb);
+  kb.text('💱 Сдать карту', 'c:exchange').text('↩️ Меню', 'c:menu');
+  return show(ctx, `📦 <b>Ваши заявки</b>\n\n${active.length ? `Активных: ${active.length}` : 'Активных нет'}. Нажмите на заявку, чтобы открыть:`, kb);
 }
 
 async function loadOwnOrder(ctx, id) {
@@ -226,104 +234,104 @@ async function loadOwnOrder(ctx, id) {
 const orderActionsKb = (o) => {
   const kb = new InlineKeyboard();
   if (o.status === 'details' && !o.giftCode) {
-    // The operator has joined — the client sends the code.
-    kb.text('🎟 Send the card code', `c:sendcode:${o.id}`);
+    // Оператор подключился — клиент отправляет код.
+    kb.text('🎟 Отправить код карты', `c:sendcode:${o.id}`);
   } else if (o.status === 'details') {
-    kb.text('🔄 Refresh', `c:order:${o.id}`);
+    kb.text('🔄 Обновить', `c:order:${o.id}`);
   } else if (o.status === 'new') {
-    if (o.giftCode) kb.text('✅ I paid', `c:paid:${o.id}`); // compatibility with legacy orders
-    else kb.text('🔄 Refresh', `c:order:${o.id}`);
+    if (o.giftCode) kb.text('✅ Я оплатил', `c:paid:${o.id}`); // совместимость со старыми заявками
+    else kb.text('🔄 Обновить', `c:order:${o.id}`);
   } else if (o.status === 'paid') {
-    kb.text('🔄 Refresh', `c:order:${o.id}`);
+    kb.text('🔄 Обновить', `c:order:${o.id}`);
   }
-  if (['new', 'details'].includes(o.status)) kb.text('❌ Cancel', `c:cancel:${o.id}`);
-  kb.row().text('📦 My orders', 'c:orders').text('↩️ Menu', 'c:menu');
+  if (['new', 'details'].includes(o.status)) kb.text('❌ Отменить', `c:cancel:${o.id}`);
+  kb.row().text('📦 Мои заявки', 'c:orders').text('↩️ Меню', 'c:menu');
   return kb;
 };
 
 function orderDetailText(o) {
-  const head = `<b>Order #${o.id}</b> · ${esc(fmtDate(o.createdAt))}\n`;
+  const head = `<b>Заявка #${o.id}</b> · ${esc(fmtDate(o.createdAt))}\n`;
   if (o.status === 'new') {
     if (o.giftCode) {
-      // Compatibility with legacy orders where the code was provided at creation time.
+      // Совместимость со старыми заявками, где код передавался при создании.
       return head +
         `🎁 ${esc(giftLabel(o))} <b>$${giftUnits(o)}</b> → ${payoutOf(o)}\n\n` +
-        `🎟 The code <code>${esc(o.giftCode)}</code> is already with the operator.\n` +
-        `When you are ready to hand over the card — tap "I paid".`;
+        `🎟 Код <code>${esc(o.giftCode)}</code> уже у оператора.\n` +
+        `Когда будете готовы передать карту — нажмите «Я оплатил».`;
     }
     return head +
       `🎁 ${esc(giftLabel(o))} <b>$${giftUnits(o)}</b> → ${payoutOf(o)}\n\n` +
-      `⏳ <b>Waiting for the operator to join</b> — usually a few minutes.\n` +
-      `<b>Don't send anything and don't share the code</b> until the operator asks for it in this order.`;
+      `⏳ <b>Ждём подключения оператора</b> — обычно несколько минут.\n` +
+      `<b>Ничего не отправляйте и не сообщайте код</b>, пока оператор не попросит его в этой заявке.`;
   }
   if (o.status === 'details' && !o.giftCode) {
     return head +
       `🎁 ${esc(giftLabel(o))} <b>$${giftUnits(o)}</b> → ${payoutOf(o)}\n\n` +
-      `🤝 <b>Operator is online.</b> They are waiting for the card code.\n` +
-      `Tap "🎟 Send the card code" and send the code in one message.`;
+      `🤝 <b>Оператор на связи.</b> Он ждёт код карты.\n` +
+      `Нажмите «🎟 Отправить код карты» и пришлите код одним сообщением.`;
   }
   if (o.status === 'details' && o.giftCode) {
     return head +
       `🎁 ${esc(giftLabel(o))} <b>$${giftUnits(o)}</b> → ${payoutOf(o)}\n\n` +
-      `🔎 Code sent — the card is under review. Usually 5–15 minutes.`;
+      `🔎 Код отправлен — карта на проверке. Обычно 5–15 минут.`;
   }
   if (o.status === 'paid') {
     return head +
       `🎁 ${esc(giftLabel(o))} <b>$${giftUnits(o)}</b> → ${payoutOf(o)}\n\n` +
-      `🔎 Card under review: the operator will verify the region (<b>USA</b>), currency (<b>USD</b>), amount and balance.\n` +
-      `Usually 5–15 minutes.`;
+      `🔎 Карта на проверке: оператор сверит регион (<b>США</b>), валюту (<b>USD</b>), номинал и баланс.\n` +
+      `Обычно 5–15 минут.`;
   }
   if (o.status === 'completed') {
-    return head + `🟢 <b>Completed.</b> Payout of ${payoutOf(o)} sent to your wallet:\n<code>${esc(o.wallet)}</code>${o.txUrl ? `\n🔗 ${esc(o.txUrl)}` : ''}`;
+    return head + `🟢 <b>Завершена.</b> Выплата ${payoutOf(o)} отправлена на кошелёк:\n<code>${esc(o.wallet)}</code>${o.txUrl ? `\n🔗 ${esc(o.txUrl)}` : ''}`;
   }
-  return head + `${o.status === 'rejected' ? '🔴 Rejected by the operator.' : '⚪ Cancelled.'}${o.cancelReason ? `\nReason: ${esc(o.cancelReason)}` : ''}`;
+  return head + `${o.status === 'rejected' ? '🔴 Отклонена оператором.' : '⚪ Отменена.'}${o.cancelReason ? `\nПричина: ${esc(o.cancelReason)}` : ''}`;
 }
 
 async function orderDetail(ctx, id) {
   const o = await loadOwnOrder(ctx, id);
-  if (!o) return show(ctx, '🚫 Order not found.', backMenuKb());
-  // If widgets are enabled and Telegram accepts them — show the order card inside the message.
+  if (!o) return show(ctx, '🚫 Заявка не найдена.', backMenuKb());
+  // Если виджеты включены и Telegram их принимает — показываем карточку заявки внутри сообщения.
   const sent = await widget.trySendOrderWidget(ctx, o);
   if (sent) return;
   return show(ctx, orderDetailText(o), orderActionsKb(o));
 }
 
-/* ---------- client actions ---------- */
+/* ---------- действия клиента ---------- */
 
 async function clientPaid(ctx, id) {
   const o = await loadOwnOrder(ctx, id);
-  if (!o) return show(ctx, '🚫 Order not found.', backMenuKb());
+  if (!o) return show(ctx, '🚫 Заявка не найдена.', backMenuKb());
   if (o.status === 'new' && o.giftCode) {
     const upd = store.updateOrder(o.id, { status: 'paid', paidAt: Date.now() });
     bus.emit('order_event', { order: upd, type: 'paid' });
-    return show(ctx, `🔎 <b>Order #${o.id}</b>\nCode sent for review. Usually 5–15 minutes — the operator will verify the card and pay out ${payoutOf(o)}.`, new InlineKeyboard().text('📦 My orders', 'c:orders').text('↩️ Menu', 'c:menu'));
+    return show(ctx, `🔎 <b>Заявка #${o.id}</b>\nКод отправлен на проверку. Обычно 5–15 минут — оператор проверит карту и выплатит ${payoutOf(o)}.`, new InlineKeyboard().text('📦 Мои заявки', 'c:orders').text('↩️ Меню', 'c:menu'));
   }
   return show(ctx, orderDetailText(o), orderActionsKb(o));
 }
 
 async function clientCancel(ctx, id) {
   const o = await loadOwnOrder(ctx, id);
-  if (!o) return show(ctx, '🚫 Order not found.', backMenuKb());
+  if (!o) return show(ctx, '🚫 Заявка не найдена.', backMenuKb());
   if (!['new', 'details'].includes(o.status)) {
-    return show(ctx, 'Only a new or code-pending order can be cancelled.', orderActionsKb(o));
+    return show(ctx, 'Отменить можно только новую заявку или заявку в ожидании кода.', orderActionsKb(o));
   }
   if (o.status === 'cancelled' && (o.cancelReason === store.EXPIRED || o.cancelReason === store.EXPIRED_LEGACY)) {
-    return show(ctx, 'Time to complete the deal has expired. Please create a new order.', backMenuKb());
+    return show(ctx, 'Время на сделку истекло. Создайте новую заявку.', backMenuKb());
   }
   const upd = store.updateOrder(o.id, { status: 'cancelled' });
   bus.emit('order_event', { order: upd, type: 'cancelled' });
-  return show(ctx, `⚪ <b>Order #${o.id} cancelled.</b>`, new InlineKeyboard().text('💱 New exchange', 'c:exchange').text('↩️ Menu', 'c:menu'));
+  return show(ctx, `⚪ <b>Заявка #${o.id} отменена.</b>`, new InlineKeyboard().text('💱 Новый обмен', 'c:exchange').text('↩️ Меню', 'c:menu'));
 }
 
-/* ---------- misc: info, referrals, support ---------- */
+/* ---------- прочее: информация, рефералы, поддержка ---------- */
 
 function infoScreen(ctx) {
   const s = store.get().settings;
   return show(ctx,
     `ℹ️ <b>Pricelex Worldwide | Official</b>\n\n` +
-    `Check the order for the exact payout rate and fee — payouts are in BTC only.\n\n` +
-    `Status: ${s.online ? '🟢 Online' : '🔴 Offline'}\n\n` +
-    `📇 Operator: ${esc(s.operator)}\n📣 Channel: ${esc(s.channel)}\n💬 Chat: ${esc(s.chat)}`,
+    `Точный курс выплаты смотрите в заявке — выплата только в BTC. У каждой карты свой курс:\n${rateListText()}\n\n` +
+    `Статус: ${s.online ? '🟢 Онлайн' : '🔴 Оффлайн'}\n\n` +
+    `📇 Оператор: ${esc(s.operator)}\n📣 Канал: ${esc(s.channel)}\n💬 Чат: ${esc(s.chat)}`,
     backMenuKb());
 }
 
@@ -333,22 +341,22 @@ function refsScreen(ctx) {
   const botUsername = s.botUsername || null;
   const link = botUsername ? `https://t.me/${esc(botUsername)}?start=ref${uidOf(ctx)}` : null;
   return show(ctx,
-    `🎁 <b>Referral program</b>\n\n` +
-    `Invite friends — earn <b>${esc(s.refPercent)}%</b> from each of their exchanges.\n` +
-    `Your link ties a friend to you forever.\n\n` +
-    (link ? `Your link:\n<code>${link}</code>\n\n` : 'Your link will appear once the bot is connected.\n\n') +
-    `Invited: <b>${me?.referredCount || 0}</b>`,
+    `🎁 <b>Реферальная программа</b>\n\n` +
+    `Приглашайте друзей — получайте <b>${esc(s.refPercent)}%</b> с каждого их обмена.\n` +
+    `Ваша ссылка навсегда закрепляет друга за вами.\n\n` +
+    (link ? `Ваша ссылка:\n<code>${link}</code>\n\n` : 'Ссылка появится после подключения бота.\n\n') +
+    `Приглашено: <b>${me?.referredCount || 0}</b>`,
     backMenuKb());
 }
 
 function supportPrompt(ctx) {
   clientFlows.set(uidOf(ctx), { type: 'support' });
   return show(ctx,
-    `💬 <b>Pricelex Worldwide Support</b>\n\nWrite your question in one message — we will pass it to the operator.\nThe reply will arrive here and in the app.\n\n/cancel — cancel`,
-    new InlineKeyboard().text('↩️ Menu', 'c:menu'));
+    `💬 <b>Поддержка Pricelex Worldwide</b>\n\nНапишите вопрос одним сообщением — передадим оператору.\nОтвет придёт сюда и в приложение.\n\n/cancel — отмена`,
+    new InlineKeyboard().text('↩️ Меню', 'c:menu'));
 }
 
-/* ---------- widget actions (no rendering — the widget refreshes itself) ---------- */
+/* ---------- действия виджета (без отрисовки — виджет обновляется сам) ---------- */
 
 async function clientPaidWidget(ctxLike, id) {
   const userId = String(ctxLike.from?.id || '');
@@ -372,17 +380,17 @@ async function clientCancelWidget(ctxLike, id) {
   return { ok: 1, order: upd };
 }
 
-/* ---------- entry: /start, /menu ---------- */
+/* ---------- вход: /start, /menu ---------- */
 
 async function clientStart(ctx, refParam = '') {
   if (!isPrivate(ctx)) return;
   ensureUser(ctx, refParam);
-  // If widgets are enabled and Telegram accepts them — show the live rates widget instead of the menu.
+  // Если виджеты включены и Telegram их принимает — показываем виджет с курсами вместо меню.
   if (await widget.trySendRatesWidget(ctx)) return;
   return clientMenu(ctx);
 }
 
-/* ---------- incoming routing ---------- */
+/* ---------- маршрутизация входящих ---------- */
 
 async function handleClientCallback(ctx, d) {
   if (!isPrivate(ctx)) return ctx.answerCallbackQuery({ text: '' }).catch(() => {});
@@ -399,7 +407,7 @@ async function handleClientCallback(ctx, d) {
     const s = store.get().settings;
     if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
     if (!currencies.isEnabled(s, pair.key) || !currencies.rateOf(s, pair.currency)) {
-      return show(ctx, 'This card is currently unavailable. Choose another card or try again later.', assetKb());
+      return show(ctx, 'Эта карта сейчас недоступна. Выберите другую или загляните позже.', assetKb());
     }
     return giftIntro(ctx, pair);
   }
@@ -410,8 +418,8 @@ async function handleClientCallback(ctx, d) {
     if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
     clientFlows.set(uidOf(ctx), { type: 'gift_units', key: pair.key });
     return show(ctx,
-      'Enter the card amount in $ (multiple of $10, minimum $10):\n\n/cancel — cancel',
-      new InlineKeyboard().text('↩️ Back to amount', `c:giftnom:${pair.key}`));
+      'Введите номинал карты в $ (кратно $10, минимум $10):\n\n/cancel — отмена',
+      new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`));
   }
   if (d.startsWith('c:units:')) {
     const parts = d.split(':');
@@ -423,7 +431,7 @@ async function handleClientCallback(ctx, d) {
     if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
     const s = store.get().settings;
     if (!currencies.isEnabled(s, pair.key) || !currencies.rateOf(s, pair.currency)) {
-      return show(ctx, 'This card is currently unavailable. Choose another card or try again later.', assetKb());
+      return show(ctx, 'Эта карта сейчас недоступна. Выберите другую или загляните позже.', assetKb());
     }
     if (!Number.isFinite(units) || currencies.validateUnits(units)) return giftIntro(ctx, pair);
     return askGiftWallet(ctx, units, pair);
@@ -433,7 +441,7 @@ async function handleClientCallback(ctx, d) {
     if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
     const s = store.get().settings;
     if (!currencies.isEnabled(s, pair.key) || !currencies.rateOf(s, pair.currency)) {
-      return show(ctx, `${esc(pair.label)} is currently unavailable for purchase. Choose another card.`, assetKb());
+      return show(ctx, `${esc(pair.label)} сейчас недоступна для выкупа. Выберите другую карту.`, assetKb());
     }
     return giftRules(ctx, pair);
   }
@@ -441,12 +449,12 @@ async function handleClientCallback(ctx, d) {
   if (d.startsWith('c:sendcode:')) {
     const id = Number(d.slice(11));
     const o = await loadOwnOrder(ctx, id);
-    if (!o || !isGiftOrder(o)) return show(ctx, '🚫 Order not found.', backMenuKb());
-    if (o.status !== 'details') return show(ctx, 'The code can be sent only after the operator joins.', orderActionsKb(o));
+    if (!o || !isGiftOrder(o)) return show(ctx, '🚫 Заявка не найдена.', backMenuKb());
+    if (o.status !== 'details') return show(ctx, 'Код можно отправить только после подключения оператора.', orderActionsKb(o));
     clientFlows.set(uidOf(ctx), { type: 'gift_send_code', orderId: o.id });
     return show(ctx,
-      `🎟 <b>${esc(giftLabel(o))} card code for $${giftUnits(o)}</b>\n\nThe operator is in the order and waiting for the code. Send the card code (e.g. XXXX-XXXX-XXXX-XXXX) in one message.\n\n/cancel — cancel`,
-      new InlineKeyboard().text('↩️ Back to order', `c:order:${o.id}`));
+      `🎟 <b>Код карты ${esc(giftLabel(o))} на $${giftUnits(o)}</b>\n\nОператор в заявке и ждёт код. Пришлите код карты (например XXXX-XXXX-XXXX-XXXX) одним сообщением.\n\n/cancel — отмена`,
+      new InlineKeyboard().text('↩️ К заявке', `c:order:${o.id}`));
   }
   if (d.startsWith('c:paid:')) return clientPaid(ctx, Number(d.slice(7)));
   if (d.startsWith('c:cancel:')) return clientCancel(ctx, Number(d.slice(9)));
@@ -456,7 +464,7 @@ async function handleClientCallback(ctx, d) {
 async function handleClientText(ctx) {
   if (!isPrivate(ctx)) return;
   const text = (ctx.message.text || '').trim();
-  // /cancel at any point of a flow — bail back to the menu.
+  // /cancel в любой точке потока — возврат в меню.
   if (/^\/(cancel|stop)(?:@\w+)?(?:\s|$)|^(отмен\w*|cancel)$/i.test(text)) {
     clientFlows.delete(uidOf(ctx));
     return clientMenu(ctx);
@@ -464,7 +472,7 @@ async function handleClientText(ctx) {
   const f = clientFlows.get(uidOf(ctx));
   const s = store.get().settings;
   if (!f) {
-    return ctx.reply('I am here to help with your exchange 🌌\nOpen the menu — or tap /menu.', { reply_markup: menuKb(s) });
+    return ctx.reply('Я здесь, чтобы помочь с обменом 🌌\nОткройте меню — или нажмите /menu.', { reply_markup: menuKb(s) });
   }
   if (f.type === 'gift_units') {
     const pair = currencies.get(f.key || currencies.GIFT_KEY);
@@ -472,7 +480,7 @@ async function handleClientText(ctx) {
     const n = parseNum(text);
     const units = currencies.floorUnits(n);
     if (!Number.isFinite(n) || currencies.validateUnits(units)) {
-      return ctx.reply('Minimum amount is $10, in steps of $10. Example: 20');
+      return ctx.reply('Минимум $10, шаг $10. Например: 20');
     }
     return askGiftWallet(ctx, units, pair);
   }
@@ -484,55 +492,55 @@ async function handleClientText(ctx) {
     if (error) return ctx.reply(`⚠️ ${error}`);
     clientFlows.delete(uidOf(ctx));
     return show(ctx,
-      `✅ <b>Order #${order.id} created!</b>\n\n` +
+      `✅ <b>Заявка #${order.id} создана!</b>\n\n` +
       `🎁 ${esc(giftLabel(order))} <b>$${giftUnits(order)}</b> → <b>${payoutOf(order)}</b>\n\n` +
-      `⏳ <b>Waiting for the operator to join</b> — wait for their signal in this chat.\n` +
-      `<b>Don't send anything and don't share the card code</b> until the operator asks. You have 1 hour per deal.`,
-      new InlineKeyboard().text('📦 My orders', 'c:orders').text('❌ Cancel', `c:cancel:${order.id}`));
+      `⏳ <b>Ждём подключения оператора</b> — дождитесь его сигнала в этом чате.\n` +
+      `<b>Ничего не отправляйте и не сообщайте код карты</b>, пока оператор не попросит. На сделку — 1 час.`,
+      new InlineKeyboard().text('📦 Мои заявки', 'c:orders').text('❌ Отменить', `c:cancel:${order.id}`));
   }
   if (f.type === 'gift_send_code') {
     const code = text.replace(/\s+/g, ' ').trim();
     if (code.length < 8 || code.length > 200 || /\s{2,}/.test(code)) {
-      return ctx.reply('The code is too short or has double spaces (minimum 8 characters). Try again:');
+      return ctx.reply('Код слишком короткий или содержит двойные пробелы (минимум 8 символов). Попробуйте ещё раз:');
     }
     const o = await loadOwnOrder(ctx, f.orderId);
-    if (!o) { clientFlows.delete(uidOf(ctx)); return show(ctx, '🚫 Order not found.', backMenuKb()); }
-    if (!isGiftOrder(o)) { clientFlows.delete(uidOf(ctx)); return show(ctx, 'This is not a gift order.', backMenuKb()); }
+    if (!o) { clientFlows.delete(uidOf(ctx)); return show(ctx, '🚫 Заявка не найдена.', backMenuKb()); }
+    if (!isGiftOrder(o)) { clientFlows.delete(uidOf(ctx)); return show(ctx, 'Это не заявка на карту.', backMenuKb()); }
     if (o.status === 'paid') { clientFlows.delete(uidOf(ctx)); return show(ctx, orderDetailText(o), orderActionsKb(o)); }
     if (o.status !== 'details' && o.status !== 'new') {
       clientFlows.delete(uidOf(ctx));
-      return show(ctx, 'The code is not accepted for this order right now.', orderActionsKb(o));
+      return show(ctx, 'Сейчас код для этой заявки не принимается.', orderActionsKb(o));
     }
     if (o.status === 'new' && !o.giftCode) {
-      return ctx.reply('⏳ The operator has not joined yet. <b>Don\'t send anything</b> — wait for their signal.');
+      return ctx.reply('⏳ Оператор ещё не подключился. <b>Ничего не отправляйте</b> — дождитесь его сигнала.');
     }
     const upd = store.updateOrder(o.id, { giftCode: code, status: 'paid', paidAt: Date.now() });
     clientFlows.delete(uidOf(ctx));
     bus.emit('order_event', { order: upd, type: 'paid' });
     return show(ctx,
-      `🔎 <b>Order #${o.id}: code sent to the operator.</b>\nVerification usually takes 5–15 minutes. Payout — ${payoutOf(upd)}.`,
-      new InlineKeyboard().text('📦 My orders', 'c:orders').text('↩️ Menu', 'c:menu'));
+      `🔎 <b>Заявка #${o.id}: код отправлен оператору.</b>\nПроверка обычно занимает 5–15 минут. Выплата — ${payoutOf(upd)}.`,
+      new InlineKeyboard().text('📦 Мои заявки', 'c:orders').text('↩️ Меню', 'c:menu'));
   }
   if (f.type === 'support') {
     ensureUser(ctx);
     const message = store.createSupportMessage(uidOf(ctx), 'user', text.slice(0, 2000));
     bus.emit('support_message', { message, user: { id: uidOf(ctx), first_name: ctx.from.first_name, username: ctx.from.username || null } });
     clientFlows.delete(uidOf(ctx));
-    return show(ctx, '✅ <b>Passed to the operator.</b>\nWe will reply here and in the app support chat.', backMenuKb());
+    return show(ctx, '✅ <b>Передано оператору.</b>\nОтветим здесь и в чате поддержки приложения.', backMenuKb());
   }
   clientFlows.delete(uidOf(ctx));
-  return ctx.reply('Something went wrong — let\'s start over.', { reply_markup: menuKb(s) });
+  return ctx.reply('Что-то пошло не так — начнём сначала.', { reply_markup: menuKb(s) });
 }
 
-/* PDF receipt from the client: receipts are not required for gift orders — kept as a stub for legacy clients. */
+/* PDF-чек от клиента: для заявок на карты чек не нужен — заглушка для старых клиентов. */
 async function handleClientDocument(ctx, bot) {
   if (!isPrivate(ctx)) return;
-  return ctx.reply('No receipt needed: the card code you send after the operator joins is enough.\n/cancel — cancel');
+  return ctx.reply('Чек не нужен: достаточно кода карты, который вы отправите после подключения оператора.\n/cancel — отмена');
 }
 
 module.exports = {
-  clientStart, // entry point for /start and /menu (ensureUser + widget-or-menu)
-  sendClientMenu: clientMenu, // plain menu screen — used from the widget ("Exchange")
+  clientStart, // точка входа для /start и /menu (ensureUser + виджет-или-меню)
+  sendClientMenu: clientMenu, // обычное меню — используется из виджета («Обмен»)
   handleClientCallback,
   handleClientText,
   handleClientDocument,

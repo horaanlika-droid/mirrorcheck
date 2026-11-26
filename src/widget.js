@@ -74,24 +74,25 @@ const GRP =
 
 // chatData is passed to and parsed by the widget at runtime (TelegramWidget.chatData → JSON.parse),
 // so all inner JS is static — no substitutions at build time.
+// Виджет курсов: у каждой карты своя строка со своим курсом (BTC за $1 номинала).
 const ratesHtml = () => `<!doctype html><meta charset="utf-8"><style>${SHELL_CSS}</style>
-<div class="c"><div class="h">✦ Pricelex Worldwide · RATES</div><div id="r"></div>
-<button class="bt" id="ex">💱 Sell a gift card</button></div>
+<div class="c"><div class="h">✦ Pricelex Worldwide · КУРСЫ КАРТ</div><div id="r"></div>
+<button class="bt" id="ex">💱 Сдать карту</button></div>
 <script>var W=window.TelegramWidget,d={};try{d=JSON.parse(W.chatData||"{}" )}catch(e){}
-function g(n){n=Math.round(Number(n)||0);var s=String(Math.abs(n)),r="";while(s.length>3){r=" "+s.slice(-3)+r;s=s.slice(0,-3)}return (n<0?"-":"")+s+r}
-document.getElementById("r").innerHTML='<div class="r"><span>🎁 USD gift cards</span><b>1 $ = '+(Number(d.g)||0).toFixed(8)+' BTC</b></div>'+
-'<div class="r"><span>Brands</span><b>Google · iTunes · Xbox · Apple Store</b></div>'+
-'<div class="s">'+(d.on?"🟢 Online":"🔴 Offline")+'</div>';
+var rows=(d.r||[]).map(function(x){return '<div class="r"><span>🎁 '+x[0]+'</span><b>'+(x[2]?('1 $ = '+(Number(x[1])||0).toFixed(8)+' BTC'):'недоступна')+'</b></div>'}).join('');
+document.getElementById("r").innerHTML=rows+
+'<div class="r"><span>Регион / валюта</span><b>США · USD</b></div>'+
+'<div class="s">'+(d.on?"🟢 Приём заявок открыт":"🔴 Приём заявок закрыт")+'</div>';
 document.getElementById("ex").addEventListener("click",function(){W.request("ex")});</script>`;
 
 const orderHtml = () => `<!doctype html><meta charset="utf-8"><style>${SHELL_CSS}</style>
-<div class="c"><div class="h">✦ Pricelex Worldwide · ORDER <span id="i"></span></div>
+<div class="c"><div class="h">✦ Pricelex Worldwide · ЗАЯВКА <span id="i"></span></div>
 <div class="st" id="st"></div><div class="s" id="sub"></div>
-<button class="bt" id="paid">✅ I paid</button>
-<button class="bt w" id="ref">🔄 Refresh</button>
-<button class="bt w" id="cancel">❌ Cancel order</button></div>
+<button class="bt" id="paid">✅ Я оплатил</button>
+<button class="bt w" id="ref">🔄 Обновить</button>
+<button class="bt w" id="cancel">❌ Отменить заявку</button></div>
 <script>var W=window.TelegramWidget,d={};try{d=JSON.parse(W.chatData||"{}" )}catch(e){}
-var L={new:"🕐 Waiting for operator",details:"🤝 Awaiting card code",paid:"⏳ Card under review",completed:"🟢 Completed",rejected:"🔴 Rejected",cancelled:"⚪ Cancelled"};
+var L={new:"🕐 Ждём оператора",details:"🤝 Ждём код карты",paid:"⏳ Карта на проверке",completed:"🟢 Завершена",rejected:"🔴 Отклонена",cancelled:"⚪ Отменена"};
 document.getElementById("i").textContent="#" + (d.id || "");
 document.getElementById("st").textContent = L[d.st] || d.st || "";
 document.getElementById("sub").textContent = "$" + (d.un || 0) + " → " + (d.cr || 0) + " BTC";
@@ -137,7 +138,7 @@ const trySendOrderWidget = async (ctx, o) => {
   if (!widgetsEnabled()) return false;
   if (['completed', 'rejected', 'cancelled'].includes(o.status)) return false;
   const built = buildWidget(orderHtml(), orderChatData(o));
-  return trySend(chatIdOf(ctx), built, `✦ Pricelex Worldwide · Order #${o.id}`);
+  return trySend(chatIdOf(ctx), built, `✦ Pricelex Worldwide · Заявка #${o.id}`);
 };
 
 /* ---------- widget_query handling ---------- */
@@ -216,8 +217,13 @@ module.exports = {
 
 function ratesChatData() {
   const s = store.get().settings;
+  // [название, курс BTC за $1, доступна] для каждой карты отдельно.
   return {
-    g: Number(s.rateGOOGLEUSD) || 0,
+    r: currencies.list().map((p) => [
+      p.label.replace(' Gift Card', ''),
+      Number(currencies.rateOf(s, p.currency)) || 0,
+      currencies.isEnabled(s, p.key) ? 1 : 0,
+    ]),
     on: !!s.online,
   };
 }
