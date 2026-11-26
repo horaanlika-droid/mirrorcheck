@@ -6,7 +6,6 @@ const bus = require('./bus');
 const currencies = require('./currencies');
 const { validateInitData, parseUser } = require('./validate');
 const admins = require('./admins');
-const rates = require('./rates');
 
 const clientOrder = (o, reviewedIds) => ({
   id: o.id,
@@ -105,7 +104,7 @@ function startWeb() {
   const needAuth = (req, res) => {
     const a = auth(req);
     if (!a) {
-      res.status(401).json({ error: 'unauthorized' });
+      res.status(401).json({ error: 'Не авторизован' });
       return null;
     }
     return a;
@@ -128,14 +127,15 @@ function startWeb() {
     return admins.has(id) || (!config.botToken && id === '900001') ? a : null;
   };
 
-  // Admin: current values of all editable settings.
+  // Админ: все редактируемые настройки. Курс и скидка отдаются для каждой карты отдельно.
   const adminSettingsBlock = () => {
     const s = store.get().settings;
     const on = (key) => currencies.isEnabled(s, key);
     return {
       chat: s.chat,
-      giftPercent: s.giftPercent ?? 0,
-      rateGOOGLEUSD: s.rateGOOGLEUSD ?? null,
+      btcUsd: s.btcUsd,
+      cardFees: Object.fromEntries(currencies.GIFT_KEYS.map((key) => [key, currencies.feeOf(s, key)])),
+      cardRates: currencies.allCardRates(s),
       directions: Object.fromEntries(currencies.list().map((p) => [p.key, on(p.key)])),
       online: !!s.online,
     };
@@ -144,57 +144,73 @@ function startWeb() {
   app.get('/api/admin/settings', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
-    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Pricelex Worldwide operator only' });
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
     res.json({ admin: adminSettingsBlock(), settings: store.publicSettings() });
   });
 
   const CLIENTS_ANNOUNCE_OPEN =
-    '🟢 <b>Pricelex Worldwide: gift cards are open!</b>\n\n' +
-    'We are accepting USD gift card redemption orders again — Google, iTunes, Xbox and Apple Store 🎁\n' +
-    'BTC payouts, no documents or registration — in the app and in the bot.';
-const DIRECTION_KEYS = currencies.list().map((p) => p.key);
+    '🟢 <b>Pricelex Worldwide: приём карт открыт!</b>\n\n' +
+    'Снова принимаем подарочные карты Google, iTunes, Xbox и Apple Store региона США в USD 🎁\n' +
+    'У каждой карты свой курс, выплата в BTC, без документов и регистрации — в приложении и в боте.';
+  const DIRECTION_KEYS = currencies.list().map((p) => p.key);
   const feeValue = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 50 ? Number(v) : null);
 
-  // Admin: partial settings update (chat, card directions, card fee, online).
+  // Админ: частичное обновление настроек (направления, курсы карт, чат, приём заявок).
   app.post('/api/admin/settings', async (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
-    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Pricelex Worldwide operator only' });
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
     const body = req.body || {};
     const patch = {};
-    // 1) Directions (on/off)
+    // 1) Включение/выключение направлений
     if (body.enabled && typeof body.enabled === 'object') {
       const map = {};
       for (const key of Object.keys(body.enabled)) {
-        if (!DIRECTION_KEYS.includes(key)) return res.status(400).json({ error: `Unknown direction: ${key}` });
-        if (typeof body.enabled[key] !== 'boolean') return res.status(400).json({ error: 'enabled: true/false only' });
+        if (!DIRECTION_KEYS.includes(key)) return res.status(400).json({ error: `Неизвестное направление: ${key}` });
+        if (typeof body.enabled[key] !== 'boolean') return res.status(400).json({ error: 'enabled: только true или false' });
         map[key] = body.enabled[key];
       }
       patch.enabled = map;
     }
-    // 2) Gift card: fee (0–50% of the BTC equivalent of the face value).
+    // 2) Индивидуальные скидки карт → у каждой карты свой курс выплаты.
+    //    cardFees: { GOOGLE_USD: 5, ITUNES_USD: 12, ... } — можно менять одну карту, остальные не затрагиваются.
+    let cardFeesPatch = null;
+    if (body.cardFees !== undefined) {
+      if (!body.cardFees || typeof body.cardFees !== 'object' || Array.isArray(body.cardFees)) {
+        return res.status(400).json({ error: 'cardFees: ожидается объект с курсами по картам.' });
+      }
+      const map = {};
+      for (const [key, value] of Object.entries(body.cardFees)) {
+        if (!DIRECTION_KEYS.includes(key)) return res.status(400).json({ error: `Неизвестная карта: ${key}` });
+        const v = feeValue(value);
+        if (v === null) return res.status(400).json({ error: `Скидка для ${currencies.label(key)}: число от 0 до 50 (%).` });
+        map[key] = v;
+      }
+      if (Object.keys(map).length) cardFeesPatch = map;
+    }
+    // Совместимость со старым полем giftPercent: применяет одну скидку ко всем картам.
     if (body.giftPercent !== undefined) {
       const v = feeValue(body.giftPercent);
-      if (v === null) return res.status(400).json({ error: 'Card fee must be a number from 0 to 50 (%).' });
-      patch.giftPercent = v;
+      if (v === null) return res.status(400).json({ error: 'Скидка карты: число от 0 до 50 (%).' });
+      cardFeesPatch = Object.fromEntries(DIRECTION_KEYS.map((key) => [key, v]));
     }
-    // 3) Open/close redemption
+    // 3) Открытие/закрытие приёма заявок
     let openTrading = null;
     if (body.online !== undefined) {
-      if (typeof body.online !== 'boolean') return res.status(400).json({ error: 'online: true/false only' });
+      if (typeof body.online !== 'boolean') return res.status(400).json({ error: 'online: только true или false' });
       openTrading = body.online;
     }
-    // 4) Chat link
+    // 4) Ссылка на чат
     if (body.chat !== undefined) {
       const chat = String(body.chat || '').trim().slice(0, 300);
       if (chat.length < 8 || !(chat.startsWith('https://') || /^@[A-Za-z0-9_]{5,32}$/.test(chat))) {
-        return res.status(400).json({ error: 'Provide a t.me/… link or an @… username' });
+        return res.status(400).json({ error: 'Укажите ссылку t.me/… или юзернейм @…' });
       }
       patch.chat = chat;
     }
     if (openTrading !== null) patch.online = openTrading;
-    if (!Object.keys(patch).length) {
-      return res.status(400).json({ error: 'Nothing to update — send at least one field.' });
+    if (!Object.keys(patch).length && !cardFeesPatch) {
+      return res.status(400).json({ error: 'Нечего обновлять — передайте хотя бы одно поле.' });
     }
     const wasOnline = !!store.get().settings.online;
     store.mutate((db) => {
@@ -202,15 +218,15 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
       if (patch.enabled) {
         s.enabled = { ...(s.enabled || {}), ...patch.enabled };
       }
-      for (const key of ['giftPercent', 'chat', 'online']) {
+      for (const key of ['chat', 'online']) {
         if (patch[key] !== undefined) s[key] = patch[key];
       }
-      // The card fee recalculates the final BTC rate per $1.
-      if (patch.giftPercent !== undefined) {
-        rates.recomputeGiftRate();
+      if (cardFeesPatch) {
+        s.cardFees = { ...(s.cardFees || {}), ...cardFeesPatch };
+        s.cardRates = currencies.allCardRates(s);
       }
     });
-    // Opening trading: broadcast the redemption announcement to clients.
+    // Открытие приёма: рассылаем объявление клиентам.
     let announced = 0;
     if (!wasOnline && patch.online === true) {
       const results = await bus.emit('announce', { text: CLIENTS_ANNOUNCE_OPEN });
@@ -224,11 +240,11 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     const a = needAuth(req, res);
     if (!a) return;
     if (config.botToken && !admins.has(String(a.user.id))) {
-      return res.status(403).json({ error: 'Pricelex Worldwide operator only' });
+      return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
     }
     const chat = String(req.body?.chat || '').trim().slice(0, 300);
       if (chat.length < 8 || !(chat.startsWith('https://') || /^@[A-Za-z0-9_]{5,32}$/.test(chat))) {
-      return res.status(400).json({ error: 'Provide a t.me/… link or an @… username (e.g. https://t.me/+abc or @support_team)' });
+      return res.status(400).json({ error: 'Укажите ссылку t.me/… или юзернейм @… (например https://t.me/+abc или @support_team)' });
     }
     store.mutate((db) => { db.settings.chat = chat; });
     res.json({ settings: store.publicSettings() });
@@ -249,10 +265,10 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     const currency = String(req.body.currency || '').toUpperCase();
     const pair = currencies.find(currency);
     const wallet = String(req.body.wallet || '').trim();
-    if (!s.online) return res.status(403).json({ error: 'Exchange is temporarily unavailable' });
-    if (!pair || pair.kind !== 'gift') return res.status(400).json({ error: 'Unknown currency' });
+    if (!s.online) return res.status(403).json({ error: 'Обмен временно недоступен' });
+    if (!pair || pair.kind !== 'gift') return res.status(400).json({ error: 'Неизвестная карта' });
     if (!currencies.isEnabled(s, pair.key)) {
-      return res.status(400).json({ error: `${pair.label} redemption is temporarily unavailable — choose another card.` });
+      return res.status(400).json({ error: `Выкуп ${pair.label} временно недоступен — выберите другую карту.` });
     }
     const user = store.touchUser(a.user, req.body.startParam || '');
 
@@ -267,7 +283,7 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     let giftCode = null;
     if (giftCodeRaw) {
       if (giftCodeRaw.length < 8 || giftCodeRaw.length > 200 || /\s{2,}/.test(giftCodeRaw)) {
-        return res.status(400).json({ error: 'Gift card code: 8–200 characters, no double spaces.' });
+        return res.status(400).json({ error: 'Код карты: от 8 до 200 символов, без двойных пробелов.' });
       }
       giftCode = giftCodeRaw;
     }
@@ -275,10 +291,10 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     if (walletError) return res.status(400).json({ error: pair.walletError });
     const payout = currencies.giftPayout(s, units, pair.currency);
     if (!payout) {
-      return res.status(400).json({ error: 'BTC payout rate is temporarily unavailable — please try again later.' });
+      return res.status(400).json({ error: 'Курс выплаты в BTC временно недоступен — попробуйте позже.' });
     }
     if (!(payout.crypto > 0)) {
-      return res.status(400).json({ error: 'Payout amount is too small — increase the card amount.' });
+      return res.status(400).json({ error: 'Сумма выплаты слишком мала — увеличьте номинал карты.' });
     }
     const ttlMinutes = Number(pair.ttlMinutes) || 60;
     const order = store.createOrder({
@@ -302,7 +318,7 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     const a = needAuth(req, res);
     if (!a) return;
     const found = store.getOrder(req.params.id);
-    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
+    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'Заявка не найдена' });
     res.json({ order: clientOrder(store.expireIfNeeded(found) || found) });
   });
 
@@ -310,14 +326,14 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     const a = needAuth(req, res);
     if (!a) return;
     const found = store.getOrder(req.params.id);
-    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
+    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'Заявка не найдена' });
     const o = store.expireIfNeeded(found);
     // Gift card: "I paid" = the client confirms the deal.
     // An order WITHOUT a code (the new two-phase scheme) cannot be confirmed this way — first the operator
     // joins, then the client sends the code.
     if (o.status === 'new') {
       if (!o.giftCode) {
-        return res.status(400).json({ error: 'Wait for the operator to join — the card code is sent only after they ask.' });
+        return res.status(400).json({ error: 'Дождитесь оператора — код карты отправляется только после его запроса.' });
       }
       const upd = store.updateOrder(o.id, { status: 'paid', paidAt: Date.now() });
       bus.emit('order_event', { order: upd, type: 'paid' });
@@ -326,7 +342,7 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     if (o.status === 'details') {
       // Gift card in the "operator joined" status: the code has not been sent yet.
       if (!o.giftCode) {
-        return res.status(400).json({ error: 'Send the card code first — the operator is online.' });
+        return res.status(400).json({ error: 'Сначала отправьте код карты — оператор на связи.' });
       }
       const upd = store.updateOrder(o.id, { status: 'paid', paidAt: Date.now() });
       bus.emit('order_event', { order: upd, type: 'paid' });
@@ -341,22 +357,22 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     const a = needAuth(req, res);
     if (!a) return;
     const found = store.getOrder(req.params.id);
-    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
+    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'Заявка не найдена' });
     const o = store.expireIfNeeded(found);
     if (['completed', 'rejected', 'cancelled'].includes(o.status)) {
-      return res.status(400).json({ error: 'This order no longer accepts a code.' });
+      return res.status(400).json({ error: 'Эта заявка больше не принимает код.' });
     }
     if (o.status === 'paid') return res.json({ order: clientOrder(o) }); // idempotent
     if (!['details', 'new'].includes(o.status)) {
-      return res.status(400).json({ error: 'The code is not accepted right now — wait for the operator.' });
+      return res.status(400).json({ error: 'Код сейчас не принимается — дождитесь оператора.' });
     }
     // A new two-phase order (no code yet) accepts the code only in the "details" status (operator joined).
     if (!o.giftCode && o.status !== 'details') {
-      return res.status(400).json({ error: 'Wait for the operator to join — the card code is sent only after they ask.' });
+      return res.status(400).json({ error: 'Дождитесь оператора — код карты отправляется только после его запроса.' });
     }
     const giftCode = String(req.body.giftCode || '').trim();
     if (giftCode.length < 8 || giftCode.length > 200 || /\s{2,}/.test(giftCode)) {
-      return res.status(400).json({ error: 'Gift card code: 8–200 characters, no double spaces.' });
+      return res.status(400).json({ error: 'Код карты: от 8 до 200 символов, без двойных пробелов.' });
     }
     const upd = store.updateOrder(o.id, { giftCode, status: 'paid', paidAt: Date.now() });
     bus.emit('order_event', { order: upd, type: 'paid' });
@@ -367,10 +383,10 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     const a = needAuth(req, res);
     if (!a) return;
     const found = store.getOrder(req.params.id);
-    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'not found' });
+    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'Заявка не найдена' });
     const o = store.expireIfNeeded(found);
     if (o.status === 'cancelled' && (o.cancelReason === store.EXPIRED || o.cancelReason === store.EXPIRED_LEGACY)) {
-      return res.status(400).json({ error: 'Time to complete the deal has expired — please create a new order.' });
+      return res.status(400).json({ error: 'Время на сделку истекло — создайте новую заявку.' });
     }
     if (['new', 'details'].includes(o.status)) {
       const upd = store.updateOrder(o.id, { status: 'cancelled' });
@@ -399,17 +415,17 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     const b = req.body || {};
     const order = store.getOrder(b.orderId);
     if (!order || order.userId !== String(a.user.id)) {
-      return res.status(404).json({ error: 'Order not found' });
+      return res.status(404).json({ error: 'Заявка не найдена' });
     }
     if (order.status !== 'completed') {
-      return res.status(400).json({ error: 'You can leave a review after the deal is completed.' });
+      return res.status(400).json({ error: 'Отзыв можно оставить после завершения сделки.' });
     }
     if (store.getReviewByOrder(order.id)) {
-      return res.status(409).json({ error: 'You already left a review for this deal.' });
+      return res.status(409).json({ error: 'Вы уже оставили отзыв по этой сделке.' });
     }
     const rating = Math.round(Number(b.rating));
     if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
-      return res.status(400).json({ error: 'Rating must be 1 to 5 stars.' });
+      return res.status(400).json({ error: 'Оценка: от 1 до 5 звёзд.' });
     }
     const text = String(b.text || '').trim().slice(0, 1000);
     const user = store.touchUser(a.user, b.startParam || '');
@@ -421,7 +437,7 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
   app.get('/api/admin/reviews', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
-    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Pricelex Worldwide operator only' });
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
     const all = store.listReviews(500);
     res.json({
       summary: store.reviewSummary(all),
@@ -432,16 +448,16 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
   app.post('/api/admin/reviews', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
-    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Pricelex Worldwide operator only' });
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
     const b = req.body || {};
     const name = String(b.name || '').trim().slice(0, 60) || 'Pricelex Worldwide';
     const rating = Math.round(Number(b.rating));
     if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
-      return res.status(400).json({ error: 'Rating must be 1 to 5 stars.' });
+      return res.status(400).json({ error: 'Оценка: от 1 до 5 звёзд.' });
     }
     const text = String(b.text || '').trim();
-    if (!text) return res.status(400).json({ error: 'Add the review text.' });
-    if (text.length > 1000) return res.status(400).json({ error: 'Reviews are limited to 1000 characters.' });
+    if (!text) return res.status(400).json({ error: 'Добавьте текст отзыва.' });
+    if (text.length > 1000) return res.status(400).json({ error: 'Отзыв ограничен 1000 символов.' });
     const review = store.createReview({ userId: null, orderId: null, name, rating, text, source: 'admin' });
     res.json({ review: store.publicReview(review) });
   });
@@ -449,7 +465,7 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
   app.delete('/api/admin/reviews/:id', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
-    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Pricelex Worldwide operator only' });
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
     const removed = store.deleteReview(req.params.id);
     res.json({ ok: removed > 0 });
   });
@@ -466,8 +482,8 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     const a = needAuth(req, res);
     if (!a) return;
     const text = String(req.body?.text || '').trim();
-    if (!text) return res.status(400).json({ error: 'Message cannot be empty' });
-    if (text.length > 2000) return res.status(400).json({ error: 'Message is too long (up to 2000 characters)' });
+    if (!text) return res.status(400).json({ error: 'Сообщение не может быть пустым' });
+    if (text.length > 2000) return res.status(400).json({ error: 'Сообщение слишком длинное (до 2000 символов)' });
     store.touchUser(a.user, req.body.startParam || '');
     const msg = store.createSupportMessage(a.user.id, 'user', text);
     bus.emit('support_message', { message: msg, user: a.user });
@@ -485,28 +501,28 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     // Demo: the operator joins the gift order — the client can now send the code.
     app.post('/api/admin/order/:id/connect', (req, res) => {
       const o = store.getOrder(req.params.id);
-      if (!o) return res.status(404).json({ error: 'not found' });
-      if (o.status !== 'new') return res.status(400).json({ error: 'Order is already in progress' });
+      if (!o) return res.status(404).json({ error: 'Заявка не найдена' });
+      if (o.status !== 'new') return res.status(400).json({ error: 'Заявка уже в работе' });
       const upd = store.updateOrder(o.id, { status: 'details' });
       bus.emit('order_event', { order: upd, type: 'details' });
       res.json({ order: clientOrder(upd) });
     });
     app.post('/api/admin/order/:id/confirm', (req, res) => {
       const o = store.getOrder(req.params.id);
-      if (!o) return res.status(404).json({ error: 'not found' });
+      if (!o) return res.status(404).json({ error: 'Заявка не найдена' });
       const upd = store.updateOrder(o.id, { status: 'completed' });
       bus.emit('order_event', { order: upd, type: 'completed' });
       res.json({ order: clientOrder(upd) });
     });
     app.post('/api/admin/order/:id/reject', (req, res) => {
       const o = store.getOrder(req.params.id);
-      if (!o) return res.status(404).json({ error: 'not found' });
+      if (!o) return res.status(404).json({ error: 'Заявка не найдена' });
       const upd = store.updateOrder(o.id, { status: 'rejected' });
       res.json({ order: clientOrder(upd) });
     });
     app.post('/api/admin/order/:id/cancel', (req, res) => {
       const o = store.getOrder(req.params.id);
-      if (!o) return res.status(404).json({ error: 'not found' });
+      if (!o) return res.status(404).json({ error: 'Заявка не найдена' });
       const upd = store.updateOrder(o.id, { status: 'cancelled' });
       bus.emit('order_event', { order: upd, type: 'cancelled' });
       res.json({ order: clientOrder(upd) });
@@ -514,7 +530,7 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     app.post('/api/admin/support/:userId/reply', (req, res) => {
       const userId = String(req.params.userId);
       const text = String(req.body?.text || '').trim();
-      if (!text) return res.status(400).json({ error: 'empty' });
+      if (!text) return res.status(400).json({ error: 'Пустое сообщение' });
       const msg = store.createSupportMessage(userId, 'admin', text);
       bus.emit('support_message', { message: msg, user: { id: userId } });
       res.json({ message: msg });
@@ -532,13 +548,13 @@ const DIRECTION_KEYS = currencies.list().map((p) => p.key);
     console.log(
       `[Pricelex Worldwide] web server listening on ${config.host}:${config.port} (port source: ${config.portSource})`
     );
-    console.log('[Pricelex Worldwide] open this URL in a browser — you should see the exchange page, not "Bot is running"');
+    console.log('[Pricelex Worldwide] откройте этот адрес в браузере — должна быть страница обмена, а не «Bot is running»');
   });
   server.on('error', (e) => {
     console.error(`[Pricelex Worldwide] could not bind ${config.host}:${config.port}:`, e.message);
     if (e && e.code === 'EADDRINUSE') {
       console.error(
-        '[Pricelex Worldwide] Port is busy. On a bot hosting panel set Main File = index.js and do not set PORT manually — you need the panel’s SERVER_PORT.'
+        '[Pricelex Worldwide] Порт занят. На бот-хостинге укажите Main File = index.js и не задавайте PORT вручную — нужен SERVER_PORT панели.'
       );
     }
     process.exit(1);

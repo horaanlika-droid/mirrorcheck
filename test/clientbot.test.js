@@ -14,6 +14,7 @@ process.env.ADMIN_IDS = '';
 delete process.env.WIDGETS;
 
 const store = require('../src/store');
+const currencies = require('../src/currencies');
 const { createBot } = require('../src/bot');
 const widget = require('../src/widget');
 const botInfo = { id: 123456, is_bot: true, first_name: 'Test', username: 'pricelex_test_bot' };
@@ -70,6 +71,38 @@ test('admin /start still opens the operator console, not the client menu', async
   assert.ok(cb.includes('m:orders') && !cb.some((d) => d.startsWith('c:')));
 });
 
+test('операторский бот: отдельная настройка скидки для каждой карты', async () => {
+  await text(111, '/start');
+  await click(111, 'm:settings');
+  const screen = lastCall('editMessageText') || lastCall('sendMessage');
+  const cb = markupCallbacks(screen);
+  for (const key of currencies.GIFT_KEYS) {
+    assert.ok(cb.includes(`s:fee_${key}`), `кнопка скидки для ${key}`);
+  }
+  assert.ok(String(screen.text).includes('Курс каждой карты — отдельный'));
+});
+
+test('клиентский бот показывает четыре разных курса — у каждой карты свой', async () => {
+  const client = 1012;
+  const original = JSON.parse(JSON.stringify(store.get().settings));
+  try {
+    store.mutate((db) => {
+      db.settings.btcUsd = 40_000;
+      db.settings.cardFees = { GOOGLE_USD: 0, ITUNES_USD: 10, XBOX_USD: 20, APPLE_STORE_USD: 30 };
+      db.settings.cardRates = currencies.allCardRates(db.settings);
+    });
+    await text(client, '/start');
+    await click(client, 'c:exchange');
+    const screen = lastCall('editMessageText') || lastCall('sendMessage');
+    const rates = [...String(screen.text).matchAll(/1 \$ = ([0-9.]+)/g)].map((m) => m[1]);
+    assert.equal(rates.length, 4, 'в списке четыре строки с курсом');
+    assert.equal(new Set(rates).size, 4, 'все курсы разные');
+    assert.ok(String(screen.text).includes('Курс у каждой карты свой'));
+  } finally {
+    store.mutate((db) => { db.settings = original; });
+  }
+});
+
 test('group chats are ignored for client flow', async () => {
   await text(555, '/start', 'group');
   assert.equal(calls.length, 0);
@@ -81,7 +114,7 @@ test('info, referrals and support screens render; support message reaches the op
   await click(client, 'c:info');
   assert.ok(String((lastCall('editMessageText') || {}).text).includes('Pricelex Worldwide'));
   await click(client, 'c:refs');
-  assert.ok(String((lastCall('editMessageText') || {}).text).includes('Referral'));
+  assert.ok(String((lastCall('editMessageText') || {}).text).includes('Реферальная'));
   calls = [];
   await click(client, 'c:support');
   await text(client, 'Где моя заявка?');
@@ -100,20 +133,20 @@ test('gift flow end-to-end: menu → exchange → Google Gift Card → paid → 
   await click(client, 'c:buy:GOOGLE_USD');
   screen = lastCall('editMessageText');
   assert.ok(String(screen.text).includes('Google Gift Card'));
-  assert.ok(String(screen.text).includes('Card transfer rules'), 'the rules dialog opens first');
-  assert.ok(String(screen.text).includes('Minimal digital footprint'), 'digital footprint mentioned in the gift card');
-  assert.ok(String(screen.text).includes("Don't send anything"));
-  assert.doesNotMatch(String(screen.text), /commission|fee/i, 'client never sees the fee');
+  assert.ok(String(screen.text).includes('Правила передачи карты'), 'сначала открываются правила');
+  assert.ok(String(screen.text).includes('Минимальный цифровой след'), 'в карточке упомянут цифровой след');
+  assert.ok(String(screen.text).includes('Ничего не отправляйте'));
+  assert.doesNotMatch(String(screen.text), /commission|fee|комисси/i, 'клиент не видит скидку');
 
   // Rules → amount. The code is NOT asked at order creation.
   await click(client, 'c:giftnom:GOOGLE_USD');
   screen = lastCall('editMessageText');
   assert.ok(markupCallbacks(screen).includes('c:units:GOOGLE_USD:10'));
-  assert.doesNotMatch(String(screen.text), /commission|fee/i, 'the displayed rate does not reveal the fee');
+  assert.doesNotMatch(String(screen.text), /commission|fee|комисси/i, 'в курсе не раскрывается скидка');
   await click(client, 'c:units:GOOGLE_USD:10');
   const askWallet = lastCall('editMessageText');
-  assert.match(String(askWallet.text), /wallet/i, 'after the amount only the wallet is asked');
-  assert.ok(!/code/i.test(String(askWallet.text)), 'the code is not asked before order creation');
+  assert.match(String(askWallet.text), /кошел/i, 'после номинала спрашивают только кошелёк');
+  assert.ok(!/код|code/i.test(String(askWallet.text)), 'до создания заявки код не спрашивают');
   // Bitcoin address.
   await text(client, 'bc1' + 'a'.repeat(30));
   const created = store.get().orders.find((o) => String(o.userId) === String(client));
@@ -122,21 +155,21 @@ test('gift flow end-to-end: menu → exchange → Google Gift Card → paid → 
   assert.equal(created.units, 10);
   assert.equal(created.currency, 'GOOGLE_USD');
   assert.equal(created.payoutCurrency, 'BTC');
-  assert.equal(created.crypto, Math.floor(10 * created.rate * 1e8 + 1e-6) / 1e8, 'BTC payout is computed from the shared rate');
+  assert.equal(created.crypto, Math.floor(10 * created.rate * 1e8 + 1e-6) / 1e8, 'выплата считается по курсу этой карты');
   assert.equal(created.network, null);
   assert.equal(created.giftCode ?? null, null, 'order has no code — the code comes only after the operator joins');
   assert.equal(created.status, 'new');
 
   // The code cannot be sent before the operator joins.
   await click(client, `c:sendcode:${created.id}`);
-  assert.match(String(lastCall('editMessageText').text), /after the operator joins/i);
+  assert.match(String(lastCall('editMessageText').text), /подключения оператора/i);
   assert.equal(store.getOrder(created.id).status, 'new');
   assert.equal(store.getOrder(created.id).giftCode ?? null, null);
 
   // The operator joins (in production — the "🤝 Connect" button in the operator bot).
   store.updateOrder(created.id, { status: 'details' });
   await click(client, `c:sendcode:${created.id}`);
-  assert.match(String(lastCall('editMessageText').text), /The operator is in the order/);
+  assert.match(String(lastCall('editMessageText').text), /Оператор в заявке/);
   await text(client, 'XXXX-YYYY-ZZZZ-0001');
   assert.equal(store.getOrder(created.id).status, 'paid');
   assert.equal(store.getOrder(created.id).giftCode, 'XXXX-YYYY-ZZZZ-0001');
@@ -177,7 +210,7 @@ test('expired gift link and unknown order do not crash the client', async () => 
   await text(1002, '/start');
   await click(1002, 'c:order:999999');
   const screen = lastCall('editMessageText') || lastCall('sendMessage');
-  assert.ok(String(screen.text).includes('Order not found'));
+  assert.ok(String(screen.text).includes('Заявка не найдена'));
 });
 
 test('widget send is attempted when WIDGETS=1 and falls back to text on Telegram error', async () => {
@@ -221,7 +254,7 @@ test('widget send is attempted when WIDGETS=1 and falls back to text on Telegram
   assert.ok(String(sentPayloads[0].body.html).includes('Pricelex Worldwide'));
   assert.ok(Buffer.byteLength(sentPayloads[0].body.html, 'utf8') <= 32768);
   assert.ok(Buffer.byteLength(sentPayloads[0].body.chat_data, 'utf8') <= 1024);
-  assert.ok(!calls.some((c) => (c.method === 'editMessageText' || c.method === 'sendMessage') && String(c.text).includes(`Order #${order.id}`)));
+  assert.ok(!calls.some((c) => (c.method === 'editMessageText' || c.method === 'sendMessage') && String(c.text).includes(`Заявка #${order.id}`)));
   delete process.env.WIDGETS;
 });
 
@@ -267,6 +300,26 @@ test('widget_query is answered and message state refreshed via editMessageWidget
   } });
   assert.equal(store.getOrder(order.id).status, 'paid');
   delete process.env.WIDGETS;
+});
+
+test('виджет курсов передаёт четыре отдельных курса — по одному на карту', () => {
+  const original = JSON.parse(JSON.stringify(store.get().settings));
+  try {
+    store.mutate((db) => {
+      db.settings.btcUsd = 40_000;
+      db.settings.cardFees = { GOOGLE_USD: 0, ITUNES_USD: 9, XBOX_USD: 18, APPLE_STORE_USD: 27 };
+      db.settings.cardRates = currencies.allCardRates(db.settings);
+    });
+    const data = widget._ratesChatData();
+    assert.equal(data.r.length, 4, 'в виджете четыре строки карт');
+    assert.equal(new Set(data.r.map((row) => row[1])).size, 4, 'курсы не равны друг другу');
+    assert.deepEqual(data.r.map((row) => row[0]), ['Google', 'iTunes', 'Xbox', 'Apple Store']);
+    const html = widget._ratesHtml();
+    assert.ok(html.includes('КУРСЫ КАРТ') && html.includes('США · USD'), 'виджет на русском');
+    assert.ok(widget._buildWidget(html, data), 'виджет укладывается в лимиты Bot API');
+  } finally {
+    store.mutate((db) => { db.settings = original; });
+  }
 });
 
 test('widget «paid» is rejected for someone else’s order', async () => {

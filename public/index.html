@@ -1,14 +1,14 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#000000" />
-  <title>Pricelex Worldwide — Gift Cards → BTC</title>
+  <title>Pricelex Worldwide — подарочные карты → BTC</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <meta property="og:title" content="Pricelex Worldwide — Gift Cards → BTC" />
-  <meta property="og:description" content="Private exchange of USD gift cards for Bitcoin: fast exchange with transparent math, no account freezes and minimal digital footprint." />
+  <meta property="og:title" content="Pricelex Worldwide — подарочные карты → BTC" />
+  <meta property="og:description" content="Приватный обмен подарочных карт USD на Bitcoin: курс каждой карты виден заранее, без регистрации и лишних следов." />
   <meta property="og:image" content="/logo.png" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -21,11 +21,11 @@
     <div class="pl-inner">
       <img class="pl-logo" src="/logo.png" alt="" />
       <div class="pl-bar"><i></i></div>
-      <div class="pl-hint">GIFT CARDS · USD → BTC</div>
+      <div class="pl-hint">ПОДАРОЧНЫЕ КАРТЫ · USD → BTC</div>
     </div>
   </div>
   <script>
-    // Safety net for the preloader: if app.js never boots, the screen still hides.
+    // Страховка прелоадера: если app.js не запустился, экран всё равно скроется.
     setTimeout(function () {
       var el = document.getElementById('preloader');
       if (el && !el.classList.contains('done')) {
@@ -39,7 +39,7 @@
 
   <div class="app">
     <header class="hdr">
-      <div class="hdr-star">PRIVATE GIFT CARD BROKERAGE</div>
+      <div class="hdr-star">ЧАСТНЫЙ БРОКЕР ПОДАРОЧНЫХ КАРТ</div>
       <img class="hdr-logo" src="/logo.png" alt="Pricelex Worldwide" width="220" />
       <div class="hdr-info">Google Play · iTunes · Xbox · Apple Store</div>
       <div class="hdr-status" id="hdrStatus"></div>
@@ -63,8 +63,8 @@
     <div class="sheet-panel">
       <div class="sheet-handle"></div>
       <div class="sheet-head">
-        <div class="sheet-title" id="sheetTitle">Cryptocurrency</div>
-        <button class="sheet-close" id="sheetClose" aria-label="Close">
+        <div class="sheet-title" id="sheetTitle">Подарочные карты</div>
+        <button class="sheet-close" id="sheetClose" aria-label="Закрыть">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
@@ -78,21 +78,21 @@
     <div class="sheet-panel">
       <div class="sheet-handle"></div>
       <div class="sheet-head">
-        <div class="sheet-title" id="giftRulesTitle">How to hand over the card</div>
-        <button class="sheet-close" id="giftRulesClose" aria-label="Close">
+        <div class="sheet-title" id="giftRulesTitle">Как передать карту</div>
+        <button class="sheet-close" id="giftRulesClose" aria-label="Закрыть">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
       <div class="rules-body">
-        <div class="rules-item"><b>1.</b> A <b id="giftRulesBrand">Google Gift Card</b> of the US region, denominated in <b>USD ($)</b>, with a full unused balance. Cards of other regions and currencies are not accepted.</div>
-        <div class="rules-item"><b>2.</b> First the order is created, then an <b>operator connects</b> — wait for their signal. <b>Send nothing and share the code with no one until the operator tells you to.</b></div>
-        <div class="rules-item"><b>3.</b> You enter the card code in the app <b>only after the operator connects</b>. After you send it, the operator verifies the card (usually 5–15 minutes).</div>
-        <div class="rules-item"><b>4.</b> The payout is in <b>BTC</b> to the Bitcoin wallet you provide. The amount is set by the current BTC/USD rate.</div>
-        <div class="rules-item"><b>5.</b> Pricelex Worldwide support never asks for your code or money outside an order. Never share the code with anyone except the operator within your order.</div>
-        <div class="rules-item"><b>6.</b> You have <b>1 hour</b> from the moment the order is created. If the card turns out to be invalid, the order is declined without payout.</div>
+        <div class="rules-item"><b>1.</b> Карта <b id="giftRulesBrand">Google Gift Card</b> региона <b>США</b>, номиналом в <b>USD ($)</b>, с полным неиспользованным балансом. Карты других регионов и валют не принимаем.</div>
+        <div class="rules-item"><b>2.</b> Сначала создаётся заявка, затем <b>подключается оператор</b> — дождитесь его сигнала. <b>Ничего не отправляйте и никому не сообщайте код, пока оператор не попросит.</b></div>
+        <div class="rules-item"><b>3.</b> Код карты вы вводите в приложении <b>только после подключения оператора</b>. После отправки оператор проверит карту (обычно 5–15 минут).</div>
+        <div class="rules-item"><b>4.</b> Выплата в <b>BTC</b> на указанный вами Bitcoin-кошелёк. Сумма считается по курсу выбранной карты.</div>
+        <div class="rules-item"><b>5.</b> Поддержка Pricelex Worldwide никогда не просит код или деньги вне заявки. Не передавайте код никому, кроме оператора внутри заявки.</div>
+        <div class="rules-item"><b>6.</b> На сделку даётся <b>1 час</b> с момента создания заявки. Если карта окажется недействительной, заявку отклонят без выплаты.</div>
       </div>
-      <button class="btn btn-primary" id="giftRulesConfirm" style="width:100%">Got it — create order</button>
-      <button class="btn btn-ghost" id="giftRulesCancel" style="width:100%;margin-top:8px">Cancel</button>
+      <button class="btn btn-primary" id="giftRulesConfirm" style="width:100%">Понятно — создать заявку</button>
+      <button class="btn btn-ghost" id="giftRulesCancel" style="width:100%;margin-top:8px">Отмена</button>
     </div>
   </div>
 
@@ -101,17 +101,17 @@
     <div class="sheet-panel">
       <div class="sheet-handle"></div>
       <div class="sheet-head">
-        <div class="sheet-title" id="reviewSheetTitle">Rate your exchange</div>
-        <button class="sheet-close" id="reviewSheetClose" aria-label="Close">
+        <div class="sheet-title" id="reviewSheetTitle">Оцените обмен</div>
+        <button class="sheet-close" id="reviewSheetClose" aria-label="Закрыть">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
-      <div class="review-order" id="reviewOrderLine">Order</div>
-      <div class="star-input" id="reviewStars" role="radiogroup" aria-label="Your rating"></div>
-      <textarea class="review-textarea" id="reviewText" rows="3" maxlength="1000" placeholder="A few words about the exchange — optional" aria-label="Review text"></textarea>
+      <div class="review-order" id="reviewOrderLine">Заявка</div>
+      <div class="star-input" id="reviewStars" role="radiogroup" aria-label="Ваша оценка"></div>
+      <textarea class="review-textarea" id="reviewText" rows="3" maxlength="1000" placeholder="Пара слов об обмене — по желанию" aria-label="Текст отзыва"></textarea>
       <div class="f-err" id="reviewErr"></div>
-      <button class="btn btn-primary" style="width:100%;margin-top:10px" id="reviewSubmit"><span>Submit review</span></button>
-      <button class="btn btn-ghost" style="width:100%;margin-top:8px" id="reviewCancel">Not now</button>
+      <button class="btn btn-primary" style="width:100%;margin-top:10px" id="reviewSubmit"><span>Отправить отзыв</span></button>
+      <button class="btn btn-ghost" style="width:100%;margin-top:8px" id="reviewCancel">Не сейчас</button>
     </div>
   </div>
 
@@ -120,8 +120,8 @@
     <div class="sheet-panel adm-panel">
       <div class="sheet-handle"></div>
       <div class="sheet-head">
-        <div class="sheet-title" id="adminSheetTitle">🛠 Admin</div>
-        <button class="sheet-close" id="adminSheetClose" aria-label="Close">
+        <div class="sheet-title" id="adminSheetTitle">🛠 Оператор</div>
+        <button class="sheet-close" id="adminSheetClose" aria-label="Закрыть">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
@@ -129,47 +129,46 @@
         <div class="adm-session-info">
           <span class="adm-dot" id="admSessionDot"></span>
           <span class="adm-session-text">
-            <b id="admSessionTitle">Trading is closed</b>
-            <small id="admSessionSub">Clients see “exchange temporarily unavailable”</small>
+            <b id="admSessionTitle">Приём заявок закрыт</b>
+            <small id="admSessionSub">Клиенты видят «обмен временно недоступен»</small>
           </span>
         </div>
-        <button class="adm-session-btn" id="admSessionBtn">🟢 Open trading</button>
+        <button class="adm-session-btn" id="admSessionBtn">🟢 Открыть приём</button>
       </div>
 
       <div class="adm-tabs" id="admTabs" role="tablist">
-        <button class="adm-tab on" data-tab="gift" role="tab">🎁 Cards</button>
-        <button class="adm-tab" data-tab="chat" role="tab">💬 Chat</button>
-        <button class="adm-tab" data-tab="reviews" role="tab">⭐ Reviews</button>
+        <button class="adm-tab on" data-tab="gift" role="tab">🎁 Карты</button>
+        <button class="adm-tab" data-tab="chat" role="tab">💬 Чат</button>
+        <button class="adm-tab" data-tab="reviews" role="tab">⭐ Отзывы</button>
       </div>
 
       <div class="adm-pane hidden" data-pane="gift">
-        <div class="adm-note">Google, iTunes, Xbox and Apple Store (US cards in USD) → BTC. The payout is recalculated from the current BTC/USD spot and the global fee; the operator confirms it after verifying the card.</div>
+        <div class="adm-note">Google, iTunes, Xbox и Apple Store (карты США в USD) → BTC. У каждой карты свой курс: он считается из общего спота BTC/USD и индивидуальной скидки карты. Оператор подтверждает выплату после проверки карты.</div>
         <div class="adm-toggles" id="admGiftDirs"></div>
-        <label class="f-label" for="admGiftFee" style="margin-top:14px"><span>Card fee, % of BTC equivalent</span></label>
-        <div class="f-box"><input id="admGiftFee" type="number" inputmode="decimal" min="0" max="50" step="1" placeholder="0"></div>
-        <div class="adm-preview" id="admGiftPreview">$10 card → BTC</div>
+        <label class="f-label" style="margin-top:14px"><span>Курс карты — скидка к споту, % (0–50)</span></label>
+        <div class="adm-fees" id="admGiftFees"></div>
         <div class="f-err" id="admGiftErr"></div>
-        <button class="btn btn-primary" style="margin-top:10px" id="admGiftSave"><span>Save cards</span></button>
+        <button class="btn btn-primary" style="margin-top:10px" id="admGiftSave"><span>Сохранить курсы</span></button>
       </div>
 
       <div class="adm-pane hidden" data-pane="chat">
-        <div class="adm-note">Support chat link. Saved instantly and visible to everyone on the site and in the app. The same setting changes in the bot: ⚙️ Settings → 💬 Chat.</div>
-        <label class="f-label" for="admChatLink"><span>Chat link</span></label>
-        <div class="f-box"><input id="admChatLink" placeholder="https://t.me/… or @username" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
+        <div class="adm-note">Ссылка на чат поддержки. Сохраняется мгновенно и видна всем на сайте и в приложении. То же меняется в боте: ⚙️ Настройки → 💬 Чат.</div>
+        <label class="f-label" for="admChatLink"><span>Ссылка на чат</span></label>
+        <div class="f-box"><input id="admChatLink" placeholder="https://t.me/… или @username" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
         <div class="f-err" id="admChatErr"></div>
-        <button class="btn btn-primary" style="margin-top:10px" id="admChatSave"><span>Save link</span></button>
+        <button class="btn btn-primary" style="margin-top:10px" id="admChatSave"><span>Сохранить ссылку</span></button>
       </div>
 
       <div class="adm-pane hidden" data-pane="reviews">
-        <div class="adm-note">Clients leave reviews after a completed deal. Here you can add a review manually and delete any review — changes show up instantly in the “Reviews” tab.</div>
-        <label class="f-label" for="admRevName"><span>Name in review</span></label>
-        <div class="f-box"><input id="admRevName" placeholder="Alex" maxlength="60" autocomplete="off"></div>
-        <div class="f-label" style="margin-top:10px"><span>Rating</span></div>
-        <div class="star-input compact" id="admRevRating" role="radiogroup" aria-label="Review rating"></div>
-        <label class="f-label" for="admRevText" style="margin-top:10px"><span>Review text</span></label>
-        <div class="f-box"><textarea id="admRevText" rows="3" maxlength="1000" placeholder="The operator replied fast, the payout landed within 10 minutes."></textarea></div>
+        <div class="adm-note">Клиенты оставляют отзывы после завершённой сделки. Здесь можно добавить отзыв вручную и удалить любой — изменения сразу видны во вкладке «Отзывы».</div>
+        <label class="f-label" for="admRevName"><span>Имя в отзыве</span></label>
+        <div class="f-box"><input id="admRevName" placeholder="Алексей" maxlength="60" autocomplete="off"></div>
+        <div class="f-label" style="margin-top:10px"><span>Оценка</span></div>
+        <div class="star-input compact" id="admRevRating" role="radiogroup" aria-label="Оценка отзыва"></div>
+        <label class="f-label" for="admRevText" style="margin-top:10px"><span>Текст отзыва</span></label>
+        <div class="f-box"><textarea id="admRevText" rows="3" maxlength="1000" placeholder="Оператор ответил быстро, выплата пришла за десять минут."></textarea></div>
         <div class="f-err" id="admRevErr"></div>
-        <button class="btn btn-primary" style="margin-top:10px" id="admRevAdd"><span>Add review</span></button>
+        <button class="btn btn-primary" style="margin-top:10px" id="admRevAdd"><span>Добавить отзыв</span></button>
         <div class="adm-rev-summary" id="admRevSummary"></div>
         <div class="adm-revlist" id="admRevList"></div>
       </div>

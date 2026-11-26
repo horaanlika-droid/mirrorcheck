@@ -1,4 +1,5 @@
-// Direct USD/BTC market pricing for USD gift-card → BTC payouts. No fiat conversion layer.
+// Прямое рыночное ценообразование USD/BTC для выплат за подарочные карты.
+// Спот один, а курс выплаты у КАЖДОЙ карты свой: spot × (1 − cardFees[key] / 100).
 const store = require('./store');
 const currencies = require('./currencies');
 
@@ -56,7 +57,7 @@ async function fetchOfficial() {
     }
   }));
   if (!values.length) throw new Error(errors.join('; ') || 'no BTC/USD sources available');
-  // Median gives a robust central rate and avoids depending on any single venue.
+  // Медиана даёт устойчивый центральный курс и не зависит от одной площадки.
   const sorted = values.map((v) => v.btcUsd).sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   const btcUsd = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
@@ -67,18 +68,19 @@ function applyRates(official) {
   return store.mutate((db) => {
     const s = db.settings;
     s.btcUsd = Math.round(Number(official.btcUsd) * 100) / 100;
-    s.rateGOOGLEUSD = currencies.giftRateFromPercent(s.giftPercent, s);
+    s.cardRates = currencies.allCardRates(s);
     s.rateUpdatedAt = Date.now();
     s.rateSource = official.source;
     return s;
   });
 }
 
-function recomputeGiftRate() {
+// Пересчитать курсы всех карт по их индивидуальным скидкам (после правки настроек).
+function recomputeGiftRates() {
   return store.mutate((db) => {
     const s = db.settings;
-    s.rateGOOGLEUSD = currencies.giftRateFromPercent(s.giftPercent, s);
-    return s.rateGOOGLEUSD;
+    s.cardRates = currencies.allCardRates(s);
+    return s.cardRates;
   });
 }
 
@@ -89,20 +91,20 @@ async function refreshRates() {
 
 function startRates() {
   if (DISABLED) {
-    console.log('[rates] auto refresh disabled (RATES_DISABLED=1)');
+    console.log('[rates] автообновление отключено (RATES_DISABLED=1)');
     return null;
   }
-  console.log(`[rates] refreshing BTC/USD every ${Math.round(INTERVAL_MS / 1000)} s`);
+  console.log(`[rates] обновление BTC/USD каждые ${Math.round(INTERVAL_MS / 1000)} с`);
   refreshRates()
-    .then(({ source }) => console.log('[rates] BTC/USD updated from:', source))
-    .catch((e) => console.error('[rates] initial update failed; using saved rate:', e.message));
+    .then(({ source }) => console.log('[rates] BTC/USD обновлён из:', source))
+    .catch((e) => console.error('[rates] первое обновление не удалось; используем сохранённый курс:', e.message));
   const timer = setInterval(() => {
     refreshRates()
-      .then(({ source }) => console.log('[rates] BTC/USD updated from:', source))
-      .catch((e) => console.error('[rates] update failed:', e.message));
+      .then(({ source }) => console.log('[rates] BTC/USD обновлён из:', source))
+      .catch((e) => console.error('[rates] обновление не удалось:', e.message));
   }, INTERVAL_MS);
   timer.unref?.();
   return timer;
 }
 
-module.exports = { startRates, refreshRates, recomputeGiftRate, applyRates, fetchOfficial };
+module.exports = { startRates, refreshRates, recomputeGiftRates, applyRates, fetchOfficial };

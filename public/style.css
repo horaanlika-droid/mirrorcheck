@@ -610,6 +610,20 @@ body.sheet-lock { overflow: hidden; }
   border: 1px dashed var(--line); border-radius: 12px; padding: 9px 10px;
 }
 
+/* Индивидуальный курс каждой карты: скидка, текущий курс и предпросмотр выплаты */
+.adm-fees { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; max-height: 280px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.adm-fee-row {
+  background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); border-radius: 13px;
+  padding: 10px 12px;
+}
+.adm-fee-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.adm-fee-head .adm-coin { width: 28px; height: 28px; font-size: 14px; }
+.adm-fee-head b { flex: 1; min-width: 0; font: 700 12.5px 'Manrope', sans-serif; color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-fee-head small { flex: none; font-size: 10px; color: var(--mut); white-space: nowrap; }
+.adm-fee-row .f-box { padding: 5px 10px; }
+.adm-fee-row .f-box input { font-size: 13px; }
+.adm-fee-preview { margin-top: 7px; font-size: 11.5px; color: #00dccb; text-align: center; }
+
 .lc-admin-btn {
   width: 100%; margin-bottom: 4px;
   border: 1px solid rgba(0, 220, 203, 0.45); color: #8edfeb;
