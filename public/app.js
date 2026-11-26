@@ -28,6 +28,24 @@
     }
   }
 
+  /* ---------- прелоадер: брендовый экран загрузки ---------- */
+  // Держим экран с логотипом минимум PRELOAD_MIN_MS, затем мягко скрываем.
+  const PRELOAD_MIN_MS = 6000;
+  const bootTs = Date.now();
+  let preloaderDone = false;
+  function hidePreloader() {
+    const el = document.getElementById('preloader');
+    if (!el || preloaderDone) return;
+    preloaderDone = true;
+    const wait = Math.max(0, PRELOAD_MIN_MS - (Date.now() - bootTs));
+    setTimeout(() => {
+      el.classList.add('done');
+      setTimeout(() => el.remove(), 800);
+    }, wait);
+  }
+  // Страховка: даже если инициализация зависла, экран не остаётся навсегда.
+  setTimeout(hidePreloader, 13000);
+
   const $ = (s) => document.querySelector(s);
   const TERMINAL = ['completed', 'rejected', 'cancelled'];
   // dir — выбранное направление (ключ из /api/settings → rates[]).
@@ -487,6 +505,11 @@
             <div class="trust-item"><span class="trust-icon">₿</span><b>Выплата в Bitcoin</b><small>На указанный вами кошелёк</small></div>
           </div>
           <div class="telegram-cta"><span><b>Начать обмен прямо сейчас</b><small>Выберите карту и номинал</small></span><span class="telegram-cta-mark">↗</span></div>
+          <div class="gain-note" role="note">
+            <div class="gain-note-title"><span class="gain-note-ic" aria-hidden="true">🎁</span> Почему принимать оплату подарочными картами выгодно</div>
+            <div class="gain-item"><span class="gain-num">1</span><p><b>Быстро и прозрачно.</b> Мы быстро и с прозрачным расчётом обменяем ваши карты на биткоин.</p></div>
+            <div class="gain-item"><span class="gain-num">2</span><p><b>Без блокировок и цифрового следа.</b> Исключение блокировок счетов, минимизация цифрового следа. Моментальный вывод на ваш биткоин-кошелёк.</p></div>
+          </div>
         </div>
         <div id="assetForm" class="hidden">
           <div class="form-topbar">
@@ -1617,6 +1640,7 @@
       } catch {}
     } catch (e) {
       document.getElementById('announce').textContent = '⚠️ Не удалось подключиться к серверу. Обновите страницу.';
+      hidePreloader();
       return;
     }
     renderHeader();
@@ -1632,5 +1656,6 @@
     $('#view-' + S.tab).classList.remove('hidden');
     renderDemoAdmin();
     startPolling();
+    hidePreloader();
   })();
 })();
