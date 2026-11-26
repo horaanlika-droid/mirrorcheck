@@ -10,8 +10,8 @@
     try {
       tg.ready();
       tg.expand();
-      tg.setHeaderColor && tg.setHeaderColor('#080d11');
-      tg.setBackgroundColor && tg.setBackgroundColor('#080d11');
+      tg.setHeaderColor && tg.setHeaderColor('#07141c');
+      tg.setBackgroundColor && tg.setBackgroundColor('#07141c');
     } catch (e) {}
     initData = tg.initData || '';
     startParam = tg.startParam || '';
@@ -448,20 +448,45 @@
     const minUnits = Number(sell && sell.minUnits) || step;
     $('#view-exchange').innerHTML = `
       <div id="exForm" class="${S.order ? 'hidden' : ''}">
-        <div id="assetPicker" role="region" aria-label="Выбор активов для обмена">
-          <div class="picker-head">
-            <div class="picker-title">Выбор активов для обмена</div>
-            <div class="picker-sub">Выберите подарочную карту для продажи за BTC.</div>
+        <div id="assetPicker" role="region" aria-label="Выбор подарочной карты">
+          <section class="exchange-hero">
+            <div class="hero-copy">
+              <div class="hero-kicker"><i></i> PRIVATE GIFT CARD BROKERAGE</div>
+              <h1>Обменивайте<br>подарочные карты<br><span>на Bitcoin</span></h1>
+              <p>Приватный обмен цифровых подарочных карт. Укажите номинал — увидите расчёт выплаты в BTC до создания заявки.</p>
+              <button class="hero-cta" id="heroStart">Начать обмен <span aria-hidden="true">→</span></button>
+              <div class="hero-footnote"><span>Курс BTC/USD</span><b>·</b><span>Личное сопровождение</span></div>
+            </div>
+            <div class="hero-visual" aria-hidden="true">
+              <div class="hero-aura"></div>
+              <div class="hero-orbit orbit-one"></div>
+              <div class="hero-orbit orbit-two"></div>
+              <div class="hero-orbit orbit-three"></div>
+              <div class="hero-core"><span>₿</span></div>
+              ${[['APPLE_STORE_USD','token-apple'],['XBOX_USD','token-xbox'],['GOOGLE_USD','token-google'],['ITUNES_USD','token-itunes']].map(([key, placement]) => { const d = dirs().find((x) => x.key === key); return d ? `<div class="hero-token ${placement}"><span class="coin-ic ${esc(d.coin)}">${coinInner(d)}</span></div>` : ''; }).join('')}
+            </div>
+          </section>
+          <div class="supported-head" id="supportedCards">
+            <div><span class="section-overline">НАПРАВЛЕНИЯ</span><h2>Поддерживаемые карты</h2></div>
+            <span class="supported-region">США · USD</span>
           </div>
-          <div class="picker-group">
-            <div class="picker-group-label">ПОДАРОЧНЫЕ КАРТЫ</div>
-            <button class="group-card${(!S.settings.online || !giftOn) ? ' off' : ''}" data-group="gift">
-              <span class="coin-ic gift group-ic">🎁</span>
-              <span class="group-text"><b>Подарочные карты</b><i>${esc(sellDirs().map((d) => d.label).join(' · ') || 'Google · iTunes · Xbox · Apple Store')} — выплата в BTC</i></span>
-              <span class="group-chev">${ICONS.right}</span>
-            </button>
+          <div class="supported-grid">
+            ${dirs().filter(isGiftDir).map((d) => `
+              <button class="supported-card${eligible(d) && S.settings.online ? '' : ' off'}" data-key="${esc(d.key)}" ${eligible(d) && S.settings.online ? '' : 'disabled aria-disabled="true"'}>
+                <span class="supported-icon coin-ic ${esc(d.coin)}">${coinInner(d)}</span>
+                <b>${esc(d.label)}</b>
+                <small>USD · от $${Number(d.minUnits) || 10}</small>
+                <span class="supported-arrow" aria-hidden="true">↗</span>
+              </button>`).join('')}
           </div>
           <div class="picker-empty${cryptoOn || giftOn ? ' hidden' : ''}" id="pickerEmpty">Направления временно недоступны.<br>Загляните чуть позже.</div>
+          <div class="trust-row">
+            <div class="trust-intro">Преимущества<br><b>PRICELEX</b></div>
+            <div class="trust-item"><span class="trust-icon">↗</span><b>Чёткий расчёт</b><small>Сумма выплаты видна до заявки</small></div>
+            <div class="trust-item"><span class="trust-icon">◇</span><b>Личный подход</b><small>Оператор сопровождает обмен</small></div>
+            <div class="trust-item"><span class="trust-icon">₿</span><b>Выплата в Bitcoin</b><small>На указанный вами кошелёк</small></div>
+          </div>
+          <div class="telegram-cta"><span><b>Начать обмен прямо сейчас</b><small>Выберите карту и номинал</small></span><span class="telegram-cta-mark">↗</span></div>
         </div>
         <div id="assetForm" class="hidden">
           <div class="form-topbar">
@@ -472,6 +497,13 @@
               ${ICONS.chevDown}
             </button>
           </div>
+          <div class="trade-layout">
+            <aside class="trade-steps" aria-label="Этапы обмена">
+              <div class="trade-step active"><i>01</i><span>Выберите карту</span></div>
+              <div class="trade-step"><i>02</i><span>Укажите данные и получите курс</span></div>
+              <div class="trade-step"><i>03</i><span>Получите Bitcoin</span></div>
+            </aside>
+            <div class="trade-main">
         <div id="giftForm" class="hidden">
           <div class="card">
             <div class="card-title" id="giftTitle">${esc(sell.label)}</div>
@@ -499,6 +531,8 @@
           </div>
           <button class="btn btn-primary" style="margin-top:14px" id="btnSell">${ICONS.bolt}<span>Продать карту за BTC</span></button>
         </div>
+            </div>
+          </div>
         </div>
       </div>
       <div id="exOrder" class="${S.order ? '' : 'hidden'}"></div>
@@ -510,6 +544,14 @@
         haptic('light');
         openAssetSheet(b.dataset.group);
       })
+    );
+    const heroStart = $('#heroStart');
+    if (heroStart) heroStart.addEventListener('click', () => {
+      haptic('light');
+      $('#supportedCards').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    $('#assetPicker').querySelectorAll('.supported-card').forEach((b) =>
+      b.addEventListener('click', () => pickAsset(b.dataset.key))
     );
     $('#btnBackToAssets').addEventListener('click', () => { haptic('light'); goToAssetPicker(); });
     $('#assetChip').addEventListener('click', () => {
