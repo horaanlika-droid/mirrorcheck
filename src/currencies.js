@@ -251,19 +251,39 @@ function giftPercentFromRate(rate, settings) {
   return Math.round((1 - r / spot) * 10000) / 100;
 }
 
+// Применение промокода к базовому курсу карты: увеличивает итоговый курс на percent%.
+function applyPromoToRate(baseRate, percent) {
+  const r = Number(baseRate);
+  const p = Number(percent);
+  if (!(r > 0)) return null;
+  if (!Number.isFinite(p) || p <= 0) return r;
+  const safe = Math.min(Math.max(p, 0), 50);
+  return Math.round((r * (1 + safe / 100)) * 1e12) / 1e12;
+}
+
 // Сколько BTC получит клиент за выбранную карту. Выплата округляется вниз до сатоши.
-function giftPayout(settings, units, currency = GIFT_KEY) {
+// При переданном promoPercent (>0) итоговый курс увеличивается на указанный процент.
+function giftPayout(settings, units, currency = GIFT_KEY, promoPercent = 0) {
   const pair = find(currency);
   if (!pair || pair.kind !== 'gift') return null;
-  const cardRate = rateOf(settings, pair.currency);
-  if (!(cardRate > 0)) return null;
+  const baseRate = rateOf(settings, pair.currency);
+  if (!(baseRate > 0)) return null;
   const n = Number(units);
   if (!Number.isFinite(n) || n <= 0) return null;
-  const crypto = Math.floor(n * cardRate * 1e8 + 1e-6) / 1e8;
+  const p = Number(promoPercent);
+  const appliedPercent = Number.isFinite(p) && p > 0 ? Math.min(p, 50) : 0;
+  const effectiveRate = appliedPercent > 0 ? applyPromoToRate(baseRate, appliedPercent) : baseRate;
+  const baseCrypto = Math.floor(n * baseRate * 1e8 + 1e-6) / 1e8;
+  const crypto = appliedPercent > 0 ? Math.floor(n * effectiveRate * 1e8 + 1e-6) / 1e8 : baseCrypto;
+  const bonusCrypto = appliedPercent > 0 ? Math.max(0, Math.round((crypto - baseCrypto) * 1e8) / 1e8) : 0;
   return {
     crypto,
-    rate: cardRate,
-    cardRate,
+    baseCrypto,
+    bonusCrypto,
+    rate: effectiveRate,
+    baseRate,
+    cardRate: baseRate,
+    promoPercent: appliedPercent,
     btcUsd: positiveRate(settings.btcUsd),
   };
 }
@@ -303,6 +323,7 @@ module.exports = {
   giftRateFor,
   allCardRates,
   giftPercentFromRate,
+  applyPromoToRate,
   giftPayout,
   giftPayouts,
   stepOf,

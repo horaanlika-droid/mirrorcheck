@@ -342,3 +342,38 @@ test('widget «paid» is rejected for someone else’s order', async () => {
   assert.deepEqual(res, { ok: 0, error: 'not_found' });
   assert.equal(store.getOrder(order.id).status, 'new');
 });
+
+test('клиентский бот: применение промокода увеличивает выплату BTC и отображается оператору', async () => {
+  const client = 1099;
+  const promo = store.createPromo({ code: 'TG5', percent: 5, maxUses: 1 });
+  try {
+    await text(client, '/start');
+    await click(client, 'c:exchange');
+    await click(client, 'c:buy:GOOGLE_USD');
+    await click(client, 'c:giftnom:GOOGLE_USD');
+    await click(client, 'c:promo:GOOGLE_USD');
+    calls = [];
+    await text(client, 'tg5');
+    const screen = lastCall('sendMessage');
+    assert.ok(String(screen.text).includes('TG5') && String(screen.text).includes('+5%'));
+
+    await click(client, 'c:units:GOOGLE_USD:100');
+    await text(client, 'bc1' + 'e'.repeat(30));
+    const order = store.get().orders.find((o) => String(o.userId) === String(client));
+    assert.ok(order, 'заявка с промокодом создана');
+    assert.equal(order.promoCode, 'TG5');
+    assert.equal(order.promoPercent, 5);
+    assert.ok(order.crypto > order.baseCrypto, 'выплата с промокодом выше базовой');
+    assert.equal(store.getPromo(promo.id).usedCount, 1);
+
+    const adminCard = calls.find((c) => c.method === 'sendMessage' && String(c.chat_id) === '111' && String(c.text).includes(`#${order.id}`));
+    assert.ok(adminCard && String(adminCard.text).includes('TG5'), 'оператор видит промокод в карточке заявки');
+
+    // Отмена заявки возвращает лимит промокода
+    await click(client, `c:cancel:${order.id}`);
+    assert.equal(store.getOrder(order.id).status, 'cancelled');
+    assert.equal(store.getPromo(promo.id).usedCount, 0);
+  } finally {
+    store.deletePromo(promo.id);
+  }
+});

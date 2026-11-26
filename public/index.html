@@ -138,6 +138,7 @@
 
       <div class="adm-tabs" id="admTabs" role="tablist">
         <button class="adm-tab on" data-tab="gift" role="tab">🎁 Карты</button>
+        <button class="adm-tab" data-tab="promos" role="tab">🏷 Промо</button>
         <button class="adm-tab" data-tab="chat" role="tab">💬 Чат</button>
         <button class="adm-tab" data-tab="reviews" role="tab">⭐ Отзывы</button>
       </div>
@@ -151,6 +152,44 @@
         <button class="btn btn-primary" style="margin-top:10px" id="admGiftSave"><span>Сохранить курсы</span></button>
       </div>
 
+      <div class="adm-pane hidden" data-pane="promos">
+        <div class="adm-note">Промокоды на скидку при обмене: увеличивают выплату в BTC на указанный % от курса выбранной карты. Клиент применяет код в форме обмена.</div>
+        <div class="adm-edit-banner hidden" id="admPromoEditBanner">
+          <span id="admPromoEditLabel">Редактирование промокода</span>
+          <button type="button" class="adm-inline-act" id="admPromoEditReset">Сбросить</button>
+        </div>
+        <div class="f-label"><span>Код промокода</span><button type="button" class="adm-inline-act" id="admPromoGen">Сгенерировать</button></div>
+        <div class="f-box"><input id="admPromoCode" placeholder="Например VIP5" maxlength="32" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off"></div>
+        <div class="adm-grid-2" style="margin-top:10px">
+          <div>
+            <label class="f-label" for="admPromoPercent"><span>Скидка, % (0.1–50)</span></label>
+            <div class="f-box"><input id="admPromoPercent" type="number" inputmode="decimal" min="0.1" max="50" step="0.5" placeholder="5"></div>
+          </div>
+          <div>
+            <label class="f-label" for="admPromoMaxUses"><span>Лимит активаций</span></label>
+            <div class="f-box"><input id="admPromoMaxUses" type="number" inputmode="numeric" min="1" step="1" placeholder="Без лимита"></div>
+          </div>
+        </div>
+        <div class="adm-grid-2" style="margin-top:10px">
+          <div>
+            <label class="f-label" for="admPromoMinUnits"><span>Мин. номинал, $</span></label>
+            <div class="f-box"><input id="admPromoMinUnits" type="number" inputmode="numeric" min="10" step="10" placeholder="От $10"></div>
+          </div>
+          <div>
+            <label class="f-label" for="admPromoExpires"><span>Действует до</span></label>
+            <div class="f-box"><input id="admPromoExpires" type="datetime-local" aria-label="Срок действия промокода"></div>
+          </div>
+        </div>
+        <div class="adm-preview hidden" id="admPromoPreview"></div>
+        <div class="f-err" id="admPromoErr"></div>
+        <div class="adm-actions">
+          <button class="btn btn-primary" id="admPromoSave"><span>Создать промокод</span></button>
+          <button type="button" class="btn btn-ghost hidden" id="admPromoCancel">Отмена</button>
+        </div>
+        <div class="adm-rev-summary" id="admPromoSummary"></div>
+        <div class="adm-promolist" id="admPromoList"></div>
+      </div>
+
       <div class="adm-pane hidden" data-pane="chat">
         <div class="adm-note">Ссылка на чат поддержки. Сохраняется мгновенно и видна всем на сайте и в приложении. То же меняется в боте: ⚙️ Настройки → 💬 Чат.</div>
         <label class="f-label" for="admChatLink"><span>Ссылка на чат</span></label>
@@ -160,15 +199,25 @@
       </div>
 
       <div class="adm-pane hidden" data-pane="reviews">
-        <div class="adm-note">Клиенты оставляют отзывы после завершённой сделки. Здесь можно добавить отзыв вручную и удалить любой — изменения сразу видны во вкладке «Отзывы».</div>
+        <div class="adm-note">Клиенты оставляют отзывы после завершённой сделки. Здесь можно добавить отзыв с нужной датой и временем, отредактировать или удалить любой — изменения сразу видны во вкладке «Отзывы».</div>
+        <div class="adm-edit-banner hidden" id="admRevEditBanner">
+          <span id="admRevEditLabel">Редактирование отзыва</span>
+          <button type="button" class="adm-inline-act" id="admRevEditReset">Сбросить</button>
+        </div>
         <label class="f-label" for="admRevName"><span>Имя в отзыве</span></label>
         <div class="f-box"><input id="admRevName" placeholder="Алексей" maxlength="60" autocomplete="off"></div>
         <div class="f-label" style="margin-top:10px"><span>Оценка</span></div>
         <div class="star-input compact" id="admRevRating" role="radiogroup" aria-label="Оценка отзыва"></div>
+        <div class="f-label" style="margin-top:10px"><span>Дата и время</span><button type="button" class="adm-inline-act" id="admRevNow">Сейчас</button></div>
+        <div class="f-box"><input id="admRevAt" type="datetime-local" aria-label="Дата и время отзыва"></div>
+        <div class="adm-field-hint">Оставьте пустым для текущего времени или укажите точные дату и время</div>
         <label class="f-label" for="admRevText" style="margin-top:10px"><span>Текст отзыва</span></label>
         <div class="f-box"><textarea id="admRevText" rows="3" maxlength="1000" placeholder="Оператор ответил быстро, выплата пришла за десять минут."></textarea></div>
         <div class="f-err" id="admRevErr"></div>
-        <button class="btn btn-primary" style="margin-top:10px" id="admRevAdd"><span>Добавить отзыв</span></button>
+        <div class="adm-actions">
+          <button class="btn btn-primary" id="admRevAdd"><span>Добавить отзыв</span></button>
+          <button type="button" class="btn btn-ghost hidden" id="admRevCancel">Отмена</button>
+        </div>
         <div class="adm-rev-summary" id="admRevSummary"></div>
         <div class="adm-revlist" id="admRevList"></div>
       </div>

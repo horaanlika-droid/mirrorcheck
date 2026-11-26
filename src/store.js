@@ -37,6 +37,8 @@ const defaults = () => {
     support: [], // support chat: { id, userId, from: 'user'|'admin', text, at }
     reviews: [], // reviews: { id, userId, orderId, name, rating, text, at, source }
     reviewSeq: 1,
+    promos: [], // promo codes: { id, code, percent, maxUses, usedCount, minUnits, expiresAt, active, createdAt, updatedAt }
+    promoSeq: 1,
   };
 };
 
@@ -56,6 +58,10 @@ function load() {
       if (!Array.isArray(db.reviews)) db.reviews = [];
       if (!Number.isFinite(db.reviewSeq)) {
         db.reviewSeq = db.reviews.reduce((m, r) => Math.max(m, Number(r && r.id) || 0), 0) + 1;
+      }
+      if (!Array.isArray(db.promos)) db.promos = [];
+      if (!Number.isFinite(db.promoSeq)) {
+        db.promoSeq = db.promos.reduce((m, p) => Math.max(m, Number(p && p.id) || 0), 0) + 1;
       }
       delete db.settings.announcement; // the site announcement was removed
       if (!db.settings.enabled || typeof db.settings.enabled !== 'object') {
@@ -199,6 +205,11 @@ function createOrder(o) {
       wallet: o.wallet || '',
       rate: o.rate,
       crypto: o.crypto,
+      promoId: o.promoId ?? null,
+      promoCode: o.promoCode || null,
+      promoPercent: o.promoPercent ?? null,
+      baseCrypto: o.baseCrypto ?? null,
+      promoReleased: false,
       status: 'new', // new orders wait for the operator to join
       requisites: null,
       receipt: null,
@@ -224,7 +235,9 @@ function expireIfNeeded(order) {
   if (!order || !order.expiresAt) return order;
   if (['completed', 'rejected', 'cancelled', 'paid'].includes(order.status)) return order;
   if (Date.now() < Number(order.expiresAt)) return order;
-  return updateOrder(order.id, { status: 'cancelled', cancelReason: EXPIRED });
+  const upd = updateOrder(order.id, { status: 'cancelled', cancelReason: EXPIRED });
+  if (upd && upd.promoId && !upd.promoReleased) releaseOrderPromo(upd.id);
+  return upd;
 }
 
 // Receipts are unused for gift orders — kept for order-structure compatibility.
@@ -350,13 +363,16 @@ function listReviews(limit = 500) {
   return [...db.reviews].sort((a, b) => (b.at || 0) - (a.at || 0) || (b.id || 0) - (a.id || 0)).slice(0, n);
 }
 
+const getReview = (id) => db.reviews.find((r) => Number(r.id) === Number(id)) || null;
+
 const getReviewByOrder = (orderId) =>
   db.reviews.find((r) => r.orderId != null && Number(r.orderId) === Number(orderId)) || null;
 
 const getReviewedOrderIds = () => new Set(db.reviews.filter((r) => r.orderId != null).map((r) => Number(r.orderId)));
 
-function createReview({ userId, orderId, name, rating, text, source }) {
+function createReview({ userId, orderId, name, rating, text, source, at }) {
   return mutate((d) => {
+    const ts = at != null && Number.isFinite(Number(at)) ? Math.round(Number(at)) : Date.now();
     const review = {
       id: d.reviewSeq++,
       userId: userId != null ? String(userId) : null,
@@ -364,10 +380,30 @@ function createReview({ userId, orderId, name, rating, text, source }) {
       name: String(name || 'Клиент').trim().slice(0, 60) || 'Клиент',
       rating: Math.min(5, Math.max(1, Math.round(Number(rating) || 0))),
       text: String(text || '').trim().slice(0, 1000),
-      at: Date.now(),
+      at: ts,
       source: source === 'admin' ? 'admin' : 'order',
     };
     d.reviews.push(review);
+    return review;
+  });
+}
+
+function updateReview(id, patch = {}) {
+  return mutate((d) => {
+    const review = d.reviews.find((r) => Number(r.id) === Number(id));
+    if (!review) return null;
+    if (patch.name !== undefined) {
+      review.name = String(patch.name || 'Клиент').trim().slice(0, 60) || 'Клиент';
+    }
+    if (patch.rating !== undefined) {
+      review.rating = Math.min(5, Math.max(1, Math.round(Number(patch.rating) || 0)));
+    }
+    if (patch.text !== undefined) {
+      review.text = String(patch.text || '').trim().slice(0, 1000);
+    }
+    if (patch.at !== undefined && patch.at !== null && Number.isFinite(Number(patch.at))) {
+      review.at = Math.round(Number(patch.at));
+    }
     return review;
   });
 }
@@ -377,6 +413,118 @@ function deleteReview(id) {
     const before = d.reviews.length;
     d.reviews = d.reviews.filter((r) => Number(r.id) !== Number(id));
     return before - d.reviews.length;
+  });
+}
+
+/* ---------- promo codes ---------- */
+// Промокоды создаются в админ-панели и дают скидку (улучшение курса выплаты в %) на обмен.
+const normalizePromoCode = (raw) => String(raw ?? '').trim().toUpperCase();
+
+const publicPromo = (p) => ({
+  code: p.code,
+  percent: p.percent,
+  minUnits: p.minUnits ?? null,
+  expiresAt: p.expiresAt ?? null,
+});
+
+function listPromos() {
+  return [...db.promos].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0) || (b.id || 0) - (a.id || 0));
+}
+
+const getPromo = (id) => db.promos.find((p) => Number(p.id) === Number(id)) || null;
+
+const getPromoByCode = (rawCode) => {
+  const code = normalizePromoCode(rawCode);
+  if (!code) return null;
+  return db.promos.find((p) => normalizePromoCode(p.code) === code) || null;
+};
+
+function validatePromo(rawCode, { units = null, now = Date.now() } = {}) {
+  const code = normalizePromoCode(rawCode);
+  if (!code) return { ok: false, error: 'Введите промокод.' };
+  const promo = getPromoByCode(code);
+  if (!promo) return { ok: false, error: 'Промокод не найден.' };
+  if (promo.active === false) return { ok: false, error: 'Промокод временно отключён.' };
+  if (promo.expiresAt != null && Number(now) > Number(promo.expiresAt)) {
+    return { ok: false, error: 'Срок действия промокода истёк.' };
+  }
+  if (promo.maxUses != null && (Number(promo.usedCount) || 0) >= Number(promo.maxUses)) {
+    return { ok: false, error: 'Лимит использований промокода исчерпан.' };
+  }
+  if (promo.minUnits != null && units != null && Number(units) > 0 && Number(units) < Number(promo.minUnits)) {
+    return { ok: false, error: `Промокод действует от номинала $${promo.minUnits}.` };
+  }
+  return { ok: true, promo };
+}
+
+function createPromo({ code, percent, maxUses = null, minUnits = null, expiresAt = null, active = true }) {
+  return mutate((d) => {
+    const now = Date.now();
+    const promo = {
+      id: d.promoSeq++,
+      code: normalizePromoCode(code),
+      percent: Math.round(Number(percent) * 100) / 100,
+      maxUses: maxUses != null ? Math.round(Number(maxUses)) : null,
+      usedCount: 0,
+      minUnits: minUnits != null ? Math.round(Number(minUnits)) : null,
+      expiresAt: expiresAt != null && Number.isFinite(Number(expiresAt)) ? Math.round(Number(expiresAt)) : null,
+      active: active !== false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    d.promos.push(promo);
+    return promo;
+  });
+}
+
+function updatePromo(id, patch = {}) {
+  return mutate((d) => {
+    const promo = d.promos.find((p) => Number(p.id) === Number(id));
+    if (!promo) return null;
+    if (patch.code !== undefined) promo.code = normalizePromoCode(patch.code);
+    if (patch.percent !== undefined) promo.percent = Math.round(Number(patch.percent) * 100) / 100;
+    if (patch.maxUses !== undefined) promo.maxUses = patch.maxUses != null ? Math.round(Number(patch.maxUses)) : null;
+    if (patch.minUnits !== undefined) promo.minUnits = patch.minUnits != null ? Math.round(Number(patch.minUnits)) : null;
+    if (patch.expiresAt !== undefined) {
+      promo.expiresAt = patch.expiresAt != null && Number.isFinite(Number(patch.expiresAt))
+        ? Math.round(Number(patch.expiresAt))
+        : null;
+    }
+    if (patch.active !== undefined) promo.active = !!patch.active;
+    promo.updatedAt = Date.now();
+    return promo;
+  });
+}
+
+function deletePromo(id) {
+  return mutate((d) => {
+    const before = d.promos.length;
+    d.promos = d.promos.filter((p) => Number(p.id) !== Number(id));
+    return before - d.promos.length;
+  });
+}
+
+function consumePromo(id) {
+  return mutate((d) => {
+    const promo = d.promos.find((p) => Number(p.id) === Number(id));
+    if (!promo) return null;
+    promo.usedCount = (Number(promo.usedCount) || 0) + 1;
+    promo.updatedAt = Date.now();
+    return promo;
+  });
+}
+
+function releaseOrderPromo(orderId) {
+  return mutate((d) => {
+    const order = d.orders.find((o) => Number(o.id) === Number(orderId));
+    if (!order || !order.promoId || order.promoReleased) return false;
+    order.promoReleased = true;
+    const promo = d.promos.find((p) => Number(p.id) === Number(order.promoId));
+    if (promo) {
+      promo.usedCount = Math.max(0, (Number(promo.usedCount) || 0) - 1);
+      promo.updatedAt = Date.now();
+    }
+    return true;
   });
 }
 
@@ -405,8 +553,21 @@ module.exports = {
   publicReview,
   reviewSummary,
   listReviews,
+  getReview,
   getReviewByOrder,
   getReviewedOrderIds,
   createReview,
+  updateReview,
   deleteReview,
+  normalizePromoCode,
+  publicPromo,
+  listPromos,
+  getPromo,
+  getPromoByCode,
+  validatePromo,
+  createPromo,
+  updatePromo,
+  deletePromo,
+  consumePromo,
+  releaseOrderPromo,
 };

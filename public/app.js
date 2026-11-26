@@ -51,7 +51,7 @@
   // dir — selected direction (key from /api/settings → rates[]).
   // screen — which exchange sub-screen we are on: 'picker' (asset selection) or 'form' (exchange form).
   // sheet — which bottom sheet is open (crypto | gift) or null.
-  const S = { settings: null, me: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, reviews: null, reviewsLoading: false, reviewTarget: null, reviewRating: 5, reviewOpen: false, adminReviewRating: 5, adminReviews: [] };
+  const S = { settings: null, me: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, reviews: null, reviewsLoading: false, reviewTarget: null, reviewRating: 5, reviewOpen: false, adminReviewRating: 5, adminReviewEditId: null, adminReviews: [], adminPromos: [], adminPromoEditId: null, appliedPromo: null };
 
   // Fallback direction registry: needed if an older server did not send rates.
   const giftFallback = (key, label, symbol, coin) => ({
@@ -87,11 +87,19 @@
   const currentSellDir = () => sellDirs()[0] || dirs().find(isGiftDir) || FALLBACK_DIRS.find(isGiftDir);
 
   // How much BTC we pay for a card of `units` $; the BTC per $1 rate comes from the server.
-  function giftPayout(units, product = null) {
+  function applyPromoRate(baseRate, percent) {
+    const r = Number(baseRate) || 0;
+    const p = Number(percent) || 0;
+    if (!(r > 0)) return 0;
+    if (!(p > 0)) return r;
+    return Math.round((r * (1 + Math.min(p, 50) / 100)) * 1e12) / 1e12;
+  }
+  function giftPayout(units, product = null, promoPercent = 0) {
     const dir = product || (isGiftDir(currentDir()) ? currentDir() : currentSellDir());
-    const giftRate = Number(dir && dir.rate) || 0;
-    if (!(giftRate > 0)) return null;
-    return floorTo((Number(units) || 0) * giftRate, 8);
+    const baseRate = Number(dir && dir.rate) || 0;
+    if (!(baseRate > 0)) return null;
+    const effectiveRate = promoPercent > 0 ? applyPromoRate(baseRate, promoPercent) : baseRate;
+    return floorTo((Number(units) || 0) * effectiveRate, 8);
   }
   function giftWalletValid(address, product = null) {
     const dir = product || (isGiftDir(currentDir()) ? currentDir() : currentSellDir());
@@ -177,6 +185,24 @@
     const p = (x) => String(x).padStart(2, '0');
     return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
   };
+  const fmtDateFull = (ts) => {
+    const d = new Date(ts);
+    if (!Number.isFinite(d.getTime())) return '—';
+    const p = (x) => String(x).padStart(2, '0');
+    return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const toDatetimeLocal = (ts) => {
+    const d = new Date(ts);
+    if (!Number.isFinite(d.getTime())) return '';
+    const p = (x) => String(x).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const fromDatetimeLocal = (val) => {
+    const s = String(val || '').trim();
+    if (!s) return null;
+    const ts = new Date(s).getTime();
+    return Number.isFinite(ts) ? ts : NaN;
+  };
   const fmtSize = (n) => {
     n = Number(n) || 0;
     if (n < 1024) return n + ' B';
@@ -218,12 +244,14 @@
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
+      const method = (opts.method || 'GET').toUpperCase();
+      const hasBody = method === 'POST' || method === 'PUT' || method === 'PATCH';
       const res = await fetch(path + sep + q.toString(), {
-        method: opts.method || 'GET',
+        method,
         cache: 'no-store',
         signal: controller.signal,
-        headers: opts.method === 'POST' ? { 'content-type': 'application/json' } : undefined,
-        body: opts.method === 'POST' ? JSON.stringify(Object.assign({ initData, demo }, opts.body || {})) : undefined,
+        headers: hasBody ? { 'content-type': 'application/json' } : undefined,
+        body: hasBody ? JSON.stringify(Object.assign({ initData, demo }, opts.body || {})) : undefined,
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Ошибка сервера');
@@ -438,7 +466,7 @@
   function syncTgBack() {
     try {
       if (!tg || !tg.BackButton) return;
-      const need = !!S.reviewOpen || (S.tab === 'exchange' && !S.order && (S.screen === 'form' || !!S.sheet || !!S.giftRules || !!S.adminOpen));
+      const need = !!S.reviewOpen || !!S.adminOpen || (S.tab === 'exchange' && !S.order && (S.screen === 'form' || !!S.sheet || !!S.giftRules));
       if (need) tg.BackButton.show(); else tg.BackButton.hide();
     } catch (e) { /* non-Telegram environment */ }
   }
@@ -525,6 +553,14 @@
             <div class="f-sep"><div class="arr">${ICONS.down}</div></div>
             <div class="f-label"><span>Вы получите</span><span id="giftLimits"></span></div>
             <div class="f-box"><div class="coin-ic btc">₿</div><input id="outBtc" type="text" readonly placeholder="—"></div>
+            <div class="promo-wrap">
+              <div class="promo-row">
+                <div class="f-box promo-box"><span class="promo-ic" aria-hidden="true">🏷</span><input id="inPromo" placeholder="Промокод (если есть)" maxlength="32" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off" value="${esc(S.appliedPromo ? S.appliedPromo.code : '')}"></div>
+                <button type="button" class="btn btn-ghost btn-sm promo-apply" id="btnPromoApply">Применить</button>
+              </div>
+              <div class="promo-applied hidden" id="promoApplied"></div>
+              <div class="f-err" id="promoErr"></div>
+            </div>
             <div class="f-meta" id="giftMeta"></div>
             <div class="info-note" style="margin-top:10px">⏱ На сделку даётся <b>1 час</b>: создайте заявку → <b>дождитесь оператора</b> → отправьте код <b>только после его запроса</b> — оператор проверит карту и выплатит BTC.</div>
           </div>
@@ -601,12 +637,73 @@
         renderFormMeta();
       });
       $('#inBtcWallet').addEventListener('input', renderFormMeta);
+      const promoInput = $('#inPromo');
+      const promoBtn = $('#btnPromoApply');
+      if (promoInput) {
+        promoInput.addEventListener('input', () => {
+          const errEl = $('#promoErr');
+          if (errEl) errEl.textContent = '';
+          const typed = (promoInput.value || '').trim().toUpperCase();
+          if (S.appliedPromo && S.appliedPromo.code !== typed) {
+            S.appliedPromo = null;
+            renderGiftMeta();
+          }
+        });
+        promoInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            applyPromoCode();
+          }
+        });
+      }
+      if (promoBtn) promoBtn.addEventListener('click', () => { haptic('light'); applyPromoCode(); });
       $('#btnSell').addEventListener('click', submitGiftOrder);
     }
     setScreen(S.screen || 'picker');
     syncAssetChip();
     renderFormMeta();
     renderOrderStage();
+  }
+
+  async function applyPromoCode(silent = false) {
+    const input = $('#inPromo');
+    const errEl = $('#promoErr');
+    const btn = $('#btnPromoApply');
+    if (!input) return false;
+    const code = (input.value || '').trim().toUpperCase();
+    if (errEl) errEl.textContent = '';
+    if (!code) {
+      S.appliedPromo = null;
+      renderGiftMeta();
+      if (!silent && errEl) errEl.textContent = 'Введите промокод.';
+      return false;
+    }
+    const dir = isGiftDir(currentDir()) ? currentDir() : currentSellDir();
+    const step = Number(dir && dir.step) || 10;
+    const units = Math.max(0, Math.floor((Number($('#inUnits')?.value) || 0) / step) * step);
+    if (btn) btn.disabled = true;
+    try {
+      const r = await api('/api/promo/check', {
+        method: 'POST',
+        body: { code, currency: dir && dir.currency, units: units || null },
+      });
+      S.appliedPromo = r.promo;
+      input.value = r.promo.code;
+      renderGiftMeta();
+      if (!silent) {
+        haptic('medium');
+        toast(`Промокод ${r.promo.code} применён (+${r.promo.percent}%) ✅`);
+      }
+      return true;
+    } catch (e) {
+      S.appliedPromo = null;
+      renderGiftMeta();
+      if (errEl) errEl.textContent = e.message || 'Промокод недействителен.';
+      if (!silent) haptic('error');
+      return false;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   function renderFormMeta() {
@@ -634,7 +731,14 @@
     if (cardIcon && dir) { cardIcon.className = 'coin-ic ' + dir.coin; cardIcon.innerHTML = coinInner(dir); }
     const nominal = Math.max(0, Math.floor((Number(units.value) || 0) / step) * step);
     const wallet = ($('#inBtcWallet') && $('#inBtcWallet').value) || '';
-    const payout = giftPayout(nominal);
+    const promo = S.appliedPromo;
+    const promoExpired = promo && promo.expiresAt && Date.now() > Number(promo.expiresAt);
+    const promoTooLow = promo && promo.minUnits && nominal > 0 && nominal < Number(promo.minUnits);
+    const promoActive = !!(promo && !promoExpired && !promoTooLow);
+    const effectiveRate = promoActive ? applyPromoRate(rate, promo.percent) : rate;
+    const basePayout = giftPayout(nominal, dir, 0);
+    const payout = promoActive ? giftPayout(nominal, dir, promo.percent) : basePayout;
+    const bonus = promoActive && payout && basePayout ? Math.max(0, Math.round((payout - basePayout) * 1e8) / 1e8) : 0;
     const out = $('#outBtc');
     const amount = (v) => fmtCrypto(v, 'BTC', 8);
     if (out) out.value = nominal && payout ? amount(payout) : '—';
@@ -644,9 +748,36 @@
     if (info && dir && dir.infoNote) info.innerHTML = esc(dir.infoNote).replace(/США|USD \(\$\)|рабочей/g, '<b>$&</b>');
     const limits = $('#giftLimits');
     if (limits) {
-      limits.textContent = rate
-        ? `${fmtCrypto(rate, 'BTC', 8)} за $1 номинала`
+      limits.textContent = effectiveRate
+        ? `${fmtCrypto(effectiveRate, 'BTC', 8)} за $1 номинала`
         : 'направление недоступно';
+    }
+    const promoBox = $('#promoApplied');
+    if (promoBox) {
+      if (promo) {
+        promoBox.classList.remove('hidden');
+        promoBox.classList.toggle('warn', !!(promoExpired || promoTooLow));
+        const text = promoExpired
+          ? `Срок действия промокода ${esc(promo.code)} истёк`
+          : promoTooLow
+            ? `Промокод ${esc(promo.code)} (+${promo.percent}%) действует от $${promo.minUnits}`
+            : `✓ Промокод <b>${esc(promo.code)}</b>: <b>+${promo.percent}%</b> к выплате`;
+        promoBox.innerHTML = `<span>${text}</span><button type="button" class="promo-clear" id="btnPromoClear" aria-label="Убрать промокод">✕</button>`;
+        const clr = $('#btnPromoClear');
+        if (clr) clr.addEventListener('click', () => {
+          S.appliedPromo = null;
+          const inp = $('#inPromo');
+          if (inp) inp.value = '';
+          const perr = $('#promoErr');
+          if (perr) perr.textContent = '';
+          haptic('light');
+          renderGiftMeta();
+        });
+      } else {
+        promoBox.classList.add('hidden');
+        promoBox.classList.remove('warn');
+        promoBox.innerHTML = '';
+      }
     }
     const hint = $('#giftBtcHint');
     if (hint) {
@@ -660,7 +791,8 @@
     if (meta) {
       meta.innerHTML = `
         <div class="row"><span>Номинал карты</span><b>$${nominal}</b></div>
-        <div class="row"><span>Курс карты</span><b>1 $ = ${rate ? fmtCrypto(rate, 'BTC', 8) : '—'}</b></div>
+        <div class="row"><span>Курс карты</span><b>1 $ = ${effectiveRate ? fmtCrypto(effectiveRate, 'BTC', 8) : '—'}</b></div>
+        ${promoActive ? `<div class="row"><span>Промокод ${esc(promo.code)}</span><b class="meta-promo">+${promo.percent}%${bonus > 0 ? ` (+${amount(bonus)})` : ''}</b></div>` : ''}
         <div class="row"><span>Выплата</span><b>${payout ? amount(payout) : '—'}</b></div>`;
     }
     const btn = $('#btnSell');
@@ -701,7 +833,7 @@
     syncTgBack();
   }
   // Gift-card form validation; on success opens the rules dialog.
-  function submitGiftOrder() {
+  async function submitGiftOrder() {
     const s = S.settings;
     const err = $('#giftErr');
     err.textContent = '';
@@ -714,7 +846,15 @@
     if (!(Number(dir.rate) > 0)) return (err.textContent = 'Выкуп этой карты сейчас недоступен.');
     if (!units || units < minUnits) return (err.textContent = `Минимум $${minUnits}, шаг $${step}.`);
     if (!giftWalletValid(wallet, dir)) return (err.textContent = 'Введите корректный Bitcoin-адрес: bc1…, 1… или 3….');
-    const payout = giftPayout(units, dir);
+    const typedPromo = ($('#inPromo') && $('#inPromo').value || '').trim().toUpperCase();
+    if (typedPromo && (!S.appliedPromo || S.appliedPromo.code !== typedPromo)) {
+      const ok = await applyPromoCode(true);
+      if (!ok) return (err.textContent = ($('#promoErr') && $('#promoErr').textContent) || 'Проверьте промокод.');
+    }
+    if (S.appliedPromo && S.appliedPromo.minUnits && units < Number(S.appliedPromo.minUnits)) {
+      return (err.textContent = `Промокод ${S.appliedPromo.code} действует от номинала $${S.appliedPromo.minUnits}.`);
+    }
+    const payout = giftPayout(units, dir, S.appliedPromo ? S.appliedPromo.percent : 0);
     if (!(payout > 0)) return (err.textContent = 'Не удалось рассчитать выплату — проверьте курс и номинал.');
     haptic('medium');
     giftRulesOpen();
@@ -737,12 +877,16 @@
     btn.disabled = true;
     haptic('medium');
     try {
+      const promoCode = S.appliedPromo ? S.appliedPromo.code : '';
       const r = await api('/api/orders', {
         method: 'POST',
-        body: { units, wallet, currency: dir.currency, startParam },
+        body: { units, wallet, currency: dir.currency, promoCode, startParam },
       });
       S.order = r.order;
       S.orders.unshift(r.order);
+      S.appliedPromo = null;
+      const inPromo = $('#inPromo');
+      if (inPromo) inPromo.value = '';
       haptic('heavy');
       giftRulesClose();
       $('#exForm').classList.add('hidden');
@@ -787,12 +931,16 @@
   function renderGiftStage(o) {
     const box = $('#exOrder');
     const payout = giftPayoutText(o);
+    const promoBadge = o.promoCode
+      ? `<div class="order-promo-badge">🏷 Промокод <b>${esc(o.promoCode)}</b> · +${o.promoPercent}%</div>`
+      : '';
     if (o.status === 'new' && o.giftCode) {
       // Compatibility with legacy orders where the code was provided at creation time.
       box.innerHTML = `
         <div class="card stage">
           ${chip('details')}
           <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
+          ${promoBadge}
           <div class="stage-title">Подтвердите передачу карты</div>
           <div class="stage-sub">Заявка <b>#${o.id}</b>. Проверьте код — он уйдёт оператору, как только вы нажмёте «Я оплатил».</div>
           <div class="req-box" id="giftCodeBox">Код карты: ${esc(o.giftCode)}</div>
@@ -823,6 +971,7 @@
           <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🤝</div></div>
           ${chip('new', 'Ждём оператора')}
           <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
+          ${promoBadge}
           <div class="stage-title">Ждём подключения оператора</div>
           <div class="stage-sub">Заявка <b>#${o.id}</b> передана оператору.<br>Обычно это несколько минут — <b>не закрывайте приложение</b>.</div>
           <div class="note">${ttlText(o)}<br><b>Ничего не отправляйте и никому не сообщайте код карты</b>, пока оператор не подключится и не попросит его.</div>
@@ -837,6 +986,7 @@
         <div class="card stage">
           ${chip('details', 'Оператор на связи')}
           <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
+          ${promoBadge}
           <div class="stage-title">Оператор на связи</div>
           <div class="stage-sub">Оператор подключился к заявке <b>#${o.id}</b> и ждёт код карты.<br>Введите код ${esc(giftLabelOf(o))} на <b>$${giftNominal(o)}</b>:</div>
           <div class="f-box" style="margin-top:12px"><div class="coin-ic ${esc(giftDirOfOrder(o).coin)}">${coinInner(giftDirOfOrder(o))}</div><input id="inGiftSendCode" placeholder="Например XXXX-XXXX-XXXX-XXXX" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off"></div>
@@ -876,6 +1026,7 @@
       box.innerHTML = `
         <div class="card stage">
           <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🔎</div></div>
+          ${promoBadge}
           <div class="stage-title">Карта на проверке</div>
           <div class="stage-sub">Оператор проверяет ${esc(giftLabelOf(o))} на <b>$${giftNominal(o)}</b>, регион (<b>США</b>) и валюту (<b>USD</b>).<br>Если всё сходится, отправим ${payout} на ваш кошелёк. Обычно 5–15 минут.</div>
           <div class="req-box">Код карты: ${esc(o.giftCode || '—')}</div>
@@ -888,6 +1039,7 @@
         <div class="card stage">
           <svg class="okmark" viewBox="0 0 100 100"><circle cx="50" cy="50" r="41"/><path d="M32 51l13 13 24-27"/></svg>
           <div class="stage-title">Карта принята — ${esc(giftCurrencyOf(o))} выплачен</div>
+          ${promoBadge}
           <div class="stage-sub">${esc(giftLabelOf(o))} $${giftNominal(o)} → <b>${payout}</b><br>отправлены на ваш кошелёк. Спасибо, что выбрали Pricelex Worldwide ✦</div>
           ${o.txUrl ? `
             <div class="tx-box">
@@ -1054,7 +1206,7 @@
             ${isGiftOrder(o)
               ? `<div class="h-top"><span>${esc(giftLabelOf(o))} $${giftNominal(o)} → ${esc(giftCurrencyOf(o))}</span><span>${giftPayoutText(o)}</span></div>`
               : `<div class="h-top"><span>${esc(dirLabel(o))} → BTC</span><span>${cryptoOf(o)}</span></div>`}
-            <div class="h-sub"><span>#${o.id}${o.receipt ? ' 🧾' : ''}${o.txUrl ? ' 🔗' : ''} · ${fmtDate(o.createdAt)}</span>${chip(o.status)}</div>
+            <div class="h-sub"><span>#${o.id}${o.receipt ? ' 🧾' : ''}${o.txUrl ? ' 🔗' : ''}${o.promoCode ? ` · 🏷 ${esc(o.promoCode)}` : ''} · ${fmtDate(o.createdAt)}</span>${chip(o.status)}</div>
             <div class="h-sub" style="margin-top:2px"><span>${esc(o.wallet.slice(0, 10) + '…' + o.wallet.slice(-6))}</span><b style="color:#9fd8ff">${cryptoOf(o)}</b></div>
             ${o.txUrl ? `<div class="h-sub" style="margin-top:6px"><a href="${esc(o.txUrl)}" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;word-break:break-all">🔗 ${esc(o.txUrl.slice(0,50))}…</a></div>` : ''}
             ${o.status === 'completed' ? `<div class="h-review">${o.reviewed ? `<span class="h-review-done">★ Вы оставили отзыв</span>` : `<button class="h-review-btn" data-review="${o.id}">★ Оставить отзыв</button>`}</div>` : ''}
@@ -1202,7 +1354,7 @@
         <div class="card rev-item">
           <div class="rev-head">
             <div class="rev-avatar">${esc(initialsOf(r.name))}</div>
-            <div class="rev-meta"><div class="rev-name">${esc(r.name)}</div><div class="rev-date">${fmtDate(r.at)}</div></div>
+            <div class="rev-meta"><div class="rev-name">${esc(r.name)}</div><div class="rev-date">${fmtDateFull(r.at)}</div></div>
             ${starsHtml(r.rating, 'small')}
           </div>
           ${r.text ? `<div class="rev-text">${esc(r.text)}</div>` : ''}
@@ -1399,6 +1551,7 @@
     document.querySelectorAll('#admTabs .adm-tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === adminTab));
     document.querySelectorAll('#adminSheet .adm-pane').forEach((p) => p.classList.toggle('hidden', p.dataset.pane !== adminTab));
     if (adminTab === 'reviews') loadAdminReviews();
+    if (adminTab === 'promos') loadAdminPromos();
   }
   function openAdminSheet() {
     const sheet = $('#adminSheet');
@@ -1463,12 +1616,65 @@
     // Чат
     $('#admChatLink').value = A.chat || '';
     $('#admChatErr').textContent = '';
+    // Предпросмотр промокода зависит от актуального курса
+    updateAdminPromoPreview();
   }
   /* ---------- admin: reviews ---------- */
   const adminStarsText = (r) => {
     const n = Math.min(5, Math.max(1, Math.round(Number(r) || 0)));
     return '★'.repeat(n) + '☆'.repeat(5 - n);
   };
+  function resetAdminReviewForm() {
+    S.adminReviewEditId = null;
+    S.adminReviewRating = 5;
+    const nameEl = $('#admRevName');
+    const atEl = $('#admRevAt');
+    const textEl = $('#admRevText');
+    const errEl = $('#admRevErr');
+    const banner = $('#admRevEditBanner');
+    const cancelBtn = $('#admRevCancel');
+    const addBtn = $('#admRevAdd');
+    if (nameEl) nameEl.value = '';
+    if (atEl) atEl.value = '';
+    if (textEl) textEl.value = '';
+    if (errEl) errEl.textContent = '';
+    if (banner) banner.classList.add('hidden');
+    if (cancelBtn) cancelBtn.classList.add('hidden');
+    if (addBtn) {
+      const sp = addBtn.querySelector('span');
+      if (sp) sp.textContent = 'Добавить отзыв';
+    }
+    renderStarInput($('#admRevRating'), S.adminReviewRating, (v) => { S.adminReviewRating = v; });
+    renderAdminReviews();
+  }
+  function startEditAdminReview(review) {
+    if (!review) return;
+    S.adminReviewEditId = review.id;
+    S.adminReviewRating = Math.min(5, Math.max(1, Math.round(Number(review.rating) || 5)));
+    const nameEl = $('#admRevName');
+    const atEl = $('#admRevAt');
+    const textEl = $('#admRevText');
+    const errEl = $('#admRevErr');
+    const banner = $('#admRevEditBanner');
+    const bannerLabel = $('#admRevEditLabel');
+    const cancelBtn = $('#admRevCancel');
+    const addBtn = $('#admRevAdd');
+    if (nameEl) nameEl.value = review.name || '';
+    if (atEl) atEl.value = toDatetimeLocal(review.at);
+    if (textEl) textEl.value = review.text || '';
+    if (errEl) errEl.textContent = '';
+    if (banner) banner.classList.remove('hidden');
+    if (bannerLabel) bannerLabel.textContent = `Редактирование отзыва #${review.id}`;
+    if (cancelBtn) cancelBtn.classList.remove('hidden');
+    if (addBtn) {
+      const sp = addBtn.querySelector('span');
+      if (sp) sp.textContent = 'Сохранить изменения';
+    }
+    renderStarInput($('#admRevRating'), S.adminReviewRating, (v) => { S.adminReviewRating = v; });
+    renderAdminReviews();
+    const panel = $('#adminSheet .adm-panel');
+    if (panel) panel.scrollTo({ top: 0, behavior: 'smooth' });
+  }
   function renderAdminReviews() {
     const list = $('#admRevList');
     if (!list) return;
@@ -1485,14 +1691,28 @@
       ? reviews
           .map(
             (r) => `
-        <div class="adm-rev-item" data-id="${r.id}">
-          <div class="adm-rev-top"><b>${esc(r.name)}</b><span class="adm-rev-stars">${adminStarsText(r.rating)}</span><button class="adm-rev-del" data-del="${r.id}" aria-label="Удалить отзыв">✕</button></div>
+        <div class="adm-rev-item${Number(S.adminReviewEditId) === Number(r.id) ? ' editing' : ''}" data-id="${r.id}">
+          <div class="adm-rev-top">
+            <b>${esc(r.name)}</b>
+            <span class="adm-rev-stars">${adminStarsText(r.rating)}</span>
+            <button type="button" class="adm-icon-btn edit" data-edit-rev="${r.id}" title="Редактировать" aria-label="Редактировать отзыв">✎</button>
+            <button type="button" class="adm-rev-del" data-del="${r.id}" title="Удалить" aria-label="Удалить отзыв">✕</button>
+          </div>
           ${r.text ? `<div class="adm-rev-text">${esc(r.text)}</div>` : ''}
-          <div class="adm-rev-date">${fmtDate(r.at)}${r.source === 'admin' ? ' · добавлен вручную' : ''}</div>
+          <div class="adm-rev-date">${fmtDateFull(r.at)}${r.source === 'admin' ? ' · добавлен вручную' : ''}</div>
         </div>`
           )
           .join('')
       : '<div class="adm-rev-empty">Отзывов пока нет.</div>';
+    list.querySelectorAll('[data-edit-rev]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const rev = reviews.find((x) => Number(x.id) === Number(btn.dataset.editRev));
+        if (rev) {
+          haptic('light');
+          startEditAdminReview(rev);
+        }
+      })
+    );
     list.querySelectorAll('[data-del]').forEach((btn) =>
       btn.addEventListener('click', async () => {
         const id = btn.dataset.del;
@@ -1500,6 +1720,7 @@
         haptic('light');
         try {
           await api('/api/admin/reviews/' + encodeURIComponent(id), { method: 'DELETE' });
+          if (Number(S.adminReviewEditId) === Number(id)) resetAdminReviewForm();
           toast('Отзыв удалён');
           await loadAdminReviews();
           S.reviews = null;
@@ -1518,6 +1739,175 @@
     } catch (e) {
       const list = $('#admRevList');
       if (list) list.innerHTML = `<div class="adm-rev-empty">Не удалось загрузить отзывы${e && e.message ? ': ' + esc(e.message) : ''}</div>`;
+    }
+  }
+
+  /* ---------- admin: promo codes ---------- */
+  function generatePromoCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let suffix = '';
+    for (let i = 0; i < 6; i += 1) suffix += chars[Math.floor(Math.random() * chars.length)];
+    return 'PRX-' + suffix;
+  }
+  function promoStatusOf(p) {
+    if (!p.active) return { cls: 'paused', label: 'Пауза' };
+    if (p.expiresAt && Date.now() > Number(p.expiresAt)) return { cls: 'expired', label: 'Истёк' };
+    if (p.maxUses != null && (Number(p.usedCount) || 0) >= Number(p.maxUses)) return { cls: 'expired', label: 'Исчерпан' };
+    return { cls: 'active', label: 'Активен' };
+  }
+  function updateAdminPromoPreview() {
+    const el = $('#admPromoPreview');
+    const inp = $('#admPromoPercent');
+    if (!el || !inp) return;
+    const pct = Number(String(inp.value || '').replace(',', '.'));
+    const rates = (S.admin && S.admin.cardRates) || {};
+    const sampleRate = Number(rates.GOOGLE_USD) || Object.values(rates).find((v) => Number(v) > 0) || Number(currentSellDir()?.rate) || 0;
+    if (!Number.isFinite(pct) || pct <= 0 || pct > 50 || !(sampleRate > 0)) {
+      el.classList.add('hidden');
+      return;
+    }
+    const baseOut = floorTo(100 * sampleRate, 8);
+    const boostedOut = floorTo(100 * applyPromoRate(sampleRate, pct), 8);
+    el.textContent = `Пример для $100: +${pct}% → ${fmtCrypto(boostedOut, 'BTC', 8)} вместо ${fmtCrypto(baseOut, 'BTC', 8)}`;
+    el.classList.remove('hidden');
+  }
+  function resetAdminPromoForm() {
+    S.adminPromoEditId = null;
+    const ids = ['#admPromoCode', '#admPromoPercent', '#admPromoMaxUses', '#admPromoMinUnits', '#admPromoExpires'];
+    ids.forEach((sel) => { const el = $(sel); if (el) el.value = ''; });
+    const err = $('#admPromoErr');
+    if (err) err.textContent = '';
+    const banner = $('#admPromoEditBanner');
+    if (banner) banner.classList.add('hidden');
+    const cancelBtn = $('#admPromoCancel');
+    if (cancelBtn) cancelBtn.classList.add('hidden');
+    const saveBtn = $('#admPromoSave');
+    if (saveBtn) {
+      const sp = saveBtn.querySelector('span');
+      if (sp) sp.textContent = 'Создать промокод';
+    }
+    updateAdminPromoPreview();
+    renderAdminPromos();
+  }
+  function startEditAdminPromo(promo) {
+    if (!promo) return;
+    S.adminPromoEditId = promo.id;
+    const setVal = (sel, val) => { const el = $(sel); if (el) el.value = val; };
+    setVal('#admPromoCode', promo.code || '');
+    setVal('#admPromoPercent', promo.percent != null ? String(promo.percent) : '');
+    setVal('#admPromoMaxUses', promo.maxUses != null ? String(promo.maxUses) : '');
+    setVal('#admPromoMinUnits', promo.minUnits != null ? String(promo.minUnits) : '');
+    setVal('#admPromoExpires', promo.expiresAt ? toDatetimeLocal(promo.expiresAt) : '');
+    const err = $('#admPromoErr');
+    if (err) err.textContent = '';
+    const banner = $('#admPromoEditBanner');
+    if (banner) banner.classList.remove('hidden');
+    const bannerLabel = $('#admPromoEditLabel');
+    if (bannerLabel) bannerLabel.textContent = `Редактирование промокода ${promo.code}`;
+    const cancelBtn = $('#admPromoCancel');
+    if (cancelBtn) cancelBtn.classList.remove('hidden');
+    const saveBtn = $('#admPromoSave');
+    if (saveBtn) {
+      const sp = saveBtn.querySelector('span');
+      if (sp) sp.textContent = 'Сохранить промокод';
+    }
+    updateAdminPromoPreview();
+    renderAdminPromos();
+    const panel = $('#adminSheet .adm-panel');
+    if (panel) panel.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  function renderAdminPromos() {
+    const list = $('#admPromoList');
+    if (!list) return;
+    const promos = Array.isArray(S.adminPromos) ? S.adminPromos : [];
+    const activeCount = promos.filter((p) => promoStatusOf(p).cls === 'active').length;
+    const summaryEl = $('#admPromoSummary');
+    if (summaryEl) {
+      summaryEl.textContent = promos.length
+        ? `Промокодов: ${promos.length} · активных: ${activeCount}`
+        : 'Промокодов пока нет — создайте первый';
+    }
+    list.innerHTML = promos.length
+      ? promos
+          .map((p) => {
+            const st = promoStatusOf(p);
+            const metaParts = [
+              `Использован: ${Number(p.usedCount) || 0}${p.maxUses != null ? ' / ' + p.maxUses : ''}`,
+              p.minUnits != null ? `от $${p.minUnits}` : null,
+              p.expiresAt ? `до ${fmtDateFull(p.expiresAt)}` : 'бессрочно',
+            ].filter(Boolean);
+            return `
+        <div class="adm-promo-item${st.cls !== 'active' ? ' off' : ''}${Number(S.adminPromoEditId) === Number(p.id) ? ' editing' : ''}" data-promo-id="${p.id}">
+          <div class="adm-promo-top">
+            <button type="button" class="adm-promo-code" data-copy-promo="${esc(p.code)}" title="Скопировать промокод">${esc(p.code)}</button>
+            <span class="adm-promo-pct">+${p.percent}%</span>
+            <span class="adm-promo-st ${st.cls}">${st.label}</span>
+            <button type="button" class="adm-icon-btn" data-toggle-promo="${p.id}" title="${p.active ? 'Приостановить' : 'Включить'}" aria-label="${p.active ? 'Приостановить промокод' : 'Включить промокод'}">${p.active ? '⏸' : '▶'}</button>
+            <button type="button" class="adm-icon-btn edit" data-edit-promo="${p.id}" title="Редактировать" aria-label="Редактировать промокод">✎</button>
+            <button type="button" class="adm-rev-del" data-del-promo="${p.id}" title="Удалить" aria-label="Удалить промокод">✕</button>
+          </div>
+          <div class="adm-promo-meta">${esc(metaParts.join(' · '))}</div>
+        </div>`;
+          })
+          .join('')
+      : '<div class="adm-rev-empty">Промокодов пока нет.</div>';
+
+    list.querySelectorAll('[data-copy-promo]').forEach((btn) =>
+      btn.addEventListener('click', () => copyText(btn.dataset.copyPromo || '', `Промокод ${btn.dataset.copyPromo} скопирован`))
+    );
+    list.querySelectorAll('[data-toggle-promo]').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        const promo = promos.find((x) => Number(x.id) === Number(btn.dataset.togglePromo));
+        if (!promo) return;
+        btn.disabled = true;
+        haptic('light');
+        try {
+          await api('/api/admin/promos/' + encodeURIComponent(promo.id), {
+            method: 'PATCH',
+            body: { active: !promo.active },
+          });
+          toast(promo.active ? `Промокод ${promo.code} на паузе` : `Промокод ${promo.code} активен ✅`);
+          await loadAdminPromos();
+        } catch (e) {
+          toast(e.message || 'Не удалось обновить промокод');
+          btn.disabled = false;
+        }
+      })
+    );
+    list.querySelectorAll('[data-edit-promo]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const promo = promos.find((x) => Number(x.id) === Number(btn.dataset.editPromo));
+        if (promo) {
+          haptic('light');
+          startEditAdminPromo(promo);
+        }
+      })
+    );
+    list.querySelectorAll('[data-del-promo]').forEach((btn) =>
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.delPromo;
+        btn.disabled = true;
+        haptic('light');
+        try {
+          await api('/api/admin/promos/' + encodeURIComponent(id), { method: 'DELETE' });
+          if (Number(S.adminPromoEditId) === Number(id)) resetAdminPromoForm();
+          toast('Промокод удалён');
+          await loadAdminPromos();
+        } catch (e) {
+          toast(e.message || 'Не удалось удалить промокод');
+          btn.disabled = false;
+        }
+      })
+    );
+  }
+  async function loadAdminPromos() {
+    try {
+      const r = await api('/api/admin/promos');
+      S.adminPromos = Array.isArray(r.promos) ? r.promos : [];
+      renderAdminPromos();
+    } catch (e) {
+      const list = $('#admPromoList');
+      if (list) list.innerHTML = `<div class="adm-rev-empty">Не удалось загрузить промокоды${e && e.message ? ': ' + esc(e.message) : ''}</div>`;
     }
   }
 
@@ -1557,33 +1947,121 @@
     const overlay = $('#adminSheetOverlay');
     if (overlay) overlay.addEventListener('click', closeAdminSheet);
     renderStarInput($('#admRevRating'), S.adminReviewRating, (v) => { S.adminReviewRating = v; });
+    const revNow = $('#admRevNow');
+    if (revNow) revNow.addEventListener('click', () => {
+      const atEl = $('#admRevAt');
+      if (atEl) atEl.value = toDatetimeLocal(Date.now());
+      const err = $('#admRevErr');
+      if (err) err.textContent = '';
+      haptic('light');
+    });
+    const revCancel = $('#admRevCancel');
+    if (revCancel) revCancel.addEventListener('click', () => { haptic('light'); resetAdminReviewForm(); });
+    const revReset = $('#admRevEditReset');
+    if (revReset) revReset.addEventListener('click', () => { haptic('light'); resetAdminReviewForm(); });
     const revAdd = $('#admRevAdd');
     if (revAdd) revAdd.addEventListener('click', async (e) => {
       const btn = e.currentTarget;
-      btn.disabled = true;
-      haptic('medium');
       const err = $('#admRevErr');
       if (err) err.textContent = '';
+      const atRaw = ($('#admRevAt') && $('#admRevAt').value || '').trim();
+      const atTs = fromDatetimeLocal(atRaw);
+      if (atRaw && !Number.isFinite(atTs)) {
+        if (err) err.textContent = 'Некорректная дата и время отзыва.';
+        return;
+      }
+      btn.disabled = true;
+      haptic('medium');
       try {
         const body = {
           name: ($('#admRevName').value || '').trim(),
           rating: S.adminReviewRating || 5,
           text: ($('#admRevText').value || '').trim(),
+          ...(atTs != null ? { at: atTs } : {}),
         };
-        await api('/api/admin/reviews', { method: 'POST', body });
-        $('#admRevText').value = '';
-        toast('Отзыв добавлен ✅');
+        if (S.adminReviewEditId != null) {
+          await api('/api/admin/reviews/' + encodeURIComponent(S.adminReviewEditId), { method: 'PUT', body });
+          toast('Отзыв обновлён ✅');
+          resetAdminReviewForm();
+        } else {
+          await api('/api/admin/reviews', { method: 'POST', body });
+          $('#admRevName').value = '';
+          $('#admRevText').value = '';
+          if ($('#admRevAt')) $('#admRevAt').value = '';
+          toast('Отзыв добавлен ✅');
+        }
         await loadAdminReviews();
         S.reviews = null;
         if (S.tab === 'reviews') renderReviews(true);
       } catch (e) {
-        if (err) err.textContent = e.message || 'Не удалось добавить отзыв';
+        if (err) err.textContent = e.message || 'Не удалось сохранить отзыв';
       } finally {
         btn.disabled = false;
       }
     });
-    const admRevTextEl = $('#admRevText');
-    if (admRevTextEl) admRevTextEl.addEventListener('input', () => { const err = $('#admRevErr'); if (err) err.textContent = ''; });
+    ['#admRevName', '#admRevText', '#admRevAt'].forEach((sel) => {
+      const el = $(sel);
+      if (el) el.addEventListener('input', () => { const err = $('#admRevErr'); if (err) err.textContent = ''; });
+    });
+
+    // Промокоды: генерация, предпросмотр, создание и редактирование
+    const promoGen = $('#admPromoGen');
+    if (promoGen) promoGen.addEventListener('click', () => {
+      const codeEl = $('#admPromoCode');
+      if (codeEl) codeEl.value = generatePromoCode();
+      const err = $('#admPromoErr');
+      if (err) err.textContent = '';
+      haptic('light');
+    });
+    const promoPercentEl = $('#admPromoPercent');
+    if (promoPercentEl) promoPercentEl.addEventListener('input', updateAdminPromoPreview);
+    ['#admPromoCode', '#admPromoPercent', '#admPromoMaxUses', '#admPromoMinUnits', '#admPromoExpires'].forEach((sel) => {
+      const el = $(sel);
+      if (el) el.addEventListener('input', () => { const err = $('#admPromoErr'); if (err) err.textContent = ''; });
+    });
+    const promoCancel = $('#admPromoCancel');
+    if (promoCancel) promoCancel.addEventListener('click', () => { haptic('light'); resetAdminPromoForm(); });
+    const promoReset = $('#admPromoEditReset');
+    if (promoReset) promoReset.addEventListener('click', () => { haptic('light'); resetAdminPromoForm(); });
+    const promoSave = $('#admPromoSave');
+    if (promoSave) promoSave.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const err = $('#admPromoErr');
+      if (err) err.textContent = '';
+      const expRaw = ($('#admPromoExpires') && $('#admPromoExpires').value || '').trim();
+      const expTs = fromDatetimeLocal(expRaw);
+      if (expRaw && !Number.isFinite(expTs)) {
+        if (err) err.textContent = 'Некорректная дата окончания промокода.';
+        return;
+      }
+      const maxRaw = ($('#admPromoMaxUses') && $('#admPromoMaxUses').value || '').trim();
+      const minRaw = ($('#admPromoMinUnits') && $('#admPromoMinUnits').value || '').trim();
+      const body = {
+        code: ($('#admPromoCode') && $('#admPromoCode').value || '').trim().toUpperCase(),
+        percent: ($('#admPromoPercent') && $('#admPromoPercent').value || '').trim(),
+        maxUses: maxRaw === '' ? null : Number(maxRaw),
+        minUnits: minRaw === '' ? null : Number(minRaw),
+        expiresAt: expRaw === '' ? null : expTs,
+      };
+      btn.disabled = true;
+      haptic('medium');
+      try {
+        if (S.adminPromoEditId != null) {
+          await api('/api/admin/promos/' + encodeURIComponent(S.adminPromoEditId), { method: 'PUT', body });
+          toast('Промокод обновлён ✅');
+          resetAdminPromoForm();
+        } else {
+          const r = await api('/api/admin/promos', { method: 'POST', body });
+          toast(`Промокод ${r.promo.code} создан ✅`);
+          resetAdminPromoForm();
+        }
+        await loadAdminPromos();
+      } catch (e) {
+        if (err) err.textContent = e.message || 'Не удалось сохранить промокод';
+      } finally {
+        btn.disabled = false;
+      }
+    });
     $('#admGiftSave').addEventListener('click', (e) => {
       e.currentTarget.disabled = true;
       haptic('medium');
@@ -1872,7 +2350,7 @@
     try { tg.BackButton.onClick(onTgBackButton); } catch (e) { /* older clients */ }
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { if (S.adminOpen) closeAdminSheet(); else if (S.giftRules) giftRulesClose(); else if (S.sheet) closeAssetSheet(); }
+    if (e.key === 'Escape') { if (S.reviewOpen) closeReviewSheet(); else if (S.adminOpen) closeAdminSheet(); else if (S.giftRules) giftRulesClose(); else if (S.sheet) closeAssetSheet(); }
   });
   // The bottom asset-selection sheet — one-time binding (it lives in index.html, outside #view-exchange).
   const sheetCloseBtn = $('#sheetClose');
