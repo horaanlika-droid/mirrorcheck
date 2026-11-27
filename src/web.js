@@ -291,14 +291,134 @@ function createApp() {
       cardRates: currencies.allCardRates(s),
       directions: Object.fromEntries(currencies.list().map((p) => [p.key, on(p.key)])),
       online: !!s.online,
+      ticker: store.normalizeLines(s.ticker, store.DEFAULT_TICKER),
+      tickerEnabled: s.tickerEnabled !== false,
+      marquee: store.normalizeLines(s.marquee, store.DEFAULT_MARQUEE),
+      marqueeEnabled: s.marqueeEnabled !== false,
+      blockOrder: store.normalizeBlockOrder(s.blockOrder),
+      defaultTicker: store.DEFAULT_TICKER,
+      defaultMarquee: store.DEFAULT_MARQUEE,
+      defaultBlockOrder: store.DEFAULT_BLOCK_ORDER,
     };
   };
+
+  function parseRunningLinesInput(raw, label) {
+    if (raw === null) return { reset: true };
+    let lines;
+    if (typeof raw === 'string') {
+      lines = raw.split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
+    } else if (Array.isArray(raw)) {
+      lines = raw.map((v) => String(v ?? '').trim()).filter(Boolean);
+    } else {
+      return { error: `${label}: передайте список строк или текст.` };
+    }
+    if (!lines.length) {
+      return { error: `${label}: добавьте хотя бы одну фразу (или выключите строку).` };
+    }
+    if (lines.length > 30) {
+      return { error: `${label}: максимум 30 фраз.` };
+    }
+    if (lines.some((line) => line.length > 200)) {
+      return { error: `${label}: каждая фраза не длиннее 200 символов.` };
+    }
+    return { lines };
+  }
+
+  function parseBlockOrderPatch(raw) {
+    if (raw === null) return { reset: true };
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return { error: 'blockOrder: ожидается объект секций.' };
+    }
+    const patch = {};
+    for (const [section, list] of Object.entries(raw)) {
+      const def = store.DEFAULT_BLOCK_ORDER[section];
+      if (!def) {
+        return { error: `Неизвестная секция блоков: ${section}` };
+      }
+      if (!Array.isArray(list)) {
+        return { error: `Секция ${section}: ожидается массив идентификаторов блоков.` };
+      }
+      const valid = new Set(def);
+      const seen = new Set();
+      const cleaned = [];
+      for (const item of list) {
+        const key = String(item ?? '').trim();
+        if (!valid.has(key) || seen.has(key)) {
+          return { error: `Некорректный блок «${key}» в секции ${section}.` };
+        }
+        seen.add(key);
+        cleaned.push(key);
+      }
+      for (const key of def) {
+        if (!seen.has(key)) cleaned.push(key);
+      }
+      patch[section] = cleaned;
+    }
+    if (!Object.keys(patch).length) {
+      return { error: 'Передайте хотя бы одну секцию для изменения порядка.' };
+    }
+    return { patch };
+  }
 
   app.get('/api/admin/settings', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
     if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
     res.json({ admin: adminSettingsBlock(), settings: store.publicSettings() });
+  });
+
+  app.put('/api/admin/tickers', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
+    const body = req.body || {};
+    const patch = {};
+    if (body.ticker !== undefined) {
+      const parsed = parseRunningLinesInput(body.ticker, 'Верхняя бегущая строка');
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      patch.ticker = parsed.reset ? [...store.DEFAULT_TICKER] : parsed.lines;
+    }
+    if (body.tickerEnabled !== undefined) {
+      if (typeof body.tickerEnabled !== 'boolean') return res.status(400).json({ error: 'tickerEnabled: только true или false' });
+      patch.tickerEnabled = body.tickerEnabled;
+    }
+    if (body.marquee !== undefined) {
+      const parsed = parseRunningLinesInput(body.marquee, 'Крупная бегущая строка');
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      patch.marquee = parsed.reset ? [...store.DEFAULT_MARQUEE] : parsed.lines;
+    }
+    if (body.marqueeEnabled !== undefined) {
+      if (typeof body.marqueeEnabled !== 'boolean') return res.status(400).json({ error: 'marqueeEnabled: только true или false' });
+      patch.marqueeEnabled = body.marqueeEnabled;
+    }
+    if (!Object.keys(patch).length) {
+      return res.status(400).json({ error: 'Нечего обновлять — передайте настройки бегущих строк.' });
+    }
+    store.mutate((db) => {
+      Object.assign(db.settings, patch);
+    });
+    res.json({ settings: store.publicSettings(), admin: adminSettingsBlock() });
+  });
+
+  app.put('/api/admin/layout', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
+    const body = req.body || {};
+    let input = body.blockOrder;
+    if (body.reset === true) input = null;
+    else if (input === undefined && body.section !== undefined) {
+      input = { [String(body.section)]: body.order };
+    }
+    const parsed = parseBlockOrderPatch(input);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    store.mutate((db) => {
+      const current = store.normalizeBlockOrder(db.settings.blockOrder);
+      db.settings.blockOrder = parsed.reset
+        ? store.normalizeBlockOrder(store.DEFAULT_BLOCK_ORDER)
+        : store.normalizeBlockOrder({ ...current, ...parsed.patch });
+    });
+    res.json({ settings: store.publicSettings(), admin: adminSettingsBlock() });
   });
 
   const CLIENTS_ANNOUNCE_OPEN =
@@ -361,8 +481,33 @@ function createApp() {
       }
       patch.chat = chat;
     }
+    // 5) Бегущие строки и порядок блоков
+    if (body.ticker !== undefined) {
+      const parsed = parseRunningLinesInput(body.ticker, 'Верхняя бегущая строка');
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      patch.ticker = parsed.reset ? [...store.DEFAULT_TICKER] : parsed.lines;
+    }
+    if (body.tickerEnabled !== undefined) {
+      if (typeof body.tickerEnabled !== 'boolean') return res.status(400).json({ error: 'tickerEnabled: только true или false' });
+      patch.tickerEnabled = body.tickerEnabled;
+    }
+    if (body.marquee !== undefined) {
+      const parsed = parseRunningLinesInput(body.marquee, 'Крупная бегущая строка');
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      patch.marquee = parsed.reset ? [...store.DEFAULT_MARQUEE] : parsed.lines;
+    }
+    if (body.marqueeEnabled !== undefined) {
+      if (typeof body.marqueeEnabled !== 'boolean') return res.status(400).json({ error: 'marqueeEnabled: только true или false' });
+      patch.marqueeEnabled = body.marqueeEnabled;
+    }
+    let blockOrderPatch = null;
+    if (body.blockOrder !== undefined) {
+      const parsed = parseBlockOrderPatch(body.blockOrder);
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      blockOrderPatch = parsed;
+    }
     if (openTrading !== null) patch.online = openTrading;
-    if (!Object.keys(patch).length && !cardFeesPatch) {
+    if (!Object.keys(patch).length && !cardFeesPatch && !blockOrderPatch) {
       return res.status(400).json({ error: 'Нечего обновлять — передайте хотя бы одно поле.' });
     }
     const wasOnline = !!store.get().settings.online;
@@ -371,8 +516,14 @@ function createApp() {
       if (patch.enabled) {
         s.enabled = { ...(s.enabled || {}), ...patch.enabled };
       }
-      for (const key of ['chat', 'online']) {
+      for (const key of ['chat', 'online', 'ticker', 'tickerEnabled', 'marquee', 'marqueeEnabled']) {
         if (patch[key] !== undefined) s[key] = patch[key];
+      }
+      if (blockOrderPatch) {
+        const current = store.normalizeBlockOrder(s.blockOrder);
+        s.blockOrder = blockOrderPatch.reset
+          ? store.normalizeBlockOrder(store.DEFAULT_BLOCK_ORDER)
+          : store.normalizeBlockOrder({ ...current, ...blockOrderPatch.patch });
       }
       if (cardFeesPatch) {
         s.cardFees = { ...(s.cardFees || {}), ...cardFeesPatch };

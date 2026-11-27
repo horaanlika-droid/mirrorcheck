@@ -7,6 +7,63 @@ const attachments = require('./attachments');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
+const DEFAULT_TICKER = [
+  'PRICELEX WORLDWIDE',
+  'GOOGLE · ITUNES · XBOX · APPLE STORE',
+  'ВЫПЛАТА В USDT (BEP-20)',
+  'БЕЗ РЕГИСТРАЦИИ И ДОКУМЕНТОВ',
+  'СРЕДНЕЕ ВРЕМЯ ОБМЕНА 10–15 МИН',
+  'КАЖДЫЙ 5-Й ОБМЕН — СКИДКА НА КОМИССИЮ',
+  'ПОДДЕРЖКА 24/7',
+];
+
+const DEFAULT_MARQUEE = [
+  'Приватный *обмен* подарочных карт',
+  'USD *→* USDT (BEP-20)',
+  'Google · iTunes · *Xbox* · Apple Store',
+  'Без регистрации *и лишних следов*',
+  'Честный курс *до создания* заявки',
+];
+
+const DEFAULT_BLOCK_ORDER = {
+  home: ['hero', 'marquee', 'cards', 'steps', 'buyNote'],
+  form: ['formCalc', 'formInfo', 'formWallet'],
+  profile: ['profileHead', 'profileRef', 'profileContacts', 'profileAbout'],
+};
+
+function normalizeLines(raw, fallback) {
+  if (!Array.isArray(raw)) return [...fallback];
+  const lines = raw
+    .map((v) => String(v ?? '').trim().slice(0, 200))
+    .filter(Boolean)
+    .slice(0, 30);
+  return lines.length ? lines : [...fallback];
+}
+
+function normalizeBlockOrder(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const out = {};
+  for (const [section, def] of Object.entries(DEFAULT_BLOCK_ORDER)) {
+    const valid = new Set(def);
+    const seen = new Set();
+    const list = [];
+    if (Array.isArray(src[section])) {
+      for (const item of src[section]) {
+        const key = String(item ?? '').trim();
+        if (valid.has(key) && !seen.has(key)) {
+          seen.add(key);
+          list.push(key);
+        }
+      }
+    }
+    for (const key of def) {
+      if (!seen.has(key)) list.push(key);
+    }
+    out[section] = list;
+  }
+  return out;
+}
+
 const defaults = () => {
   const settings = {
     // Цена 1 USDT в USD. До получения котировки используем паритет.
@@ -25,6 +82,11 @@ const defaults = () => {
     channel: 'https://t.me/VEGA_Official_65',
     chat: 'https://t.me/+tY5b6RUJ0xUwNmNh',
     textOverrides: {},
+    ticker: [...DEFAULT_TICKER],
+    tickerEnabled: true,
+    marquee: [...DEFAULT_MARQUEE],
+    marqueeEnabled: true,
+    blockOrder: normalizeBlockOrder(DEFAULT_BLOCK_ORDER),
     publicUrl: null,
     botUsername: null,
   };
@@ -121,6 +183,11 @@ function load() {
           if (!known.has(id)) delete s.textOverrides[id];
         }
       }
+      s.ticker = normalizeLines(rawSettings.ticker, DEFAULT_TICKER);
+      s.tickerEnabled = rawSettings.tickerEnabled !== false;
+      s.marquee = normalizeLines(rawSettings.marquee, DEFAULT_MARQUEE);
+      s.marqueeEnabled = rawSettings.marqueeEnabled !== false;
+      s.blockOrder = normalizeBlockOrder(rawSettings.blockOrder);
       return;
     }
   } catch (e) {
@@ -164,6 +231,11 @@ function publicSettings() {
     operator: s.operator,
     channel: s.channel,
     chat: s.chat,
+    ticker: normalizeLines(s.ticker, DEFAULT_TICKER),
+    tickerEnabled: s.tickerEnabled !== false,
+    marquee: normalizeLines(s.marquee, DEFAULT_MARQUEE),
+    marqueeEnabled: s.marqueeEnabled !== false,
+    blockOrder: normalizeBlockOrder(s.blockOrder),
     publicUrl: s.publicUrl,
     botUsername: s.botUsername,
   };
@@ -630,6 +702,11 @@ function releaseOrderPromo(orderId) {
 load();
 
 module.exports = {
+  DEFAULT_TICKER,
+  DEFAULT_MARQUEE,
+  DEFAULT_BLOCK_ORDER,
+  normalizeLines,
+  normalizeBlockOrder,
   get,
   mutate,
   publicSettings,
