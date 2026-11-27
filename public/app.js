@@ -51,7 +51,153 @@
   // dir — selected direction (key from /api/settings → rates[]).
   // screen — which exchange sub-screen we are on: 'picker' (asset selection) or 'form' (exchange form).
   // sheet — which bottom sheet is open (crypto | gift) or null.
-  const S = { settings: null, me: null, loyalty: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, reviews: null, reviewsLoading: false, reviewTarget: null, reviewRating: 5, reviewOpen: false, adminReviewRating: 5, adminReviewEditId: null, adminReviews: [], adminPromos: [], adminPromoEditId: null, appliedPromo: null, inlineEdit: false };
+  const S = { settings: null, me: null, loyalty: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, reviews: null, reviewsLoading: false, reviewTarget: null, reviewRating: 5, reviewOpen: false, adminReviewRating: 5, adminReviewEditId: null, adminReviews: [], adminPromos: [], adminPromoEditId: null, appliedPromo: null, inlineEdit: false, layoutEdit: false, tickerEditKind: null };
+
+  const FALLBACK_TICKER = [
+    'PRICELEX WORLDWIDE',
+    'GOOGLE · ITUNES · XBOX · APPLE STORE',
+    'ВЫПЛАТА В USDT (BEP-20)',
+    'БЕЗ РЕГИСТРАЦИИ И ДОКУМЕНТОВ',
+    'СРЕДНЕЕ ВРЕМЯ ОБМЕНА 10–15 МИН',
+    'КАЖДЫЙ 5-Й ОБМЕН — СКИДКА НА КОМИССИЮ',
+    'ПОДДЕРЖКА 24/7',
+  ];
+  const FALLBACK_MARQUEE = [
+    'Приватный *обмен* подарочных карт',
+    'USD *→* USDT (BEP-20)',
+    'Google · iTunes · *Xbox* · Apple Store',
+    'Без регистрации *и лишних следов*',
+    'Честный курс *до создания* заявки',
+  ];
+  const DEFAULT_BLOCK_ORDER = {
+    home: ['hero', 'marquee', 'cards', 'steps', 'buyNote'],
+    form: ['formCalc', 'formInfo', 'formWallet'],
+    profile: ['profileHead', 'profileRef', 'profileContacts', 'profileAbout'],
+  };
+  const BLOCK_LABELS = {
+    hero: 'Главный экран',
+    marquee: 'Крупная бегущая строка',
+    cards: 'Поддерживаемые карты',
+    steps: 'Как проходит обмен',
+    buyNote: 'Где купить карту',
+    formCalc: 'Номинал и расчёт',
+    formInfo: 'Где взять карту',
+    formWallet: 'Адрес для выплаты',
+    profileHead: 'Профиль и статистика',
+    profileRef: 'Реферальная программа',
+    profileContacts: 'Связаться с нами',
+    profileAbout: 'О сервисе',
+  };
+  const SECTION_LABELS = {
+    home: 'Главный экран',
+    form: 'Форма обмена',
+    profile: 'Профиль',
+  };
+
+  function linesOf(value, fallback = []) {
+    let lines = [];
+    if (Array.isArray(value)) lines = value.map((v) => String(v ?? '').trim()).filter(Boolean);
+    else if (typeof value === 'string') lines = value.split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
+    return lines.length ? lines : [...fallback];
+  }
+  function expandLines(lines, minCount) {
+    if (!lines.length) return [];
+    const out = [...lines];
+    while (out.length < minCount) out.push(...lines);
+    return out;
+  }
+  function formatAccentLine(line) {
+    return esc(line).replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  }
+  function renderTopTicker() {
+    const el = $('#topTicker');
+    if (!el) return;
+    const s = S.settings || {};
+    const enabled = s.tickerEnabled !== false;
+    document.body.classList.toggle('no-ticker', !enabled);
+    el.classList.toggle('hidden', !enabled);
+    if (!enabled) {
+      el.dataset.signature = 'off';
+      el.innerHTML = '';
+      return;
+    }
+    const words = expandLines(linesOf(s.ticker, FALLBACK_TICKER), 6);
+    const sig = JSON.stringify(words);
+    if (el.dataset.signature === sig) return;
+    el.dataset.signature = sig;
+    const lap = words.map((w) => `<span class="ticker__word">${formatAccentLine(w)}</span>`).join('');
+    el.innerHTML = `<div class="ticker__track">${lap}${lap}</div>`;
+  }
+  function marqueeInnerHtml() {
+    const s = S.settings || {};
+    const words = expandLines(linesOf(s.marquee, FALLBACK_MARQUEE), 4);
+    const lap = words.map((w) => `<span>${formatAccentLine(w)}</span>`).join('');
+    return `<div class="kinetic__row">${lap}${lap}</div>`;
+  }
+  function marqueeBlockHtml() {
+    const s = S.settings || {};
+    if (s.marqueeEnabled === false) return '';
+    return `<div class="kinetic" data-block="marquee" data-block-section="home" aria-hidden="true">${marqueeInnerHtml()}</div>`;
+  }
+  function syncMarqueeBlock() {
+    const s = S.settings || {};
+    const picker = $('#assetPicker');
+    if (!picker) return;
+    const existing = picker.querySelector('[data-block="marquee"][data-block-section="home"]');
+    if (s.marqueeEnabled === false) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (!existing) {
+      renderExchange();
+      return;
+    }
+    const words = expandLines(linesOf(s.marquee, FALLBACK_MARQUEE), 4);
+    const sig = JSON.stringify(words);
+    if (existing.dataset.signature !== sig) {
+      existing.dataset.signature = sig;
+      existing.innerHTML = marqueeInnerHtml();
+    }
+  }
+  function getBlockOrder(section) {
+    const def = DEFAULT_BLOCK_ORDER[section] || [];
+    const raw = S.settings && S.settings.blockOrder && S.settings.blockOrder[section];
+    if (!Array.isArray(raw) || !raw.length) return [...def];
+    const valid = new Set(def);
+    const seen = new Set();
+    const out = [];
+    for (const id of raw) {
+      if (valid.has(id) && !seen.has(id)) {
+        seen.add(id);
+        out.push(id);
+      }
+    }
+    for (const id of def) {
+      if (!seen.has(id)) out.push(id);
+    }
+    return out;
+  }
+  function applyBlockOrderToContainer(container, section, anchor = null) {
+    if (!container) return;
+    const order = getBlockOrder(section);
+    const map = new Map();
+    container.querySelectorAll(`:scope > [data-block][data-block-section="${section}"]`).forEach((node) => {
+      map.set(node.dataset.block, node);
+    });
+    if (!map.size) return;
+    const current = [...container.querySelectorAll(`:scope > [data-block][data-block-section="${section}"]`)].map((n) => n.dataset.block);
+    const desired = order.filter((id) => map.has(id));
+    if (current.length === desired.length && current.every((id, i) => id === desired[i])) return;
+    for (const id of desired) {
+      const node = map.get(id);
+      if (node) container.insertBefore(node, anchor);
+    }
+  }
+  function applyBlockOrderToDom() {
+    applyBlockOrderToContainer($('#assetPicker'), 'home');
+    applyBlockOrderToContainer($('#giftForm'), 'form', $('#btnSell'));
+    applyBlockOrderToContainer($('#view-profile'), 'profile', $('#lcOpenAdmin'));
+  }
 
   const USDT_DECIMALS = 6; // точность выплаты сервиса
   // Без актуальных курсов показываем карты, но не разрешаем создать заявку.
@@ -331,6 +477,7 @@
         if (S.tab === 'reviews') renderReviews();
         if (S.tab === 'profile') renderProfile();
         if (S.tab === 'support') renderSupport();
+        if (S.layoutEdit) applyLayoutEdit();
         syncTgBack();
       })
     );
@@ -486,10 +633,9 @@
     const cryptoOn = false;
     const step = Number(sell && sell.step) || 10;
     const minUnits = Number(sell && sell.minUnits) || step;
-    $('#view-exchange').innerHTML = `
-      <div id="exForm" class="${S.order ? 'hidden' : ''}">
-        <div id="assetPicker" role="region" aria-label="Выберите подарочную карту">
-          <section class="exchange-hero">
+    const homeBlocks = {
+      hero: `
+          <section class="exchange-hero" data-block="hero" data-block-section="home">
             <div class="hero-copy">
               <div class="hero-kicker"><i></i> ПРИВАТНЫЙ ОБМЕН ЦИФРОВЫХ ПОДАРОЧНЫХ КАРТ</div>
               <h1>Подарочные карты<br>на <span>USDT</span></h1>
@@ -505,54 +651,45 @@
               <div class="hero-core"><span>₮</span></div>
               ${[['APPLE_STORE_USD','token-apple'],['XBOX_USD','token-xbox'],['GOOGLE_USD','token-google'],['ITUNES_USD','token-itunes']].map(([key, placement]) => { const d = dirs().find((x) => x.key === key); return d ? `<div class="hero-token ${placement}"><span class="coin-ic ${esc(d.coin)}">${coinInner(d)}</span></div>` : ''; }).join('')}
             </div>
-          </section>
-          <div class="supported-head" id="supportedCards">
-            <div><span class="section-overline">НАПРАВЛЕНИЯ</span><h2>Какие карты принимаем</h2></div>
-            <span class="supported-region">США · USD</span>
-          </div>
-          <div class="supported-grid">
-            ${dirs().filter(isGiftDir).map((d) => `
-              <button class="supported-card${eligible(d) && S.settings.online ? '' : ' off'}" data-key="${esc(d.key)}" ${eligible(d) && S.settings.online ? '' : 'disabled aria-disabled="true"'}>
-                <span class="supported-icon coin-ic ${esc(d.coin)}">${coinInner(d)}</span>
-                <b>${esc(d.label)}</b>
-                <small>${Number(d.rate) > 0 ? '1 $ = ' + fmtUsdt(d.rate) : 'USD · от $10'}</small>
-                <span class="supported-arrow" aria-hidden="true">↗</span>
-              </button>`).join('')}
-          </div>
-          <div class="picker-empty${cryptoOn || giftOn ? ' hidden' : ''}" id="pickerEmpty">Направления временно недоступны.<br>Загляните чуть позже.</div>
-          <details class="exchange-steps">
+          </section>`,
+      marquee: marqueeBlockHtml(),
+      cards: `
+          <div class="picker-cards-block" data-block="cards" data-block-section="home">
+            <div class="supported-head" id="supportedCards">
+              <div><span class="section-overline">НАПРАВЛЕНИЯ</span><h2>Какие карты принимаем</h2></div>
+              <span class="supported-region">США · USD</span>
+            </div>
+            <div class="supported-grid">
+              ${dirs().filter(isGiftDir).map((d) => `
+                <button class="supported-card${eligible(d) && S.settings.online ? '' : ' off'}" data-key="${esc(d.key)}" ${eligible(d) && S.settings.online ? '' : 'disabled aria-disabled="true"'}>
+                  <span class="supported-icon coin-ic ${esc(d.coin)}">${coinInner(d)}</span>
+                  <b>${esc(d.label)}</b>
+                  <small>${Number(d.rate) > 0 ? '1 $ = ' + fmtUsdt(d.rate) : 'USD · от $10'}</small>
+                  <span class="supported-arrow" aria-hidden="true">↗</span>
+                </button>`).join('')}
+            </div>
+            <div class="picker-empty${cryptoOn || giftOn ? ' hidden' : ''}" id="pickerEmpty">Направления временно недоступны.<br>Загляните чуть позже.</div>
+          </div>`,
+      steps: `
+          <details class="exchange-steps" data-block="steps" data-block-section="home">
             <summary>Как проходит обмен?</summary>
             <ol>
               <li>Выберите карту, укажите адрес USDT (BEP-20) и создайте заявку.</li>
               <li>Дождитесь оператора. Передайте код карты только по его запросу.</li>
               <li>После проверки получите USDT на свой кошелёк.</li>
             </ol>
-          </details>
-          <div class="buy-note" role="note">
+          </details>`,
+      buyNote: `
+          <div class="buy-note" role="note" data-block="buyNote" data-block-section="home">
             <div class="gain-note-title"><span class="gain-note-ic" aria-hidden="true">🛒</span>Где купить карту — решать вам</div>
             <div class="gain-item"><span class="gain-num">✦</span><p>Нам <b>не важно, где вы купили карту и по какому курсу</b>: на маркетплейсе, в магазине цифровых кодов, у знакомых, за наличные — где угодно. Чек и цену покупки мы не спрашиваем.</p></div>
             <div class="gain-item"><span class="gain-num">✓</span><p>Важно одно: <b>карта работает</b>. Регион <b>США</b>, номинал в <b>USD ($)</b>, баланс полный и не тронутый. Всё остальное — детали, которые нас не касаются.</p></div>
             <div class="gain-item"><span class="gain-num">₮</span><p>Сумма выплаты видна до создания заявки и не зависит от того, сколько вы заплатили за карту.</p></div>
-          </div>
-        </div>
-        <div id="assetForm" class="hidden">
-          <div class="form-topbar">
-            <button class="back-btn" id="btnBackToAssets">${ICONS.left}<span>К картам</span></button>
-            <button class="asset-chip" id="assetChip" aria-label="Сменить карту">
-              <span class="coin-ic ${esc(dir.coin)}" id="chipIc">${coinInner(dir)}</span>
-              <span class="asset-chip-label" id="chipLabel">${esc(dir.label)}</span>
-              ${ICONS.chevDown}
-            </button>
-          </div>
-          <div class="trade-layout">
-            <aside class="trade-steps" aria-label="Шаги обмена">
-              <div class="trade-step active"><i>01</i><span>Выберите карту</span></div>
-              <div class="trade-step"><i>02</i><span>Укажите данные и курс</span></div>
-              <div class="trade-step"><i>03</i><span>Получите USDT</span></div>
-            </aside>
-            <div class="trade-main">
-        <div id="giftForm" class="hidden">
-          <div class="card">
+          </div>`,
+    };
+    const formBlocks = {
+      formCalc: `
+          <div class="card" data-block="formCalc" data-block-section="form">
             <div class="card-title" id="giftTitle">${esc(sell.label)}</div>
             <div class="f-label"><span>Номинал карты</span><span id="giftRule"></span></div>
             <div class="seg gift-nom" id="segNom"></div>
@@ -571,19 +708,45 @@
             </div>
             <div class="f-meta" id="giftMeta"></div>
             <div class="info-note" style="margin-top:10px">⏱ На сделку даётся <b>1 час</b>: создайте заявку → <b>дождитесь оператора</b> → отправьте код <b>только после его запроса</b> — оператор проверит карту и выплатит USDT (BEP-20).</div>
-          </div>
-          <div class="card">
+          </div>`,
+      formInfo: `
+          <div class="card" data-block="formInfo" data-block-section="form">
             <div class="card-title">Где взять карту</div>
             <div class="info-note" id="giftInfo">Где и по какому курсу вы купили карту — не важно. Мы не спрашиваем чек и цену покупки: важно, чтобы карта работала. Регион <b>США</b>, номинал в <b>USD</b>, полный неиспользованный баланс.</div>
             <div class="info-warn">⚠️ Проверьте регион карты: США, валюта номинала — <b>USD ($)</b>.</div>
             <div class="info-note" style="margin-top:10px">🛡 <b>Минимальный цифровой след</b><br>Карту можно купить <b>за наличные</b> — она не привязана к банковскому счёту или паспорту. Мы не просим документы и регистрацию: только код карты и адрес для выплаты USDT. Выплата приходит прямо на кошелёк — без банков, бирж и посредников. Меньше следов данных — спокойнее.</div>
-          </div>
-          <div class="card">
+          </div>`,
+      formWallet: `
+          <div class="card" data-block="formWallet" data-block-section="form">
             <div class="card-title">Адрес для выплаты USDT (BEP-20)</div>
             <div class="f-box"><div class="coin-ic usdt">₮</div><input id="inPayoutWallet" placeholder="0x…" aria-label="Адрес кошелька USDT (BEP-20)" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
             <div class="f-hint" id="giftWalletHint">${esc(sell.walletHint)}</div>
             <div class="f-err" id="giftErr"></div>
+          </div>`,
+    };
+    $('#view-exchange').innerHTML = `
+      <div id="exForm" class="${S.order ? 'hidden' : ''}">
+        <div id="assetPicker" role="region" aria-label="Выберите подарочную карту">
+          ${getBlockOrder('home').map((id) => homeBlocks[id] || '').join('')}
+        </div>
+        <div id="assetForm" class="hidden">
+          <div class="form-topbar">
+            <button class="back-btn" id="btnBackToAssets">${ICONS.left}<span>К картам</span></button>
+            <button class="asset-chip" id="assetChip" aria-label="Сменить карту">
+              <span class="coin-ic ${esc(dir.coin)}" id="chipIc">${coinInner(dir)}</span>
+              <span class="asset-chip-label" id="chipLabel">${esc(dir.label)}</span>
+              ${ICONS.chevDown}
+            </button>
           </div>
+          <div class="trade-layout">
+            <aside class="trade-steps" aria-label="Шаги обмена">
+              <div class="trade-step active"><i>01</i><span>Выберите карту</span></div>
+              <div class="trade-step"><i>02</i><span>Укажите данные и курс</span></div>
+              <div class="trade-step"><i>03</i><span>Получите USDT</span></div>
+            </aside>
+            <div class="trade-main">
+        <div id="giftForm" class="hidden">
+          ${getBlockOrder('form').map((id) => formBlocks[id] || '').join('')}
           <button class="btn btn-primary" style="margin-top:14px" id="btnSell">${ICONS.bolt}<span>Сдать карту за USDT</span></button>
         </div>
             </div>
@@ -672,6 +835,7 @@
     syncAssetChip();
     renderFormMeta();
     renderOrderStage();
+    if (S.layoutEdit) applyLayoutEdit();
   }
 
   async function applyPromoCode(silent = false) {
@@ -1507,37 +1671,45 @@
     const doneOrders = S.orders.filter((o) => o.status === 'completed');
     const volume = doneOrders.reduce((sum, o) => sum + Number(o.units || 0), 0);
     const opLink = 'https://t.me/' + String(s.operator || '').replace(/^@/, '');
+    const profileBlocks = {
+      profileHead: `
+        <div class="profile-block" data-block="profileHead" data-block-section="profile" style="margin-bottom:12px">
+          <div class="card lc-head">
+            <div class="lc-id">
+              <div class="lc-name">${esc(name)}</div>
+              <div class="lc-sub">${esc(userLine)}</div>
+              <div class="lc-note">${s.online ? '🟢 Обмен онлайн' : '🔴 Обмен оффлайн'}</div>
+            </div>
+          </div>
+          <div class="lc-stats">
+            <div class="lc-stat"><b>${S.orders.length}</b><span>всего заявок</span></div>
+            <div class="lc-stat"><b>${doneOrders.length}</b><span>завершено</span></div>
+            <div class="lc-stat"><b>$${volume}</b><span>карт сдано</span></div>
+          </div>
+        </div>`,
+      profileRef: `<div class="profile-block" data-block="profileRef" data-block-section="profile" style="margin-bottom:12px">${referralCardHtml('lcCopyRef')}</div>`,
+      profileContacts: `
+        <div class="card profile-block" data-block="profileContacts" data-block-section="profile" style="margin-bottom:12px">
+          <div class="card-title">Связаться с нами</div>
+          <div class="contacts">
+            <a class="contact" href="${esc(opLink)}" target="_blank" rel="noopener"><span class="ci">🧩</span><span>Оператор<small>${esc(s.operator)}</small></span></a>
+            <a class="contact" href="${esc(s.channel)}" target="_blank" rel="noopener"><span class="ci">📣</span><span>Официальный канал<small>новости и курсы</small></span></a>
+            <a class="contact" href="${esc(s.chat)}" target="_blank" rel="noopener"><span class="ci">💬</span><span>Чат поддержки<small>отвечаем быстро</small></span></a>
+          </div>
+          <button class="btn btn-ghost" style="margin-top:10px" id="goSupport">${ICONS.chat}<span>Открыть чат поддержки</span></button>
+        </div>`,
+      profileAbout: `<div class="card profile-block" data-block="profileAbout" data-block-section="profile" style="margin-bottom:12px"><div class="about" style="text-align:center;color:var(--mut);font-size:11.5px">Pricelex Worldwide — быстро. Надёжно. По-честному. ✦</div></div>`,
+    };
     v.innerHTML = `
-      <div class="card lc-head">
-        <div class="lc-id">
-          <div class="lc-name">${esc(name)}</div>
-          <div class="lc-sub">${esc(userLine)}</div>
-          <div class="lc-note">${s.online ? '🟢 Обмен онлайн' : '🔴 Обмен оффлайн'}</div>
-        </div>
-      </div>
-      <div class="lc-stats">
-        <div class="lc-stat"><b>${S.orders.length}</b><span>всего заявок</span></div>
-        <div class="lc-stat"><b>${doneOrders.length}</b><span>завершено</span></div>
-        <div class="lc-stat"><b>$${volume}</b><span>карт сдано</span></div>
-      </div>
-      ${referralCardHtml('lcCopyRef')}
+      ${getBlockOrder('profile').map((id) => profileBlocks[id] || '').join('')}
       ${S.me.isAdmin ? `
-      <button class="btn btn-ghost lc-admin-btn" id="lcOpenAdmin">🛠 <span>Панель оператора и настройки обмена</span></button>` : ''}
-      <div class="card">
-        <div class="card-title">Связаться с нами</div>
-        <div class="contacts">
-          <a class="contact" href="${esc(opLink)}" target="_blank" rel="noopener"><span class="ci">🧩</span><span>Оператор<small>${esc(s.operator)}</small></span></a>
-          <a class="contact" href="${esc(s.channel)}" target="_blank" rel="noopener"><span class="ci">📣</span><span>Официальный канал<small>новости и курсы</small></span></a>
-          <a class="contact" href="${esc(s.chat)}" target="_blank" rel="noopener"><span class="ci">💬</span><span>Чат поддержки<small>отвечаем быстро</small></span></a>
-        </div>
-        <button class="btn btn-ghost" style="margin-top:10px" id="goSupport">${ICONS.chat}<span>Открыть чат поддержки</span></button>
-      </div>
-      <div class="card"><div class="about" style="text-align:center;color:var(--mut);font-size:11.5px">Pricelex Worldwide — быстро. Надёжно. По-честному. ✦</div></div>`;
+      <button class="btn btn-ghost lc-admin-btn" id="lcOpenAdmin">🛠 <span>Панель оператора и настройки обмена</span></button>` : ''}`;
     bindReferralCopy('lcCopyRef');
     const go = $('#goSupport');
     if (go) go.addEventListener('click', () => goTab('support'));
     const openAdmin = $('#lcOpenAdmin');
     if (openAdmin) openAdmin.addEventListener('click', () => { haptic('light'); openAdminSheet(); });
+    if (S.layoutEdit) applyLayoutEdit();
   }
 
   /* ---------- in-app admin panel (Pricelex Worldwide operator only) ---------- */
@@ -1612,6 +1784,8 @@
     if (adminTab === 'reviews') loadAdminReviews();
     if (adminTab === 'promos') loadAdminPromos();
     if (adminTab === 'texts') loadAdminTexts();
+    if (adminTab === 'blocks') renderAdminBlocks();
+    if (adminTab === 'tickers') renderAdminTickers();
   }
   function openAdminSheet() {
     const sheet = $('#adminSheet');
@@ -1678,6 +1852,8 @@
     $('#admChatErr').textContent = '';
     // Предпросмотр промокода зависит от актуального курса
     updateAdminPromoPreview();
+    renderAdminBlocks();
+    renderAdminTickers();
   }
   /* ---------- admin: reviews ---------- */
   const adminStarsText = (r) => {
@@ -2052,6 +2228,7 @@
   const copyBlocks = new WeakMap(); // element -> { source, applied }
   const copyAttrs = new WeakMap();  // element -> { [attr]: { source, applied } }
   function applyCopy() {
+    if (typeof document === 'undefined' || !document.body) return;
     const list = (S.settings && S.settings.texts) || [];
     const override = new Map();
     for (const { text, value } of list) {
@@ -2062,7 +2239,7 @@
     const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
     let el;
     while ((el = walk.nextNode())) {
-      if (el.closest('#adminSheet, script, style, .rev-text, .rev-name, .msg-bubble, .adm-inline-editing')) continue;
+      if (el.closest('#adminSheet, #tickerEditSheet, .ticker, .kinetic, .adm-block-bar, script, style, .rev-text, .rev-name, .msg-bubble, .adm-inline-editing')) continue;
       if (typeof el.matches === 'function' && el.matches('input, textarea')) continue;
       // Source key = original catalogue text of this block. If the element currently
       // shows a previously-applied override, recover the source from stored state so
@@ -2110,7 +2287,11 @@
       el.classList.toggle('copy-applied', overridden);
     }
   }
-  const copyObserver = new MutationObserver(() => { applyCopy(); applyInlineEdit(); });
+  const copyObserver = new MutationObserver(() => {
+    if (typeof document === 'undefined' || !document.body) return;
+    applyCopy();
+    applyInlineEdit();
+  });
   copyObserver.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['placeholder', 'aria-label', 'title'] });
 
   /* ---------- inline text editing (admin only) ----------
@@ -2159,7 +2340,7 @@
     const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
     let el;
     while ((el = walk.nextNode())) {
-      if (el.closest('#adminSheet, script, style, .rev-text, .rev-name, .msg-bubble, .adm-inline-editing')) continue;
+      if (el.closest('#adminSheet, #tickerEditSheet, .ticker, .kinetic, .adm-block-bar, script, style, .rev-text, .rev-name, .msg-bubble, .adm-inline-editing')) continue;
       if (typeof el.matches === 'function' && el.matches('input, textarea')) continue;
       const key = inlineSourceKey(el);
       if (key && normToBlock.has(key)) cands.push({ el, key });
@@ -2176,6 +2357,9 @@
     for (const { el, skip } of cands) { if (!skip) { el.classList.add('adm-inline'); want.add(el); } }
     // Drop the mark from elements that no longer match (rebuilt/changed content).
     document.querySelectorAll('.adm-inline').forEach((e) => { if (!want.has(e)) e.classList.remove('adm-inline'); });
+    document.querySelectorAll('#topTicker, .kinetic').forEach((e) => {
+      if (!e.classList.contains('hidden')) e.classList.add('adm-inline-ticker');
+    });
   }
 
   async function putText(id, value) {
@@ -2247,26 +2431,353 @@
       } catch (e) { toast('Не удалось загрузить тексты'); return; }
     }
     buildTextMap(inlineCatalog, inlineOverrides);
+    if (S.layoutEdit) disableLayoutEdit(false);
     S.inlineEdit = true;
+    document.body.classList.add('inline-edit-on');
     closeAdminSheet();
     applyInlineEdit();
     const done = $('#admInlineDone');
     if (done) done.classList.remove('hidden');
-    toast('Режим редактирования: нажмите на пунктирный блок');
+    toast('Режим редактирования: нажмите на пунктирный блок или бегущую строку');
   }
   function disableInlineEdit() {
     if (!S.inlineEdit) return;
     S.inlineEdit = false;
+    document.body.classList.remove('inline-edit-on');
+    closeTickerEditModal();
     document.querySelectorAll('.adm-inline, .adm-inline-editing').forEach((el) => {
       const orig = inlineOrig.get(el);
       if (orig != null) el.innerHTML = orig;
       el.classList.remove('adm-inline', 'adm-inline-editing');
       inlineOrig.delete(el);
     });
+    document.querySelectorAll('.adm-inline-ticker').forEach((el) => el.classList.remove('adm-inline-ticker'));
     const done = $('#admInlineDone');
     if (done) done.classList.add('hidden');
     adminTab = 'texts';
     openAdminSheet();
+  }
+
+  /* ---------- running lines editor (admin + inline) ---------- */
+  function renderAdminTickers() {
+    const A = S.admin || S.settings || {};
+    const tOn = A.tickerEnabled !== false;
+    const mOn = A.marqueeEnabled !== false;
+    const tBtn = $('#admTickerToggle');
+    const mBtn = $('#admMarqueeToggle');
+    if (tBtn) { tBtn.classList.toggle('on', tOn); tBtn.setAttribute('aria-checked', tOn ? 'true' : 'false'); }
+    if (mBtn) { mBtn.classList.toggle('on', mOn); mBtn.setAttribute('aria-checked', mOn ? 'true' : 'false'); }
+    const tIn = $('#admTickerInput');
+    const mIn = $('#admMarqueeInput');
+    if (tIn) tIn.value = linesOf(A.ticker, FALLBACK_TICKER).join('\n');
+    if (mIn) mIn.value = linesOf(A.marquee, FALLBACK_MARQUEE).join('\n');
+    const err = $('#admTickersErr');
+    if (err) err.textContent = '';
+  }
+
+  async function saveTickersPatch(payload, okText, errEl = $('#admTickersErr')) {
+    if (errEl) errEl.textContent = '';
+    try {
+      const r = await api('/api/admin/tickers', { method: 'PUT', body: payload });
+      S.admin = r.admin;
+      S.settings = r.settings;
+      renderTopTicker();
+      syncMarqueeBlock();
+      renderAdminTickers();
+      if (S.inlineEdit) applyInlineEdit();
+      if (S.layoutEdit) applyLayoutEdit();
+      if (okText) toast(okText);
+      return true;
+    } catch (e) {
+      if (errEl) errEl.textContent = e.message || 'Не удалось сохранить бегущую строку';
+      toast(e.message || 'Не удалось сохранить');
+      return false;
+    }
+  }
+
+  let tickerEditFrames = [];
+  let tickerEditTimer = null;
+  function openTickerEditModal(kind) {
+    const sheet = $('#tickerEditSheet');
+    if (!sheet) return;
+    S.tickerEditKind = kind;
+    const isTop = kind === 'ticker';
+    const title = $('#tickerEditTitle');
+    if (title) title.textContent = isTop ? 'Верхняя бегущая строка' : 'Крупная бегущая строка';
+    const input = $('#tickerEditInput');
+    if (input) {
+      const s = S.settings || {};
+      input.value = linesOf(isTop ? s.ticker : s.marquee, isTop ? FALLBACK_TICKER : FALLBACK_MARQUEE).join('\n');
+    }
+    const err = $('#tickerEditErr');
+    if (err) err.textContent = '';
+    if (tickerEditTimer) { clearTimeout(tickerEditTimer); tickerEditTimer = null; }
+    sheet.classList.remove('hidden');
+    sheet.setAttribute('aria-hidden', 'false');
+    tickerEditFrames = [requestAnimationFrame(() => { tickerEditFrames[1] = requestAnimationFrame(() => sheet.classList.add('open')); })];
+    document.body.classList.add('sheet-lock');
+    syncTgBack();
+  }
+  function closeTickerEditModal() {
+    const sheet = $('#tickerEditSheet');
+    S.tickerEditKind = null;
+    document.body.classList.remove('sheet-lock');
+    tickerEditFrames.forEach((f) => { try { cancelAnimationFrame(f); } catch (e) {} });
+    tickerEditFrames = [];
+    if (!sheet || sheet.classList.contains('hidden')) { syncTgBack(); return; }
+    sheet.classList.remove('open');
+    sheet.setAttribute('aria-hidden', 'true');
+    if (tickerEditTimer) clearTimeout(tickerEditTimer);
+    tickerEditTimer = setTimeout(() => sheet.classList.add('hidden'), 320);
+    syncTgBack();
+  }
+
+  /* ---------- block reordering (admin panel + direct live screen) ---------- */
+  async function saveBlockOrder(section, order) {
+    const err = $('#admLayoutErr');
+    if (err) err.textContent = '';
+    try {
+      const r = await api('/api/admin/layout', { method: 'PUT', body: { section, order } });
+      S.admin = r.admin;
+      S.settings = r.settings;
+      applyBlockOrderToDom();
+      renderAdminBlocks();
+      if (S.layoutEdit) applyLayoutEdit();
+      return true;
+    } catch (e) {
+      if (err) err.textContent = e.message || 'Не удалось сохранить порядок блоков';
+      toast(e.message || 'Не удалось сохранить порядок');
+      return false;
+    }
+  }
+  async function resetAllBlockOrders() {
+    const err = $('#admLayoutErr');
+    if (err) err.textContent = '';
+    try {
+      const r = await api('/api/admin/layout', { method: 'PUT', body: { reset: true } });
+      S.admin = r.admin;
+      S.settings = r.settings;
+      applyBlockOrderToDom();
+      renderAdminBlocks();
+      if (S.layoutEdit) applyLayoutEdit();
+      toast('Порядок блоков сброшен ✅');
+      return true;
+    } catch (e) {
+      if (err) err.textContent = e.message || 'Не удалось сбросить порядок';
+      return false;
+    }
+  }
+
+  function wirePointerListDrag(container, itemSelector, handleSelector, getOrder, onReorder) {
+    if (!container) return;
+    container.querySelectorAll(handleSelector).forEach((handle) => {
+      handle.addEventListener('pointerdown', (e) => {
+        if (e.button && e.button !== 0) return;
+        const item = handle.closest(itemSelector);
+        if (!item) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const beforeOrder = getOrder();
+        item.classList.add('dragging');
+        try { handle.setPointerCapture && handle.setPointerCapture(e.pointerId); } catch (_) {}
+
+        const onMove = (ev) => {
+          const siblings = [...container.querySelectorAll(`:scope > ${itemSelector}`)];
+          for (const sib of siblings) {
+            if (sib === item) continue;
+            const rect = sib.getBoundingClientRect();
+            const midY = rect.top + rect.height / 2;
+            const itemRect = item.getBoundingClientRect();
+            if (ev.clientY < midY && itemRect.top > rect.top) {
+              container.insertBefore(item, sib);
+              break;
+            }
+            if (ev.clientY > midY && itemRect.top < rect.top) {
+              container.insertBefore(item, sib.nextSibling);
+              break;
+            }
+          }
+        };
+        const onEnd = () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onEnd);
+          window.removeEventListener('pointercancel', onEnd);
+          item.classList.remove('dragging');
+          const afterOrder = getOrder();
+          if (JSON.stringify(beforeOrder) !== JSON.stringify(afterOrder)) {
+            onReorder(afterOrder);
+          }
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onEnd);
+        window.addEventListener('pointercancel', onEnd);
+      });
+    });
+  }
+
+  function renderAdminBlocks() {
+    const box = $('#admBlocksList');
+    if (!box) return;
+    const sections = ['home', 'form', 'profile'];
+    box.innerHTML = sections
+      .map((sec) => {
+        let order = getBlockOrder(sec);
+        if (sec === 'home' && S.settings && S.settings.marqueeEnabled === false) {
+          // still allow moving marquee in admin list so position is ready when re-enabled
+        }
+        return `
+          <div class="adm-block-section" data-adm-section="${sec}">
+            <div class="adm-block-section-title">${esc(SECTION_LABELS[sec] || sec)}</div>
+            <div class="adm-block-list" data-adm-block-list="${sec}">
+              ${order
+                .map(
+                  (id, idx) => `
+                <div class="adm-block-row" data-adm-block="${esc(id)}">
+                  <span class="adm-block-row-drag" title="Перетащить" aria-hidden="true">⋮⋮</span>
+                  <span class="adm-block-row-label">${esc(BLOCK_LABELS[id] || id)}</span>
+                  <button type="button" class="adm-block-move" data-adm-up="${idx}" ${idx === 0 ? 'disabled' : ''} aria-label="Поднять блок">↑</button>
+                  <button type="button" class="adm-block-move" data-adm-down="${idx}" ${idx === order.length - 1 ? 'disabled' : ''} aria-label="Опустить блок">↓</button>
+                </div>`
+                )
+                .join('')}
+            </div>
+          </div>`;
+      })
+      .join('');
+
+    sections.forEach((sec) => {
+      const listEl = box.querySelector(`[data-adm-block-list="${sec}"]`);
+      if (!listEl) return;
+      const currentListOrder = () => [...listEl.querySelectorAll(':scope > .adm-block-row')].map((r) => r.dataset.admBlock);
+      listEl.querySelectorAll('[data-adm-up]').forEach((btn) =>
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.dataset.admUp);
+          const order = currentListOrder();
+          if (idx <= 0) return;
+          [order[idx - 1], order[idx]] = [order[idx], order[idx - 1]];
+          haptic('light');
+          saveBlockOrder(sec, order).then((ok) => ok && toast('Порядок блоков сохранён ✅'));
+        })
+      );
+      listEl.querySelectorAll('[data-adm-down]').forEach((btn) =>
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.dataset.admDown);
+          const order = currentListOrder();
+          if (idx >= order.length - 1) return;
+          [order[idx], order[idx + 1]] = [order[idx + 1], order[idx]];
+          haptic('light');
+          saveBlockOrder(sec, order).then((ok) => ok && toast('Порядок блоков сохранён ✅'));
+        })
+      );
+      wirePointerListDrag(listEl, '.adm-block-row', '.adm-block-row-drag', currentListOrder, (newOrder) => {
+        haptic('medium');
+        saveBlockOrder(sec, newOrder).then((ok) => ok && toast('Порядок блоков сохранён ✅'));
+      });
+    });
+  }
+
+  function applyLayoutEdit() {
+    if (!S.layoutEdit) return;
+    const containers = [
+      { el: $('#assetPicker'), section: 'home', anchor: null },
+      { el: $('#giftForm'), section: 'form', anchor: $('#btnSell') },
+      { el: $('#view-profile'), section: 'profile', anchor: $('#lcOpenAdmin') },
+    ];
+    for (const { el: container, section } of containers) {
+      if (!container) continue;
+      const blocks = [...container.querySelectorAll(`:scope > [data-block][data-block-section="${section}"]`)];
+      const getDomOrder = () => [...container.querySelectorAll(`:scope > [data-block][data-block-section="${section}"]`)].map((n) => n.dataset.block);
+      blocks.forEach((blk, idx) => {
+        blk.classList.add('adm-block-editable');
+        let bar = blk.querySelector(':scope > .adm-block-bar');
+        if (!bar) {
+          bar = document.createElement('div');
+          bar.className = 'adm-block-bar';
+          const drag = document.createElement('span');
+          drag.className = 'adm-block-drag';
+          drag.textContent = '⋮⋮';
+          drag.title = 'Перетащить блок';
+          const name = document.createElement('span');
+          name.className = 'adm-block-name';
+          name.textContent = BLOCK_LABELS[blk.dataset.block] || blk.dataset.block;
+          const up = document.createElement('button');
+          up.type = 'button';
+          up.className = 'adm-block-move';
+          up.textContent = '↑';
+          up.setAttribute('aria-label', 'Переместить вверх');
+          const down = document.createElement('button');
+          down.type = 'button';
+          down.className = 'adm-block-move';
+          down.textContent = '↓';
+          down.setAttribute('aria-label', 'Переместить вниз');
+
+          up.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const order = getDomOrder();
+            const pos = order.indexOf(blk.dataset.block);
+            if (pos <= 0) return;
+            [order[pos - 1], order[pos]] = [order[pos], order[pos - 1]];
+            haptic('light');
+            saveBlockOrder(section, order).then((ok) => ok && toast('Блок перемещён ✅'));
+          });
+          down.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const order = getDomOrder();
+            const pos = order.indexOf(blk.dataset.block);
+            if (pos < 0 || pos >= order.length - 1) return;
+            [order[pos], order[pos + 1]] = [order[pos + 1], order[pos]];
+            haptic('light');
+            saveBlockOrder(section, order).then((ok) => ok && toast('Блок перемещён ✅'));
+          });
+          bar.append(drag, name, up, down);
+          blk.prepend(bar);
+        }
+        const upBtn = bar.querySelector('[aria-label="Переместить вверх"]');
+        const downBtn = bar.querySelector('[aria-label="Переместить вниз"]');
+        if (upBtn) upBtn.disabled = idx === 0;
+        if (downBtn) downBtn.disabled = idx === blocks.length - 1;
+      });
+      if (!container.dataset.layoutDragWired) {
+        container.dataset.layoutDragWired = '1';
+        wirePointerListDrag(
+          container,
+          `[data-block][data-block-section="${section}"]`,
+          ':scope > .adm-block-bar > .adm-block-drag',
+          getDomOrder,
+          (newOrder) => {
+            haptic('medium');
+            saveBlockOrder(section, newOrder).then((ok) => ok && toast('Блок перемещён ✅'));
+          }
+        );
+      }
+    }
+  }
+
+  function enableLayoutEdit() {
+    if (S.layoutEdit) return;
+    if (S.inlineEdit) disableInlineEdit();
+    S.layoutEdit = true;
+    document.body.classList.add('layout-edit-on');
+    closeAdminSheet();
+    applyLayoutEdit();
+    const done = $('#admLayoutDone');
+    if (done) done.classList.remove('hidden');
+    toast('Перетащите блок за ⋮⋮ или нажимайте ↑ ↓');
+  }
+  function disableLayoutEdit(reopenAdmin = true) {
+    if (!S.layoutEdit) return;
+    S.layoutEdit = false;
+    document.body.classList.remove('layout-edit-on');
+    document.querySelectorAll('.adm-block-bar').forEach((bar) => bar.remove());
+    document.querySelectorAll('.adm-block-editable').forEach((el) => el.classList.remove('adm-block-editable', 'dragging'));
+    const done = $('#admLayoutDone');
+    if (done) done.classList.add('hidden');
+    if (reopenAdmin) {
+      adminTab = 'blocks';
+      openAdminSheet();
+    }
   }
 
   function wireAdminSheet() {
@@ -2444,6 +2955,94 @@
       saveAdmin({ chat }, $('#admChatErr'), 'Ссылка на чат сохранена — уже видна всем ✅')
         .finally(() => { $('#admChatSave').disabled = false; });
     });
+
+    // Блоки: перемещение прямо на экране и сброс
+    const layoutToggle = $('#admLayoutToggle');
+    if (layoutToggle) layoutToggle.addEventListener('click', () => { haptic('light'); enableLayoutEdit(); });
+    const layoutReset = $('#admLayoutReset');
+    if (layoutReset) layoutReset.addEventListener('click', async () => {
+      layoutReset.disabled = true;
+      haptic('medium');
+      await resetAllBlockOrders();
+      layoutReset.disabled = false;
+    });
+
+    // Бегущие строки: вкл/выкл, сохранение и сброс
+    const tickerToggle = $('#admTickerToggle');
+    if (tickerToggle) tickerToggle.addEventListener('click', async () => {
+      const A = S.admin || S.settings || {};
+      const next = A.tickerEnabled === false;
+      tickerToggle.disabled = true;
+      haptic('light');
+      await saveTickersPatch({ tickerEnabled: next }, next ? 'Верхняя строка включена ✅' : 'Верхняя строка скрыта');
+      tickerToggle.disabled = false;
+    });
+    const marqueeToggle = $('#admMarqueeToggle');
+    if (marqueeToggle) marqueeToggle.addEventListener('click', async () => {
+      const A = S.admin || S.settings || {};
+      const next = A.marqueeEnabled === false;
+      marqueeToggle.disabled = true;
+      haptic('light');
+      await saveTickersPatch({ marqueeEnabled: next }, next ? 'Крупная строка включена ✅' : 'Крупная строка скрыта');
+      marqueeToggle.disabled = false;
+    });
+    const tickerSave = $('#admTickerSave');
+    if (tickerSave) tickerSave.addEventListener('click', async () => {
+      tickerSave.disabled = true;
+      haptic('medium');
+      const raw = ($('#admTickerInput') && $('#admTickerInput').value) || '';
+      await saveTickersPatch({ ticker: raw }, 'Верхняя бегущая строка сохранена ✅');
+      tickerSave.disabled = false;
+    });
+    const tickerReset = $('#admTickerReset');
+    if (tickerReset) tickerReset.addEventListener('click', async () => {
+      tickerReset.disabled = true;
+      haptic('light');
+      await saveTickersPatch({ ticker: null }, 'Верхняя бегущая строка сброшена ✅');
+      tickerReset.disabled = false;
+    });
+    const marqueeSave = $('#admMarqueeSave');
+    if (marqueeSave) marqueeSave.addEventListener('click', async () => {
+      marqueeSave.disabled = true;
+      haptic('medium');
+      const raw = ($('#admMarqueeInput') && $('#admMarqueeInput').value) || '';
+      await saveTickersPatch({ marquee: raw }, 'Крупная бегущая строка сохранена ✅');
+      marqueeSave.disabled = false;
+    });
+    const marqueeReset = $('#admMarqueeReset');
+    if (marqueeReset) marqueeReset.addEventListener('click', async () => {
+      marqueeReset.disabled = true;
+      haptic('light');
+      await saveTickersPatch({ marquee: null }, 'Крупная бегущая строка сброшена ✅');
+      marqueeReset.disabled = false;
+    });
+
+    // Инлайн-модалка для бегущих строк
+    const teClose = $('#tickerEditClose');
+    if (teClose) teClose.addEventListener('click', () => { haptic('light'); closeTickerEditModal(); });
+    const teOverlay = $('#tickerEditOverlay');
+    if (teOverlay) teOverlay.addEventListener('click', closeTickerEditModal);
+    const teSave = $('#tickerEditSave');
+    if (teSave) teSave.addEventListener('click', async () => {
+      const kind = S.tickerEditKind;
+      if (!kind) return;
+      teSave.disabled = true;
+      haptic('medium');
+      const val = ($('#tickerEditInput') && $('#tickerEditInput').value) || '';
+      const ok = await saveTickersPatch({ [kind]: val }, 'Бегущая строка сохранена ✅', $('#tickerEditErr'));
+      teSave.disabled = false;
+      if (ok) closeTickerEditModal();
+    });
+    const teReset = $('#tickerEditReset');
+    if (teReset) teReset.addEventListener('click', async () => {
+      const kind = S.tickerEditKind;
+      if (!kind) return;
+      teReset.disabled = true;
+      haptic('light');
+      const ok = await saveTickersPatch({ [kind]: null }, 'Бегущая строка сброшена ✅', $('#tickerEditErr'));
+      teReset.disabled = false;
+      if (ok) closeTickerEditModal();
+    });
   }
 
   // Switch the bottom menu tab (for buttons inside screens).
@@ -2457,6 +3056,7 @@
     if (tab === 'reviews') renderReviews();
     if (tab === 'profile') renderProfile();
     if (tab === 'support') renderSupport();
+    if (S.layoutEdit) applyLayoutEdit();
     syncTgBack();
   }
 
@@ -2648,10 +3248,15 @@
     if (JSON.stringify(s) !== JSON.stringify(S.settings)) {
       S.settings = s;
       applyCopy();
+      renderTopTicker();
+      syncMarqueeBlock();
+      applyBlockOrderToDom();
       renderHeader();
       renderFormMeta();
       if (S.tab === 'reviews') renderReviews();
       if (S.tab === 'profile') renderProfile();
+      if (S.layoutEdit) applyLayoutEdit();
+      if (S.inlineEdit) applyInlineEdit();
     }
   }
 
@@ -2699,12 +3304,20 @@
     try { tg.BackButton.onClick(onTgBackButton); } catch (e) { /* older clients */ }
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { if (S.inlineEdit) disableInlineEdit(); else if (S.reviewOpen) closeReviewSheet(); else if (S.adminOpen) closeAdminSheet(); else if (S.giftRules) giftRulesClose(); else if (S.sheet) closeAssetSheet(); }
+    if (e.key === 'Escape') { if (S.tickerEditKind) closeTickerEditModal(); else if (S.inlineEdit) disableInlineEdit(); else if (S.layoutEdit) disableLayoutEdit(); else if (S.reviewOpen) closeReviewSheet(); else if (S.adminOpen) closeAdminSheet(); else if (S.giftRules) giftRulesClose(); else if (S.sheet) closeAssetSheet(); }
   });
   // Inline text editing: capture-phase so an editable label inside a button is
   // opened for editing instead of triggering the button's own action.
   document.body.addEventListener('click', (e) => {
     if (!S.inlineEdit) return;
+    if (S.tickerEditKind) return;
+    const tickerEl = e.target.closest && e.target.closest('.adm-inline-ticker');
+    if (tickerEl) {
+      e.preventDefault();
+      e.stopPropagation();
+      openTickerEditModal(tickerEl.id === 'topTicker' ? 'ticker' : 'marquee');
+      return;
+    }
     const el = e.target.closest && e.target.closest('.adm-inline');
     if (!el || el.classList.contains('adm-inline-editing')) return;
     e.preventDefault();
@@ -2713,6 +3326,8 @@
   }, true);
   const inlineDone = $('#admInlineDone');
   if (inlineDone) inlineDone.addEventListener('click', () => { haptic('light'); disableInlineEdit(); });
+  const layoutDone = $('#admLayoutDone');
+  if (layoutDone) layoutDone.addEventListener('click', () => { haptic('light'); disableLayoutEdit(true); });
   // The bottom asset-selection sheet — one-time binding (it lives in index.html, outside #view-exchange).
   const sheetCloseBtn = $('#sheetClose');
   if (sheetCloseBtn) sheetCloseBtn.addEventListener('click', () => { haptic('light'); closeAssetSheet(); });
@@ -2777,6 +3392,7 @@
       hidePreloader();
       return;
     }
+    renderTopTicker();
     renderHeader();
     renderNav();
     renderExchange();

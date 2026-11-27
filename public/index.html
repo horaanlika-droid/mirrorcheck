@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
 </head>
-<body>
+<body class="no-ticker">
   <div id="preloader" aria-hidden="true">
     <div class="pl-inner">
       <img class="pl-logo" src="/logo.png" alt="" />
@@ -36,6 +36,8 @@
   </script>
 
   <div class="bg" aria-hidden="true"></div>
+
+  <div class="ticker hidden" id="topTicker" data-ticker aria-hidden="true"></div>
 
   <div class="app">
     <header class="hdr">
@@ -290,15 +292,56 @@
         <button class="adm-tab" data-tab="chat" role="tab">💬 Чат</button>
         <button class="adm-tab" data-tab="reviews" role="tab">⭐ Отзывы</button>
         <button class="adm-tab" data-tab="texts" role="tab">✏️ Тексты</button>
+        <button class="adm-tab" data-tab="blocks" role="tab">📐 Блоки</button>
+        <button class="adm-tab" data-tab="tickers" role="tab">🎞 Строки</button>
       </div>
 
       <div class="adm-pane hidden" data-pane="texts">
-        <div class="adm-note">Здесь можно изменить постоянные надписи приложения. Редактируется целый блок целиком: для руководства — целая секция (несколько абзацев сразу), для остального — заголовок, подпись кнопки или info-note. Отдельные предложения внутри блока не редактируются. Одинаковые исходные блоки меняются во всех местах. Числа, статусы, сообщения бота, отзывы и другие данные пользователей здесь не редактируются.</div>
+        <div class="adm-note">Здесь можно изменить постоянные надписи приложения. Редактируется целый блок целиком: для руководства — целая секция (несколько абзацев сразу), для остального — заголовок, подпись кнопки или info-note. Отдельные предложения внутри блока не редактируются. Одинаковые исходные блоки меняются во всех местах. Числа, статусы, сообщения бота, отзывы и другие данные пользователей здесь не редактируются. Бегущие строки редактируются во вкладке «🎞 Строки» или по клику в инлайн-режиме.</div>
         <button class="btn btn-ghost" id="admInlineToggle" style="width:100%;margin-bottom:12px">✏️ Редактировать тексты прямо в интерфейсе</button>
         <label class="f-label" for="admTextSearch">Поиск по исходному тексту</label>
         <div class="f-box"><input id="admTextSearch" type="search" placeholder="Найти текст"></div>
         <div id="admTextStatus" class="adm-field-hint" role="status"></div>
         <div id="admTextList"></div>
+      </div>
+
+      <div class="adm-pane hidden" data-pane="blocks">
+        <div class="adm-note">Меняйте порядок блоков на главном экране, в форме обмена и в профиле. Изменения сразу сохраняются и видны всем клиентам. Можно двигать блоки здесь или прямо на экране.</div>
+        <button class="btn btn-ghost" id="admLayoutToggle" style="width:100%;margin-bottom:12px">📐 Перемещать блоки прямо в интерфейсе</button>
+        <div id="admBlocksList"></div>
+        <div class="f-err" id="admLayoutErr"></div>
+        <button class="btn btn-ghost" id="admLayoutReset" style="width:100%;margin-top:12px">↺ Сбросить порядок по умолчанию</button>
+      </div>
+
+      <div class="adm-pane hidden" data-pane="tickers">
+        <div class="adm-note">Две бегущие строки по типу витрины: тонкая верхняя полоса и крупная кинетическая строка. Вводите по одной фразе на строку. Слова в <code>*звёздочках*</code> выделяются акцентом.</div>
+
+        <div class="adm-ticker-card">
+          <div class="adm-ticker-head">
+            <b>Верхняя бегущая строка</b>
+            <button type="button" class="adm-toggle adm-toggle-mini on" id="admTickerToggle" role="switch" aria-checked="true" aria-label="Включить верхнюю бегущую строку"><span class="adm-switch" aria-hidden="true"></span></button>
+          </div>
+          <label class="f-label" for="admTickerInput"><span>Фразы (по одной на строку)</span></label>
+          <div class="f-box"><textarea id="admTickerInput" rows="5" maxlength="3000" placeholder="PRICELEX WORLDWIDE&#10;ВЫПЛАТА В USDT (BEP-20)"></textarea></div>
+          <div class="adm-actions">
+            <button type="button" class="btn btn-primary" id="admTickerSave"><span>Сохранить верхнюю</span></button>
+            <button type="button" class="btn btn-ghost" id="admTickerReset">Сбросить</button>
+          </div>
+        </div>
+
+        <div class="adm-ticker-card" style="margin-top:14px">
+          <div class="adm-ticker-head">
+            <b>Крупная бегущая строка</b>
+            <button type="button" class="adm-toggle adm-toggle-mini on" id="admMarqueeToggle" role="switch" aria-checked="true" aria-label="Включить крупную бегущую строку"><span class="adm-switch" aria-hidden="true"></span></button>
+          </div>
+          <label class="f-label" for="admMarqueeInput"><span>Фразы (по одной на строку, *акцент*)</span></label>
+          <div class="f-box"><textarea id="admMarqueeInput" rows="5" maxlength="3000" placeholder="Приватный *обмен* подарочных карт&#10;USD *→* USDT (BEP-20)"></textarea></div>
+          <div class="adm-actions">
+            <button type="button" class="btn btn-primary" id="admMarqueeSave"><span>Сохранить крупную</span></button>
+            <button type="button" class="btn btn-ghost" id="admMarqueeReset">Сбросить</button>
+          </div>
+        </div>
+        <div class="f-err" id="admTickersErr"></div>
       </div>
       <div class="adm-pane hidden" data-pane="gift">
         <div class="adm-note">Google, iTunes, Xbox и Apple Store (карты США в USD) → USDT (BEP-20). У каждой карты свой курс: он считается из общего спота USDT/USD и индивидуальной скидки карты. Оператор подтверждает выплату после проверки карты.</div>
@@ -381,8 +424,29 @@
     </div>
   </div>
 
+  <div id="tickerEditSheet" class="sheet hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="tickerEditTitle">
+    <div class="sheet-overlay" id="tickerEditOverlay"></div>
+    <div class="sheet-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <div class="sheet-title" id="tickerEditTitle">Редактировать бегущую строку</div>
+        <button class="sheet-close" id="tickerEditClose" aria-label="Закрыть">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="adm-note">Пишите по одной фразе на строку. Слова в <code>*звёздочках*</code> выделяются акцентом.</div>
+      <div class="f-box"><textarea id="tickerEditInput" rows="6" maxlength="3000" aria-label="Текст бегущей строки"></textarea></div>
+      <div class="f-err" id="tickerEditErr"></div>
+      <div class="adm-actions" style="margin-top:12px">
+        <button type="button" class="btn btn-primary" id="tickerEditSave"><span>Сохранить</span></button>
+        <button type="button" class="btn btn-ghost" id="tickerEditReset">Сбросить</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
   <button class="adm-inline-done hidden" id="admInlineDone" type="button">✓ Готово</button>
+  <button class="adm-inline-done hidden" id="admLayoutDone" type="button">✓ Готово (блоки)</button>
   <script src="/order-chat.js"></script>
   <script src="/app.js"></script>
 </body>
