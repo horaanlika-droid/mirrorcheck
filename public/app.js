@@ -6,15 +6,42 @@
   let initData = '';
   let startParam = '';
   let demo = null;
+  // Тема официального клиента Telegram: берём цвета из themeParams, чтобы
+  // Mini App совпадал со светлой/тёмной темой пользователя. Вне Telegram —
+  // тёмная тема Telegram по умолчанию.
+  function applyTelegramTheme() {
+    try {
+      const root = document.documentElement;
+      const scheme = (tg && tg.colorScheme) || 'dark';
+      document.body.classList.toggle('tg-light', scheme === 'light');
+      const tp = (tg && tg.themeParams) || {};
+      const set = (name, val) => { if (val) root.style.setProperty(name, val); };
+      set('--bg', tp.bg_color);
+      set('--panel', tp.secondary_bg_color);
+      set('--txt', tp.text_color);
+      set('--mut', tp.hint_color);
+      set('--accent', tp.link_color || tp.button_color);
+      set('--accent-hover', tp.button_color);
+      const bg = tp.bg_color || (scheme === 'light' ? '#ffffff' : '#0e1621');
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', bg);
+      if (tg) {
+        tg.setHeaderColor && tg.setHeaderColor(bg);
+        tg.setBackgroundColor && tg.setBackgroundColor(bg);
+      }
+    } catch (e) {}
+  }
   if (tg) {
     try {
       tg.ready();
       tg.expand();
-      tg.setHeaderColor && tg.setHeaderColor('#07141c');
-      tg.setBackgroundColor && tg.setBackgroundColor('#07141c');
     } catch (e) {}
     initData = tg.initData || '';
     startParam = tg.startParam || '';
+  }
+  applyTelegramTheme();
+  if (tg && tg.onEvent) {
+    try { tg.onEvent('themeChanged', applyTelegramTheme); } catch (e) {}
   }
   if (!initData) {
     try {
@@ -301,11 +328,15 @@
 
   function renderHeader() {
     const s = S.settings;
+    // Шапка как у чата в официальном Telegram: статус текстом под именем.
     let html = s.online
-      ? '<span class="pill"><span class="dot"></span>ОНЛАЙН</span>'
-      : '<span class="pill off"><span class="dot"></span>ОФФЛАЙН</span>';
-    if (S.isDemo) html += ' <span class="pill demo">ДЕМО</span>';
-    $('#hdrStatus').innerHTML = html;
+      ? '<span class="on">online</span>'
+      : '<span class="off">offline · обмен недоступен</span>';
+    if (S.isDemo) html += ' · демо';
+    const el = $('#hdrStatus');
+    if (el) el.innerHTML = html;
+    const dot = $('#hdrDot');
+    if (dot) dot.classList.toggle('off', !s.online);
   }
 
   function renderNav() {
@@ -491,19 +522,19 @@
         <div id="assetPicker" role="region" aria-label="Выберите подарочную карту">
           <section class="exchange-hero">
             <div class="hero-copy">
-              <div class="hero-kicker"><i></i> Привет! Я робот PRICELEX.</div>
+              <div class="hero-kicker"><i></i> Привет! Я робот Pricelex 🤖</div>
               <h1>Подарочные карты<br>на <span>USDT</span></h1>
               <p>Выберите карту и номинал — покажу сумму до обмена. Выплата только в сети BNB Smart Chain (BEP-20).</p>
               <button class="hero-cta" id="heroStart">Начать обмен <span aria-hidden="true">→</span></button>
               <div class="hero-footnote"><span>Курс USDT/USD</span><b>·</b><span>Личная поддержка</span></div>
             </div>
-            <div class="hero-visual" aria-hidden="true">
-              <div class="hero-aura"></div>
-              <div class="hero-orbit orbit-one"></div>
-              <div class="hero-orbit orbit-two"></div>
-              <div class="hero-orbit orbit-three"></div>
-              <img class="hero-core" src="/mascot/hello.webp" width="144" height="144" alt="" decoding="async">
-              ${[['APPLE_STORE_USD','token-apple'],['XBOX_USD','token-xbox'],['GOOGLE_USD','token-google'],['ITUNES_USD','token-itunes']].map(([key, placement]) => { const d = dirs().find((x) => x.key === key); return d ? `<div class="hero-token ${placement}"><span class="coin-ic ${esc(d.coin)}">${coinInner(d)}</span></div>` : ''; }).join('')}
+            <div class="hero-visual">
+              <img class="robot-sticker" src="/mascot/robot-calm.webp" width="280" height="280" alt="Робот Pricelex — спокойный и уверенный" decoding="async">
+              <div class="robot-bubble">Сдай карту — получи USDT 🤖</div>
+              <span class="money-fly m1" aria-hidden="true">⚡</span>
+              <span class="money-fly m2" aria-hidden="true">⏱️</span>
+              <span class="money-fly m3" aria-hidden="true">✨</span>
+              <span class="money-fly m4" aria-hidden="true">🛡️</span>
             </div>
           </section>
           <div class="supported-head" id="supportedCards">
@@ -546,6 +577,7 @@
           </div>
           <div class="trade-layout">
             <aside class="trade-steps" aria-label="Шаги обмена">
+              <img class="trade-mascot" src="/mascot/robot-fast.webp" width="72" height="72" alt="Робот — быстро" decoding="async">
               <div class="trade-step active"><i>01</i><span>Выберите карту</span></div>
               <div class="trade-step"><i>02</i><span>Укажите данные и курс</span></div>
               <div class="trade-step"><i>03</i><span>Получите USDT</span></div>
@@ -1008,7 +1040,7 @@
       // Two-phase deal: wait until the operator joins the order.
       box.innerHTML = `
         <div class="card stage">
-          <img class="stage-mascot" src="/mascot/wait.webp" width="64" height="64" alt="" decoding="async">
+          <img class="stage-mascot" src="/mascot/robot-wait.webp" width="96" height="96" alt="Робот ждёт оператора" decoding="async">
           ${chip('new', 'Ждём оператора')}
           <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
           ${promoBadge}
@@ -1065,7 +1097,7 @@
     if (o.status === 'paid' || (o.status === 'details' && o.giftCode)) {
       box.innerHTML = `
         <div class="card stage">
-          <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🔎</div></div>
+          <img class="stage-mascot" src="/mascot/robot-check.webp" width="96" height="96" alt="Робот проверяет карту" decoding="async">
           ${promoBadge}
           <div class="stage-title">Карта на проверке</div>
           <div class="stage-sub">Оператор проверяет ${esc(giftLabelOf(o))} на <b>$${giftNominal(o)}</b>, регион (<b>США</b>) и валюту (<b>USD</b>).<br>Если всё сходится, отправим ${payout} на ваш кошелёк. Обычно 5–15 минут.</div>
@@ -1077,7 +1109,7 @@
     if (o.status === 'completed') {
       box.innerHTML = `
         <div class="card stage">
-          <img class="stage-mascot" src="/mascot/done.webp" width="64" height="64" alt="" decoding="async">
+          <img class="stage-mascot" src="/mascot/robot-done.webp" width="96" height="96" alt="Робот празднует выплату" decoding="async">
           <div class="stage-title">Готово! Выплата отправлена</div>
           ${promoBadge}
           <div class="stage-sub">За ${esc(giftLabelOf(o))} на $${giftNominal(o)} отправлено <b>${payout}</b>.<br>Спасибо за обмен!</div>
@@ -1104,6 +1136,7 @@
       const expired = o.cancelReason === 'expired' || o.cancelReason === 'Срок на сделку истёк'; // 'expired' — new rows, the Russian string — legacy rows
       box.innerHTML = `
         <div class="card stage">
+          <img class="stage-mascot" src="/mascot/robot-error.webp" width="96" height="96" alt="Робот сообщает об ошибке" decoding="async">
           <div class="stage-title">${rej ? 'Карта не принята' : expired ? 'Время на сделку истекло' : 'Заявка отменена'}</div>
           <div class="stage-sub">${rej ? 'Оператор не смог проверить карту по заявке #' + o.id + '. Проверьте код или напишите в поддержку.' : expired ? 'На сделку даётся 1 час. Создайте новую заявку с тем же кодом карты.' : 'Вы отменили заявку #' + o.id + '.'}</div>
           <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Новая заявка</button>
@@ -1233,7 +1266,7 @@
   function renderHistory() {
     const v = $('#view-history');
     if (!S.orders.length) {
-      v.innerHTML = `<div class="card"><div class="empty">История пока пуста.<br>Здесь появится ваш первый обмен.</div></div>`;
+      v.innerHTML = `<div class="card"><div class="empty"><img class="empty-robot" src="/mascot/robot-hello.webp" width="84" height="84" alt="" decoding="async">История пока пуста.<br>Здесь появится ваш первый обмен.</div></div>`;
       return;
     }
     v.innerHTML =
@@ -1329,7 +1362,7 @@
     const s = S.settings || {};
     const link = referralLinkOf();
     return `<div class="card ref-card">
-        <div class="card-title">Реферальная программа</div>
+        <div class="ref-head"><img class="ref-mascot" src="/mascot/robot-fast.webp" width="40" height="40" alt="" decoding="async"><div class="card-title" style="margin-bottom:0">Реферальная программа</div></div>
         <div class="about" style="font-size:12.5px;line-height:1.6;color:var(--mut)"><b style="color:var(--teal)">${esc(String(s.refPercent ?? '—'))}%</b> с каждого обмена друга по вашей ссылке — без ограничений.</div>
         ${link ? `<div class="ref-link" id="${copyBtnId}Link" style="margin-top:10px">${esc(link)}</div>
         <button class="btn btn-ghost btn-sm" id="${copyBtnId}" style="margin-top:10px">${ICONS.copy}<span>Скопировать ссылку</span></button>` : `<div class="empty" style="margin-top:8px">Ваша реферальная ссылка появится после подключения бота.</div>`}
@@ -1382,6 +1415,7 @@
     };
     v.innerHTML = `
       <div class="card rev-summary">
+        <img class="rev-mascot" src="/mascot/robot-trust.webp" width="64" height="64" alt="Робот — качество и надёжность" decoding="async">
         <div class="rev-score">
           <div class="rev-avg">${total ? avg.toFixed(1) : '—'}</div>
           ${starsHtml(avg)}
@@ -1405,7 +1439,7 @@
         </div>`
         )
         .join('')}
-      </div>` : `<div class="card"><div class="empty">Отзывов пока нет.<br>Первый появится после завершённого обмена.</div></div>`}
+      </div>` : `<div class="card"><div class="empty"><img class="empty-robot" src="/mascot/robot-hello.webp" width="84" height="84" alt="" decoding="async">Отзывов пока нет.<br>Первый появится после завершённого обмена.</div></div>`}
       ${referralCardHtml('revCopyRef')}`;
     const cta = $('#revCta');
     if (cta && pending) cta.addEventListener('click', () => openReviewSheet(pending.id));
@@ -1494,6 +1528,7 @@
     const opLink = 'https://t.me/' + String(s.operator || '').replace(/^@/, '');
     v.innerHTML = `
       <div class="card lc-head">
+        <img class="lc-avatar" src="/mascot/robot-calm.webp" width="56" height="56" alt="Робот Pricelex" decoding="async">
         <div class="lc-id">
           <div class="lc-name">${esc(name)}</div>
           <div class="lc-sub">${esc(userLine)}</div>
@@ -2450,8 +2485,7 @@
     const v = $('#view-support');
     v.innerHTML = `
       <div class="card">
-        <div class="card-title">Чат поддержки</div>
-        <div class="about" style="font-size:12px;color:var(--mut);margin-bottom:10px">Задайте вопрос оператору — отвечаем онлайн, обычно за 1–3 минуты.</div>
+        <div class="chat-head"><img class="chat-avatar" src="/mascot/robot-support.webp" width="36" height="36" alt="" decoding="async"><div><div class="card-title" style="margin-bottom:0">Чат поддержки</div><div class="about" style="font-size:12px;color:var(--mut)">Задайте вопрос оператору — отвечаем онлайн, обычно за 1–3 минуты.</div></div></div>
         <div class="chat-box" id="chatBox">
           <div class="chat-empty" id="chatEmpty">Напишите сообщение — мы на связи 24/7</div>
           <div class="chat-list" id="chatList"></div>
