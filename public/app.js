@@ -51,7 +51,7 @@
   // dir — selected direction (key from /api/settings → rates[]).
   // screen — which exchange sub-screen we are on: 'picker' (asset selection) or 'form' (exchange form).
   // sheet — which bottom sheet is open (crypto | gift) or null.
-  const S = { settings: null, me: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, reviews: null, reviewsLoading: false, reviewTarget: null, reviewRating: 5, reviewOpen: false, adminReviewRating: 5, adminReviewEditId: null, adminReviews: [], adminPromos: [], adminPromoEditId: null, appliedPromo: null };
+  const S = { settings: null, me: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, reviews: null, reviewsLoading: false, reviewTarget: null, reviewRating: 5, reviewOpen: false, adminReviewRating: 5, adminReviewEditId: null, adminReviews: [], adminPromos: [], adminPromoEditId: null, appliedPromo: null, inlineEdit: false };
 
   // Fallback direction registry: needed if an older server did not send rates.
   const giftFallback = (key, label, symbol, coin) => ({
@@ -2034,7 +2034,7 @@
     const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
     let el;
     while ((el = walk.nextNode())) {
-      if (el.closest('#adminSheet, script, style, .rev-text, .rev-name, .msg-bubble')) continue;
+      if (el.closest('#adminSheet, script, style, .rev-text, .rev-name, .msg-bubble, .adm-inline-editing')) continue;
       if (typeof el.matches === 'function' && el.matches('input, textarea')) continue;
       // Source key = original catalogue text of this block. If the element currently
       // shows a previously-applied override, recover the source from stored state so
@@ -2082,14 +2082,172 @@
       el.classList.toggle('copy-applied', overridden);
     }
   }
-  const copyObserver = new MutationObserver(() => applyCopy());
+  const copyObserver = new MutationObserver(() => { applyCopy(); applyInlineEdit(); });
   copyObserver.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['placeholder', 'aria-label', 'title'] });
+
+  /* ---------- inline text editing (admin only) ----------
+     When enabled, every editable block in the live interface gets a dashed
+     outline; clicking it opens an inline editor that saves via the same
+     /api/admin/texts endpoint. The operator edits whole blocks in place. */
+  let normToBlock = null;          // normText(source) -> { id, text, value }
+  let inlineCatalog = null;        // full catalogue from /api/admin/texts
+  let inlineOverrides = null;      // { id: value } from /api/admin/texts
+  const inlineOrig = new WeakMap(); // element -> original innerHTML while editing
+
+  function buildTextMap(texts, overrides) {
+    normToBlock = new Map();
+    for (const item of texts) normToBlock.set(normText(item.text), { id: item.id, text: item.text, value: undefined });
+    if (overrides && typeof overrides === 'object') {
+      for (const b of normToBlock.values()) if (overrides[b.id] != null) b.value = overrides[b.id];
+    }
+    // Keep the map in sync with the public overrides the client already holds.
+    for (const ov of (S.settings && S.settings.texts) || []) {
+      const b = normToBlock.get(normText(ov.text));
+      if (b) b.value = ov.value;
+    }
+  }
+  function refreshTextMapOverrides() {
+    if (!normToBlock) return;
+    for (const b of normToBlock.values()) b.value = undefined;
+    for (const ov of (S.settings && S.settings.texts) || []) {
+      const b = normToBlock.get(normText(ov.text));
+      if (b) b.value = ov.value;
+    }
+  }
+
+  // Source key for an element: the catalogue text it corresponds to. Recovered
+  // from applyCopy's stored state when the element shows an override, otherwise
+  // taken from its current (source) text.
+  function inlineSourceKey(el) {
+    const prev = copyBlocks.get(el);
+    if (prev && el.textContent === prev.applied) return prev.source;
+    return normText(el.textContent);
+  }
+
+  function applyInlineEdit() {
+    if (!S.inlineEdit || !normToBlock || !normToBlock.size) return;
+    // Collect elements whose source key is an editable block.
+    const cands = [];
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+    let el;
+    while ((el = walk.nextNode())) {
+      if (el.closest('#adminSheet, script, style, .rev-text, .rev-name, .msg-bubble, .adm-inline-editing')) continue;
+      if (typeof el.matches === 'function' && el.matches('input, textarea')) continue;
+      const key = inlineSourceKey(el);
+      if (key && normToBlock.has(key)) cands.push({ el, key });
+    }
+    // Keep the innermost element per key (skip a parent when a descendant matches
+    // the same key — e.g. <button><span>label</span></button> → mark the span).
+    for (let i = 0; i < cands.length; i++) {
+      const a = cands[i];
+      for (let j = 0; j < cands.length; j++) {
+        if (i !== j && a.el.contains(cands[j].el) && cands[j].key === a.key) { a.skip = true; break; }
+      }
+    }
+    const want = new Set();
+    for (const { el, skip } of cands) { if (!skip) { el.classList.add('adm-inline'); want.add(el); } }
+    // Drop the mark from elements that no longer match (rebuilt/changed content).
+    document.querySelectorAll('.adm-inline').forEach((e) => { if (!want.has(e)) e.classList.remove('adm-inline'); });
+  }
+
+  async function putText(id, value) {
+    const result = await api('/api/admin/texts', { method: 'PUT', body: { id, value } });
+    S.settings = result.settings;
+    refreshTextMapOverrides();
+    return result;
+  }
+
+  function restoreInlineEl(el) {
+    const orig = inlineOrig.get(el);
+    if (orig != null) el.innerHTML = orig;
+    el.classList.remove('adm-inline-editing');
+    el.classList.add('adm-inline');
+    inlineOrig.delete(el);
+  }
+
+  function openInlineEditor(el) {
+    const key = inlineSourceKey(el);
+    const block = normToBlock && normToBlock.get(key);
+    if (!block) return;
+    inlineOrig.set(el, el.innerHTML);
+    el.classList.remove('adm-inline');
+    el.classList.add('adm-inline-editing');
+    el.innerHTML = '';
+    const area = document.createElement('textarea');
+    area.className = 'adm-inline-area';
+    area.rows = Math.min(16, Math.max(2, block.text.split('\n').length));
+    area.maxLength = 2000;
+    area.value = block.value != null ? block.value : block.text;
+    area.setAttribute('aria-label', 'Изменить текст блока');
+    const actions = document.createElement('div');
+    actions.className = 'adm-inline-actions';
+    const mk = (label, cls) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn ' + cls; b.textContent = label; return b; };
+    const save = mk('Сохранить', 'btn-primary');
+    const reset = mk('Сбросить', 'btn-ghost');
+    const cancel = mk('Отмена', 'btn-ghost');
+    let busy = false;
+    async function done(value) {
+      if (busy) return;
+      busy = true;
+      save.disabled = reset.disabled = cancel.disabled = true;
+      try {
+        await putText(block.id, value);
+        restoreInlineEl(el);
+        applyCopy();
+        applyInlineEdit();
+        toast(value === null ? 'Текст сброшен' : 'Сохранено. Изменение увидят все клиенты.');
+      } catch (e) {
+        toast(e.message);
+      } finally { save.disabled = reset.disabled = cancel.disabled = false; }
+    }
+    save.addEventListener('click', (e) => { e.stopPropagation(); if (area.value.trim()) done(area.value); else toast('Текст не может быть пустым'); });
+    reset.addEventListener('click', (e) => { e.stopPropagation(); done(null); });
+    cancel.addEventListener('click', (e) => { e.stopPropagation(); restoreInlineEl(el); applyCopy(); applyInlineEdit(); });
+    area.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); cancel.click(); } });
+    actions.append(save, reset, cancel);
+    el.append(area, actions);
+    requestAnimationFrame(() => { area.focus(); area.setSelectionRange(area.value.length, area.value.length); });
+  }
+
+  async function enableInlineEdit() {
+    if (S.inlineEdit) return;
+    if (!inlineCatalog) {
+      try {
+        const data = await api('/api/admin/texts');
+        inlineCatalog = data.texts;
+        inlineOverrides = data.overrides || {};
+      } catch (e) { toast('Не удалось загрузить тексты'); return; }
+    }
+    buildTextMap(inlineCatalog, inlineOverrides);
+    S.inlineEdit = true;
+    closeAdminSheet();
+    applyInlineEdit();
+    const done = $('#admInlineDone');
+    if (done) done.classList.remove('hidden');
+    toast('Режим редактирования: нажмите на пунктирный блок');
+  }
+  function disableInlineEdit() {
+    if (!S.inlineEdit) return;
+    S.inlineEdit = false;
+    document.querySelectorAll('.adm-inline, .adm-inline-editing').forEach((el) => {
+      const orig = inlineOrig.get(el);
+      if (orig != null) el.innerHTML = orig;
+      el.classList.remove('adm-inline', 'adm-inline-editing');
+      inlineOrig.delete(el);
+    });
+    const done = $('#admInlineDone');
+    if (done) done.classList.add('hidden');
+    adminTab = 'texts';
+    openAdminSheet();
+  }
 
   function wireAdminSheet() {
     $('#admTextSearch').addEventListener('input', (e) => {
       const query = e.target.value.trim().toLocaleLowerCase('ru');
       document.querySelectorAll('.adm-text-row').forEach((row) => { row.hidden = !row.dataset.search.includes(query); });
     });
+    const inlineToggle = $('#admInlineToggle');
+    if (inlineToggle) inlineToggle.addEventListener('click', () => { haptic('light'); enableInlineEdit(); });
     document.querySelectorAll('#admTabs .adm-tab').forEach((b) =>
       b.addEventListener('click', () => { adminTab = b.dataset.tab; haptic('light'); syncAdminTabs(); })
     );
@@ -2502,8 +2660,20 @@
     try { tg.BackButton.onClick(onTgBackButton); } catch (e) { /* older clients */ }
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { if (S.reviewOpen) closeReviewSheet(); else if (S.adminOpen) closeAdminSheet(); else if (S.giftRules) giftRulesClose(); else if (S.sheet) closeAssetSheet(); }
+    if (e.key === 'Escape') { if (S.inlineEdit) disableInlineEdit(); else if (S.reviewOpen) closeReviewSheet(); else if (S.adminOpen) closeAdminSheet(); else if (S.giftRules) giftRulesClose(); else if (S.sheet) closeAssetSheet(); }
   });
+  // Inline text editing: capture-phase so an editable label inside a button is
+  // opened for editing instead of triggering the button's own action.
+  document.body.addEventListener('click', (e) => {
+    if (!S.inlineEdit) return;
+    const el = e.target.closest && e.target.closest('.adm-inline');
+    if (!el || el.classList.contains('adm-inline-editing')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openInlineEditor(el);
+  }, true);
+  const inlineDone = $('#admInlineDone');
+  if (inlineDone) inlineDone.addEventListener('click', () => { haptic('light'); disableInlineEdit(); });
   // The bottom asset-selection sheet — one-time binding (it lives in index.html, outside #view-exchange).
   const sheetCloseBtn = $('#sheetClose');
   if (sheetCloseBtn) sheetCloseBtn.addEventListener('click', () => { haptic('light'); closeAssetSheet(); });
