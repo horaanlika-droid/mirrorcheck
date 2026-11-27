@@ -49,7 +49,7 @@ before(async () => {
 
 beforeEach(() => {
   store.mutate((db) => {
-    db.settings.btcUsd = 100_000;
+    db.settings.usdtUsd = 1;
     db.settings.cardFees = { GOOGLE_USD: 10, ITUNES_USD: 15, XBOX_USD: 20, APPLE_STORE_USD: 5 };
     db.settings.cardRates = currencies.allCardRates(db.settings);
     db.settings.online = true;
@@ -257,9 +257,7 @@ test('админ создаёт, редактирует, ставит на па�
 });
 
 test('проверка промокода и создание заявки с промокодом: выплата выше на указанный %, лимит и возврат при отмене', async () => {
-  // Спот 100 000 $/BTC, Google fee 10% -> базовый курс 0.000009 BTC/$.
-  // За карту $100 базовая выплата = 0.0009 BTC.
-  // С промокодом +10% курс = 0.0000099 BTC/$, выплата = 0.00099 BTC.
+  // При паритете USDT/USD: $100 со скидкой карты 10% = 90 USDT, с бонусом +10% = 99 USDT.
   const created = await req('POST', '/api/admin/promos', {
     body: { code: 'BONUS10', percent: 10, maxUses: 1, minUnits: 50 },
   });
@@ -282,22 +280,24 @@ test('проверка промокода и создание заявки с п
   assert.equal(okCheck.data.promo.code, 'BONUS10');
   assert.equal(okCheck.data.promo.percent, 10);
   assert.equal('usedCount' in okCheck.data.promo, false);
-  assert.equal(okCheck.data.payout.baseCrypto, 0.0009);
-  assert.equal(okCheck.data.payout.crypto, 0.00099);
-  assert.equal(okCheck.data.payout.bonusCrypto, 0.00009);
+  assert.equal(okCheck.data.payout.baseCrypto, 90);
+  assert.equal(okCheck.data.payout.crypto, 99);
+  assert.equal(okCheck.data.payout.bonusCrypto, 9);
 
   // Создаём заявку с промокодом
-  const wallet = 'bc1' + 'q'.repeat(30);
+  const wallet = '0x' + 'aB12'.repeat(10);
   const ordRes = await req('POST', '/api/orders', {
     demo: CLIENT_DEMO,
     body: { currency: 'GOOGLE_USD', units: 100, wallet, promoCode: 'bonus10' },
   });
   assert.equal(ordRes.status, 200);
   const order = ordRes.data.order;
+  assert.equal(order.payoutCurrency, 'USDT');
+  assert.equal(order.network, 'BEP20');
   assert.equal(order.promoCode, 'BONUS10');
   assert.equal(order.promoPercent, 10);
-  assert.equal(order.baseCrypto, 0.0009);
-  assert.equal(order.crypto, 0.00099);
+  assert.equal(order.baseCrypto, 90);
+  assert.equal(order.crypto, 99);
 
   // Лимит 1 исчерпан — вторая заявка с тем же промокодом отклонена
   const second = await req('POST', '/api/orders', {
@@ -372,10 +372,10 @@ test('руководство пользователя показывается �
   // Прежние блочные правила «Как передать карту» заменены руководством.
   assert.equal(doc.querySelector('#giftRules .rules-body'), null);
   assert.equal(doc.getElementById('giftRulesBrand'), null);
-  // Разделы о курсе и о Bitcoin добавлены в руководство.
+  // Разделы о курсе и выплатах в USDT добавлены в руководство.
   const headings = [...doc.querySelectorAll('#guideBody .guide-section .guide-h')].map((h) => h.textContent);
   assert.ok(headings.some((h) => h.includes('Почему курс PRICELEX может быть выше рыночного')), 'раздел о курсе присутствует');
-  assert.ok(headings.some((h) => h.includes('Важная информация о Bitcoin')), 'раздел о Bitcoin присутствует');
+  assert.ok(headings.some((h) => h.includes('Важная информация о выплатах в USDT')), 'раздел о выплатах присутствует');
   // Финальный блок-прощание остаётся последним разделом руководства.
   assert.ok(doc.querySelector('#guideBody .guide-section:last-child .guide-tagline'), 'руководство заканчивается финальным блоком');
   // Режим инлайн-редактирования: кнопка-переключатель в панели текстов и плавающая
@@ -404,7 +404,7 @@ test('тексты интерфейса доступны оператору, с�
   assert.ok(sec13.text.includes('Минимальный цифровой след'), 'блок секции 13 включает пункт списка с <b>-вводкой');
   const sec14 = list.data.texts.find((t) => t.text.startsWith('14. Важная информация'));
   assert.ok(sec14, 'секция 14 — один блок');
-  assert.ok(sec14.text.includes('волатильный'), 'блок секции 14 включает абзац о волатильности');
+  assert.ok(sec14.text.includes('BNB Smart Chain (BEP-20)'), 'блок секции 14 включает предупреждение о сети выплаты');
   // Серверный info-note карты рендерится в DOM и редактируется как целый блок.
   const info = list.data.texts.find((t) => t.text.includes('Где и по какому курсу вы купили карту — нам не важно'));
   assert.ok(info, 'CARD_INFO_NOTE должен быть в каталоге целым блоком');
@@ -435,4 +435,24 @@ test('тексты интерфейса доступны оператору, с�
   assert.equal(secReset.status, 200);
   const longReset = await req('PUT', '/api/admin/texts', { body: { id: sec1.id, value: null } });
   assert.equal(longReset.status, 200);
+});
+
+
+test('новые заявки только USDT/BEP-20, история возвращает исходные валюту, сеть и сумму', async () => {
+  const wallet = '0x' + 'abcD'.repeat(10);
+  const create = (extra) => req('POST', '/api/orders', { demo: CLIENT_DEMO, body: { currency: 'GOOGLE_USD', units: 10, wallet, ...extra } });
+  for (const extra of [{ payoutCurrency: 'BTC' }, { network: 'ERC20' }, { network: 'TRC20' }, { wallet: 'bc1' + 'a'.repeat(30) }, { wallet: wallet.slice(1) }]) {
+    assert.equal((await create(extra)).status, 400);
+  }
+  const result = await create({ network: 'BEP-20', payoutCurrency: 'USDT' });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.order.network, 'BEP20');
+  assert.equal(result.data.order.crypto, 9);
+  assert.equal(result.data.order.payoutLabel, 'USDT (BEP-20)');
+  store.mutate((db) => db.orders.push({ id: 888, userId: CLIENT_DEMO.id, direction: 'sell', currency: 'XBOX_USD', network: null, crypto: 0.00000035, status: 'completed' }));
+  const history = await req('GET', '/api/me', { demo: CLIENT_DEMO });
+  const old = history.data.orders.find((o) => o.id === 888);
+  assert.equal(old.payoutCurrency, 'BTC');
+  assert.equal(old.payoutDecimals, 8);
+  assert.equal(old.crypto, 0.00000035);
 });

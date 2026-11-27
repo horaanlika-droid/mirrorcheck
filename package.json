@@ -1,12 +1,12 @@
 {
   "name": "mirrorcheck",
   "version": "1.0.0",
-  "description": "Pricelex Worldwide — подарочные карты USD (Google, iTunes, Xbox, Apple Store) → BTC: Telegram Mini App и бот оператора. Выплаты только в BTC, всё на русском.",
+  "description": "Pricelex Worldwide — подарочные карты USD (Google, iTunes, Xbox, Apple Store) → USDT (BEP-20): Telegram Mini App и бот оператора. Выплаты только в сети BNB Smart Chain, всё на русском.",
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "check": "node --check src/bot.js && node --check src/web.js && node --check src/clientbot.js && node --check src/config.js && node --check src/store.js && node --check src/rates.js && node --check src/currencies.js && node --check src/widget.js && node --check src/validate.js && node --check src/util.js && node --check src/admins.js && node --check src/receipts.js && node --check src/bus.js && node --check public/app.js && node --check test/*.test.js"
+    "check": "node --check src/bot.js && node --check src/web.js && node --check src/clientbot.js && node --check src/config.js && node --check src/store.js && node --check src/rates.js && node --check src/currencies.js && node --check src/widget.js && node --check src/validate.js && node --check src/util.js && node --check src/admins.js && node --check src/receipts.js && node --check src/attachments.js && node --check src/orderchat.js && node --check public/order-chat.js && node --check src/bus.js && node --check public/app.js && node --check test/*.test.js"
   },
   "engines": {
     "node": ">=18"
@@ -15,7 +15,7 @@
     "type": "git",
     "url": "git+https://github.com/horaanlika-droid/mirrorcheck.git"
   },
-  "keywords": ["telegram", "web-app", "gift-card", "btc", "pricelex", "pricelex-worldwide"],
+  "keywords": ["telegram", "web-app", "gift-card", "usdt", "bep20", "pricelex", "pricelex-worldwide"],
   "author": "",
   "license": "ISC",
   "bugs": {

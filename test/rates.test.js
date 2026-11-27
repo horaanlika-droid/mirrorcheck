@@ -15,7 +15,7 @@ const currencies = require('../src/currencies');
 const rates = require('../src/rates');
 
 const baseSettings = () => ({
-  btcUsd: 35_000, // прямой спот BTC/USD
+  usdtUsd: 1.0002, // прямой спот USDT/USD
   // Разные скидки → разные курсы для каждого бренда.
   cardFees: { GOOGLE_USD: 5, ITUNES_USD: 10, XBOX_USD: 20, APPLE_STORE_USD: 0 },
   cardRates: {},
@@ -42,8 +42,8 @@ after(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('giftRateFromPercent: спот = 1 / BTCUSD, затем применяется скидка', () => {
-  const spot = 1 / baseSettings().btcUsd;
+test('giftRateFromPercent: спот = 1 / USDTUSD, затем применяется скидка', () => {
+  const spot = 1 / baseSettings().usdtUsd;
   const expected = Math.round((spot * 0.95) * 1e12) / 1e12;
   const got = currencies.giftRateFromPercent(5, baseSettings());
   assert.ok(got > 0);
@@ -51,17 +51,17 @@ test('giftRateFromPercent: спот = 1 / BTCUSD, затем применяет�
 });
 
 test('giftRateFromPercent при скидке 0 равен споту (округлённому)', () => {
-  const spot = 1 / baseSettings().btcUsd;
+  const spot = 1 / baseSettings().usdtUsd;
   assert.equal(currencies.giftRateFromPercent(0, baseSettings()), Math.round(spot * 1e12) / 1e12);
 });
 
 test('giftRateFromPercent возвращает null, если спот не задан', () => {
-  assert.equal(currencies.giftRateFromPercent(5, { btcUsd: 0 }), null);
+  assert.equal(currencies.giftRateFromPercent(5, { usdtUsd: 0 }), null);
 });
 
 test('allCardRates: у каждой карты свой курс по её собственной скидке', () => {
   const s = store.get().settings;
-  const spot = 1 / s.btcUsd;
+  const spot = 1 / s.usdtUsd;
   const expected = (fee) => Math.round((spot * (1 - fee / 100)) * 1e12) / 1e12;
   assert.equal(s.cardRates.GOOGLE_USD, expected(5));
   assert.equal(s.cardRates.ITUNES_USD, expected(10));
@@ -84,8 +84,8 @@ test('rateOf/giftPayout используют курс выбранной кар�
   assert.equal(xbox.rate, s.cardRates.XBOX_USD);
   assert.equal(google.cardRate, s.cardRates.GOOGLE_USD);
   assert.notEqual(google.crypto, xbox.crypto, 'выплаты за разные карты различаются');
-  assert.equal(google.crypto, Math.floor(10 * s.cardRates.GOOGLE_USD * 1e8 + 1e-6) / 1e8);
-  assert.equal(google.btcUsd, s.btcUsd);
+  assert.equal(google.crypto, Math.floor(10 * s.cardRates.GOOGLE_USD * 1e6 + 1e-6) / 1e6);
+  assert.equal(google.usdtUsd, s.usdtUsd);
   assert.equal('rub' in google, false);
   assert.equal(currencies.rateOf(s, 'ITUNES_USD'), s.cardRates.ITUNES_USD);
 });
@@ -101,13 +101,13 @@ test('giftPayout при нулевом курсе карты возвращае�
   assert.ok(currencies.giftPayout(s, 10, 'XBOX_USD'));
 });
 
-test('applyRates сохраняет BTC/USD и пересчитывает курс каждой карты с её скидкой', () => {
-  const official = { btcUsd: 36_000, source: 'kraken+coinbase' };
+test('applyRates сохраняет USDT/USD и пересчитывает курс каждой карты с её скидкой', () => {
+  const official = { usdtUsd: 0.99974, source: 'kraken+coinbase' };
   const res = rates.applyRates(official);
-  assert.equal(res.btcUsd, 36_000);
+  assert.equal(res.usdtUsd, 0.99974);
   assert.equal(res.rateSource, 'kraken+coinbase');
   assert.ok(res.rateUpdatedAt > 0);
-  const spot = 1 / 36_000;
+  const spot = 1 / 0.99974;
   const expected = (fee) => Math.round((spot * (1 - fee / 100)) * 1e12) / 1e12;
   assert.equal(res.cardRates.GOOGLE_USD, expected(5));
   assert.equal(res.cardRates.ITUNES_USD, expected(10));
@@ -119,18 +119,18 @@ test('recomputeGiftRates меняет курс только той карты, �
   const before = { ...store.get().settings.cardRates };
   store.mutate((db) => { db.settings.cardFees.ITUNES_USD = 30; });
   const afterRates = rates.recomputeGiftRates();
-  const spot = 1 / store.get().settings.btcUsd;
+  const spot = 1 / store.get().settings.usdtUsd;
   assert.equal(afterRates.ITUNES_USD, Math.round((spot * 0.7) * 1e12) / 1e12);
   assert.equal(afterRates.GOOGLE_USD, before.GOOGLE_USD);
   assert.equal(afterRates.XBOX_USD, before.XBOX_USD);
   assert.equal(afterRates.APPLE_STORE_USD, before.APPLE_STORE_USD);
 });
 
-test('совместимость со старыми настройками: giftPercent и общий rateGOOGLEUSD', () => {
+test('старые скидки сохраняются, старые абсолютные курсы не выдаются как USDT', () => {
   const legacy = { btcUsd: 35_000, giftPercent: 12, rateGOOGLEUSD: 0.000025 };
   assert.equal(currencies.feeOf(legacy, 'GOOGLE_USD'), 12);
   assert.equal(currencies.feeOf(legacy, 'XBOX_USD'), 12);
-  assert.equal(currencies.rateOf(legacy, 'GOOGLE_USD'), 0.000025);
+  assert.equal(currencies.rateOf(legacy, 'GOOGLE_USD'), null);
   assert.equal(currencies.giftRateFor(legacy, 'ITUNES_USD'), currencies.giftRateFromPercent(12, legacy));
 });
 
@@ -147,7 +147,7 @@ test('миграция старой базы: общая скидка стано
   const got = JSON.parse(out.trim());
   for (const key of currencies.GIFT_KEYS) {
     assert.equal(got.fees[key], 15, `скидка ${key} перенесена`);
-    assert.equal(got.rates[key], currencies.giftRateFromPercent(15, { btcUsd: 40_000 }));
+    assert.equal(got.rates[key], 0.85);
   }
   assert.equal(got.legacy, undefined);
   assert.equal(got.old, undefined);
@@ -158,7 +158,7 @@ test('новая база сохраняет разные скидки карт 
   const freshDir = fs.mkdtempSync(path.join(dir, 'fresh-'));
   fs.writeFileSync(path.join(freshDir, 'db.json'), JSON.stringify({
     settings: {
-      btcUsd: 50_000,
+      usdtUsd: 0.99981,
       cardFees: { GOOGLE_USD: 2, ITUNES_USD: 7, XBOX_USD: 12, APPLE_STORE_USD: 30 },
       cardRates: {},
       online: true,
@@ -170,7 +170,24 @@ test('новая база сохраняет разные скидки карт 
   ], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR: freshDir }, encoding: 'utf8' });
   const got = JSON.parse(out.trim());
   assert.deepEqual(got.fees, { GOOGLE_USD: 2, ITUNES_USD: 7, XBOX_USD: 12, APPLE_STORE_USD: 30 });
-  assert.equal(got.rates.GOOGLE_USD, currencies.giftRateFromPercent(2, { btcUsd: 50_000 }));
-  assert.equal(got.rates.APPLE_STORE_USD, currencies.giftRateFromPercent(30, { btcUsd: 50_000 }));
+  assert.equal(got.rates.GOOGLE_USD, currencies.giftRateFromPercent(2, { usdtUsd: 0.99981 }));
+  assert.equal(got.rates.APPLE_STORE_USD, currencies.giftRateFromPercent(30, { usdtUsd: 0.99981 }));
   assert.equal(new Set(Object.values(got.rates)).size, 4, 'курсы не сливаются в один');
+});
+
+
+test('медиана котировок USDT/USD рассчитывается без биткоина', async (t) => {
+  const quotes = new Map([
+    ['api.coingecko.com', ['ids=tether', { tether: { usd: 0.998 } }]],
+    ['api.kraken.com', ['pair=USDTUSD', { result: { USDTZUSD: { c: ['1.00021'] } } }]],
+    ['api.exchange.coinbase.com', ['/USDT-USD/ticker', { price: '1.003' }]],
+  ]);
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const [pair, json] = quotes.get(new URL(url).hostname);
+    assert.ok(url.includes(pair));
+    return { ok: true, json: async () => json };
+  });
+  const official = await rates.fetchOfficial();
+  assert.equal(official.usdtUsd, 1.00021);
+  assert.equal(official.source.split('+').length, 3);
 });

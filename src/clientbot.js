@@ -1,14 +1,15 @@
 // Клиентский бот Pricelex Worldwide — тот же обмен без Mini App, для тех, кто не хочет открывать приложение.
-// Поток: /start → меню → карта → номинал → Bitcoin-кошелёк → заявка,
+// Поток: /start → меню → карта → номинал → адрес BEP-20 → заявка,
 // «Мои заявки», «Поддержка», «Реферальная программа», «Информация». Обычными сообщениями
 // и кнопками — работает в любом клиенте Telegram без Mini App и без виджетов.
-// Только выкуп USD-подарочных карт (Google, iTunes, Xbox, Apple Store) с выплатой в BTC.
+// Только выкуп USD-подарочных карт (Google, iTunes, Xbox, Apple Store) с выплатой только в USDT (BEP-20).
 const { InlineKeyboard } = require('grammy');
 const config = require('./config');
 const store = require('./store');
 const bus = require('./bus');
+const orderChat = require('./orderchat');
 const currencies = require('./currencies');
-const { esc, fmtCrypto, fmtDate, parseNum } = require('./util');
+const { esc, fmtUsdt, fmtOrderPayout, fmtDate, parseNum } = require('./util');
 const widget = require('./widget');
 
 const clientFlows = new Map(); // userId -> состояние FSM
@@ -17,7 +18,7 @@ const uidOf = (ctx) => String(ctx.from.id);
 const isGiftOrder = (o) => o && o.direction === 'sell';
 const giftLabel = (o) => currencies.label(o.currency);
 const giftUnits = (o) => Number(o.units) || 0;
-const payoutOf = (o, amount = o.crypto) => fmtCrypto(amount, 'BTC', currencies.displayDecimals());
+const payoutOf = (o) => esc(fmtOrderPayout(o));
 
 /* ---------- тексты ---------- */
 
@@ -25,7 +26,7 @@ const payoutOf = (o, amount = o.crypto) => fmtCrypto(amount, 'BTC', currencies.d
 const GIFT_PRIVACY =
   '🛡 <b>Минимальный цифровой след</b>\n' +
   '• Где и по какому курсу вы купили карту — нам не важно. Хоть на маркетплейсе, хоть у знакомых, хоть за наличные: важен только рабочий код.\n' +
-  '• Мы не просим документы и регистрацию: только код карты и адрес Bitcoin-кошелька.\n' +
+  '• Мы не просим документы и регистрацию: только код карты и адрес кошелька для USDT (BEP-20).\n' +
   '• Выплата приходит прямо на ваш кошелёк — без банков, бирж и посредников.\n' +
   '• Меньше мест, где фиксируются ваши данные, — меньше цифровой след.';
 
@@ -41,7 +42,7 @@ const availableGift = () =>
 
 // У каждой карты свой курс — показываем их списком.
 const rateListText = () => availableGift()
-  .map((p) => `• ${esc(p.label)}: <b>1 $ = ${esc(fmtCrypto(currencies.rateOf(store.get().settings, p.currency), 'BTC', 8))}</b>`)
+  .map((p) => `• ${esc(p.label)}: <b>1 $ = ${esc(fmtUsdt(currencies.rateOf(store.get().settings, p.currency)))}</b>`)
   .join('\n');
 
 /* ---------- клавиатуры ---------- */
@@ -98,7 +99,7 @@ function clientMenu(ctx) {
   const online = s.online ? '🟢 Обмен <b>ОНЛАЙН</b>' : '🔴 Обмен <b>ОФФЛАЙН</b>';
   return show(ctx,
     `🌌 <b>Pricelex Worldwide | Official</b> — обмен\n${online}\n\n` +
-    `Выкупаем подарочные карты Google, iTunes, Xbox и Apple Store (регион США, USD) с выплатой в BTC.\n` +
+    `Выкупаем подарочные карты Google, iTunes, Xbox и Apple Store (регион США, USD) с выплатой только в USDT (BEP-20).\n` +
     `Сумма выплаты видна до создания заявки.\n\n` +
     `Что хотите сделать?`,
     menuKb(s));
@@ -117,7 +118,7 @@ function assetScreen(ctx) {
     assetKb());
 }
 
-/* ---------- заявка: карта → BTC ---------- */
+/* ---------- заявка: карта → USDT (BEP-20) ---------- */
 
 // Первый экран — правила передачи карты.
 function giftRules(ctx, pair) {
@@ -129,7 +130,7 @@ function giftRules(ctx, pair) {
     `1. Карта должна быть <b>${esc(label)}</b> региона <b>США</b>, в <b>USD</b>, с полным неиспользованным балансом. Карты других регионов и валют не принимаем.\n` +
     `2. Сначала создаётся заявка, затем <b>подключается оператор</b>. <b>Ничего не отправляйте и никому не сообщайте код, пока оператор не попросит.</b>\n` +
     `3. Код карты вы отправляете здесь (или в приложении) <b>только после подключения оператора</b>. Он проверит карту (обычно 5–15 минут).\n` +
-    `4. Выплата в <b>BTC</b> на ваш Bitcoin-кошелёк. Сумма считается по текущему курсу этой карты.\n` +
+    `4. Выплата в <b>USDT</b> только в сети <b>BNB Smart Chain (BEP-20)</b>. Сумма считается по текущему курсу этой карты.\n` +
     `5. Поддержка никогда не просит код или деньги вне заявки. Не передавайте код никому, кроме оператора внутри заявки.\n` +
     `6. На сделку даётся <b>1 час</b> с момента создания заявки. Если карта окажется недействительной, заявку отклонят без выплаты.\n\n` +
     GIFT_PRIVACY,
@@ -151,9 +152,9 @@ function giftIntro(ctx, pair, promo = null) {
   }
   kb.text('↩️ К списку карт', 'c:exchange');
   return show(ctx,
-    `${esc(pair.label)} → BTC\n\n` +
-    `Вы отдаёте код карты ${esc(pair.label)} номиналом в <b>USD</b> — мы выплачиваем BTC на ваш Bitcoin-кошелёк.\n\n` +
-    `💱 Курс этой карты: <b>1 $ = ${esc(fmtCrypto(effectiveRate, 'BTC', 8))}</b>. Курс обновляется автоматически.\n` +
+    `${esc(pair.label)} → USDT (BEP-20)\n\n` +
+    `Вы отдаёте код карты ${esc(pair.label)} номиналом в <b>USD</b> — мы отправляем USDT на ваш кошелёк в сети BNB Smart Chain (BEP-20).\n\n` +
+    `💱 Курс этой карты: <b>1 $ = ${esc(fmtUsdt(effectiveRate))}</b>. Курс обновляется автоматически.\n` +
     (promo ? `🏷 Промокод <b>${esc(promo.code)}</b>: <b>+${promo.percent}%</b> к выплате${promo.minUnits ? ` (от $${promo.minUnits})` : ''}.\n` : '') +
     `⏱ На сделку — 1 час с момента создания заявки.\n` +
     `✅ Только карты региона США в долларах (USD).\n\n` +
@@ -164,12 +165,18 @@ function giftIntro(ctx, pair, promo = null) {
 
 // Заявка создаётся БЕЗ кода: клиент отправляет код только после подключения оператора.
 function askGiftWallet(ctx, units, pair, promoCode = null) {
+  const back = new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`);
+  const check = promoCode ? store.validatePromo(promoCode, { units }) : null;
+  if (check && !check.ok) return show(ctx, esc(check.error), back);
+  const quote = currencies.giftPayout(store.get().settings, units, pair.currency, check?.promo.percent);
+  if (!quote) return assetScreen(ctx);
   clientFlows.set(uidOf(ctx), { type: 'gift_wallet', units, key: pair.key, promoCode: promoCode || null });
   return show(ctx,
-    `👛 <b>Адрес Bitcoin-кошелька</b>\n\n` +
-    `Куда отправить BTC? Пришлите Bitcoin-адрес: <b>bc1…</b>, <b>1…</b> или <b>3…</b>.\n\n` +
-    `/cancel — отмена`,
-    new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`));
+    `👛 <b>Кошелёк для USDT (BEP-20)</b>\n\n` +
+    `Выплата за карту на $${units} по текущему курсу: <b>${fmtUsdt(quote.crypto)}</b>.\n` +
+    `В кошельке или на бирже выберите получение USDT в сети <b>BNB Smart Chain (BEP-20)</b>. ` +
+    `Пришлите адрес: <b>0x</b> и 40 шестнадцатеричных символов. По одному адресу сеть определить нельзя.\n\n` +
+    `/cancel — отмена`, back);
 }
 
 function createGiftOrder(ctx, units, wallet, pair, promoCode = null) {
@@ -189,7 +196,7 @@ function createGiftOrder(ctx, units, wallet, pair, promoCode = null) {
   }
   const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0);
   if (!payout || !(payout.crypto > 0)) {
-    return { error: 'Курс выплаты в BTC временно недоступен — попробуйте позже.' };
+    return { error: 'Курс выплаты в USDT временно недоступен — попробуйте позже.' };
   }
   const usr = ensureUser(ctx);
   const order = store.createOrder({
@@ -263,6 +270,7 @@ const orderActionsKb = (o) => {
     kb.text('🔄 Обновить', `c:order:${o.id}`);
   }
   if (['new', 'details'].includes(o.status)) kb.text('❌ Отменить', `c:cancel:${o.id}`);
+  kb.row().text('💬 Диалог сделки', `c:chat:${o.id}`);
   kb.row().text('📦 Мои заявки', 'c:orders').text('↩️ Меню', 'c:menu');
   return kb;
 };
@@ -303,6 +311,19 @@ function orderDetailText(o) {
     return head + `🟢 <b>Завершена.</b> Выплата ${payoutOf(o)} отправлена на кошелёк:\n<code>${esc(o.wallet)}</code>${o.txUrl ? `\n🔗 ${esc(o.txUrl)}` : ''}`;
   }
   return head + `${o.status === 'rejected' ? '🔴 Отклонена оператором.' : '⚪ Отменена.'}${o.cancelReason ? `\nПричина: ${esc(o.cancelReason)}` : ''}`;
+}
+
+async function openOrderChat(ctx, id) {
+  const order = await loadOwnOrder(ctx, id);
+  if (!order) return show(ctx, 'Заявка не найдена.', backMenuKb());
+  clientFlows.set(uidOf(ctx), { type: 'order_chat', orderId: order.id });
+  return orderChat.openTelegram(ctx, order, 'user');
+}
+
+async function receiveChat(ctx, id) {
+  const order = await loadOwnOrder(ctx, id);
+  if (!order) return ctx.reply('Заявка не найдена.');
+  return orderChat.receiveTelegram(ctx, order, 'user');
 }
 
 async function orderDetail(ctx, id) {
@@ -348,7 +369,7 @@ function infoScreen(ctx) {
   const s = store.get().settings;
   return show(ctx,
     `ℹ️ <b>Pricelex Worldwide | Official</b>\n\n` +
-    `Выплата только в BTC. Сумма видна до создания заявки:\n${rateListText()}\n\n` +
+    `Выплата только в USDT (BEP-20). Сумма видна до создания заявки:\n${rateListText()}\n\n` +
     `Статус: ${s.online ? '🟢 Онлайн' : '🔴 Оффлайн'}\n\n` +
     `📇 Оператор: ${esc(s.operator)}\n📣 Канал: ${esc(s.channel)}\n💬 Чат: ${esc(s.chat)}`,
     backMenuKb());
@@ -415,6 +436,10 @@ async function clientStart(ctx, refParam = '') {
 async function handleClientCallback(ctx, d) {
   if (!isPrivate(ctx)) return ctx.answerCallbackQuery({ text: '' }).catch(() => {});
   await ctx.answerCallbackQuery().catch(() => {});
+  const file = d.match(/^c:file:(\d+):(\d+)$/);
+  if (file) return orderChat.sendFile(ctx, await loadOwnOrder(ctx, Number(file[1])), Number(file[2]));
+  if (clientFlows.get(uidOf(ctx))?.type === 'order_chat') clientFlows.delete(uidOf(ctx));
+  if (d.startsWith('c:chat:')) return openOrderChat(ctx, Number(d.slice(7)));
   if (d === 'c:menu') return clientMenu(ctx);
   if (d === 'c:exchange') return assetScreen(ctx);
   if (d === 'c:orders') return ordersList(ctx);
@@ -511,6 +536,7 @@ async function handleClientText(ctx) {
   if (!f) {
     return ctx.reply('Я здесь, чтобы помочь с обменом 🌌\nОткройте меню — или нажмите /menu.', { reply_markup: menuKb(s) });
   }
+  if (f.type === 'order_chat') return receiveChat(ctx, f.orderId);
   if (f.type === 'gift_promo') {
     const pair = currencies.get(f.key || currencies.GIFT_KEY);
     if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
@@ -579,10 +605,12 @@ async function handleClientText(ctx) {
   return ctx.reply('Что-то пошло не так — начнём сначала.', { reply_markup: menuKb(s) });
 }
 
-/* PDF-чек от клиента: для заявок на карты чек не нужен — заглушка для старых клиентов. */
-async function handleClientDocument(ctx, bot) {
+// Only route media into an explicitly selected order, never guess from active deals.
+async function handleClientDocument(ctx) {
   if (!isPrivate(ctx)) return;
-  return ctx.reply('Чек не нужен: достаточно кода карты, который вы отправите после подключения оператора.\n/cancel — отмена');
+  const flow = clientFlows.get(uidOf(ctx));
+  if (flow?.type === 'order_chat') return receiveChat(ctx, flow.orderId);
+  return ctx.reply('Чтобы отправить вложение, откройте «Мои заявки» → нужную сделку → «💬 Диалог сделки».');
 }
 
 module.exports = {
@@ -591,6 +619,7 @@ module.exports = {
   handleClientCallback,
   handleClientText,
   handleClientDocument,
+  openOrderChat,
   clientPaidWidget,
   clientCancelWidget,
   GIFT_PRIVACY,

@@ -7,6 +7,8 @@ const currencies = require('./currencies');
 const { validateInitData, parseUser } = require('./validate');
 const admins = require('./admins');
 const textCatalogue = require('./texts');
+const orderChat = require('./orderchat');
+const attachments = require('./attachments');
 
 const clientOrder = (o, reviewedIds) => ({
   id: o.id,
@@ -14,7 +16,9 @@ const clientOrder = (o, reviewedIds) => ({
   currency: o.currency,
   network: o.network || null,
   currencyLabel: currencies.label(o.currency),
-  payoutCurrency: 'BTC',
+  payoutCurrency: currencies.payoutCurrencyOf(o),
+  payoutLabel: currencies.payoutLabelOf(o),
+  payoutDecimals: currencies.payoutDecimals(currencies.payoutCurrencyOf(o)),
   units: o.units ?? null,
   giftCode: o.giftCode || null,
   expiresAt: o.expiresAt ?? null,
@@ -170,6 +174,10 @@ function createApp() {
   app.set('trust proxy', true);
   app.set('query parser', 'extended');
   app.use(express.json({ limit: '12mb' }));
+  app.use((err, _req, res, next) => {
+    if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Запрос слишком большой. Максимальный размер вложения — 8 МБ.' });
+    next(err);
+  });
 
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store, private');
@@ -177,7 +185,7 @@ function createApp() {
   });
 
   app.use((req, res, next) => {
-    if (req.method === 'GET' && (req.path === '/' || req.path === '/index.html' || req.path === '/app.js')) {
+    if (req.method === 'GET' && (req.path === '/' || req.path === '/index.html' || req.path === '/app.js' || req.path === '/order-chat.js')) {
       res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
       res.set('Pragma', 'no-cache');
     }
@@ -209,7 +217,7 @@ function createApp() {
   const auth = (req) => {
     const body = req.body || {};
     const q = req.query || {};
-    const initData = body.initData || q.initData || '';
+    const initData = body.initData || q.initData || req.get('x-telegram-init-data') || '';
     if (config.botToken) {
       if (initData && validateInitData(initData, config.botToken)) {
         return { user: parseUser(initData), demo: false };
@@ -276,7 +284,7 @@ function createApp() {
     const on = (key) => currencies.isEnabled(s, key);
     return {
       chat: s.chat,
-      btcUsd: s.btcUsd,
+      usdtUsd: s.usdtUsd,
       cardFees: Object.fromEntries(currencies.GIFT_KEYS.map((key) => [key, currencies.feeOf(s, key)])),
       cardRates: currencies.allCardRates(s),
       directions: Object.fromEntries(currencies.list().map((p) => [p.key, on(p.key)])),
@@ -294,7 +302,7 @@ function createApp() {
   const CLIENTS_ANNOUNCE_OPEN =
     '🟢 <b>Pricelex Worldwide: приём карт открыт!</b>\n\n' +
     'Снова принимаем подарочные карты Google, iTunes, Xbox и Apple Store региона США в USD 🎁\n' +
-    'Выплата в BTC, без документов и регистрации — в приложении и в боте.';
+    'Выплата только в USDT (BEP-20), без документов и регистрации — в приложении и в боте.';
   const DIRECTION_KEYS = currencies.list().map((p) => p.key);
   const feeValue = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 50 ? Number(v) : null);
 
@@ -413,9 +421,12 @@ function createApp() {
     if (!currencies.isEnabled(s, pair.key)) {
       return res.status(400).json({ error: `Выкуп ${pair.label} временно недоступен — выберите другую карту.` });
     }
+    if (!currencies.supportsPayout(req.body)) {
+      return res.status(400).json({ error: 'Выплата возможна только в USDT в сети BNB Smart Chain (BEP-20).' });
+    }
     const user = store.touchUser(a.user, req.body.startParam || '');
 
-    /* ---------- gift card → BTC ---------- */
+    /* ---------- gift card → USDT (BEP-20) ---------- */
     const units = Number(req.body.units ?? req.body.cryptoAmount);
     const unitsError = currencies.validateUnits(units);
     if (unitsError) return res.status(400).json({ error: unitsError });
@@ -431,7 +442,7 @@ function createApp() {
       giftCode = giftCodeRaw;
     }
     const walletError = currencies.validateWallet(wallet);
-    if (walletError) return res.status(400).json({ error: pair.walletError });
+    if (walletError) return res.status(400).json({ error: walletError });
 
     const promoRaw = String(req.body.promoCode || '').trim();
     let promo = null;
@@ -443,7 +454,7 @@ function createApp() {
 
     const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0);
     if (!payout) {
-      return res.status(400).json({ error: 'Курс выплаты в BTC временно недоступен — попробуйте позже.' });
+      return res.status(400).json({ error: 'Курс выплаты в USDT временно недоступен — попробуйте позже.' });
     }
     if (!(payout.crypto > 0)) {
       return res.status(400).json({ error: 'Сумма выплаты слишком мала — увеличьте номинал карты.' });
@@ -555,26 +566,51 @@ function createApp() {
   });
 
   /* ---------- диалог по заявке: клиент ↔ оператор ---------- */
-  // Диалог открывается в карточке заявки от создания до финала сделки, так что клиент остаётся на связи всю сделку.
+  function chatOrder(req, res, role) {
+    const a = needAuth(req, res);
+    if (!a) return null;
+    const admin = role !== 'user' && isAdminRequest(req);
+    if (role === 'admin' && !admin) {
+      res.status(403).json({ error: 'Только для оператора' });
+      return null;
+    }
+    const order = store.getOrder(req.params.id);
+    if (!order || (!admin && String(order.userId) !== String(a.user.id))) {
+      res.status(404).json({ error: 'Заявка не найдена' });
+      return null;
+    }
+    return order;
+  }
   app.get('/api/order/:id/messages', (req, res) => {
-    const a = needAuth(req, res);
-    if (!a) return;
-    const found = store.getOrder(req.params.id);
-    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'Заявка не найдена' });
-    res.json({ messages: store.getOrderMessages(found.id).map((m) => ({ ...m, userId: undefined })) });
+    const order = chatOrder(req, res, 'read');
+    if (order) res.json({ messages: store.getOrderMessages(order.id).map(orderChat.publicMessage) });
   });
-
-  app.post('/api/order/:id/messages', (req, res) => {
-    const a = needAuth(req, res);
-    if (!a) return;
-    const found = store.getOrder(req.params.id);
-    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'Заявка не найдена' });
-    const text = String((req.body || {}).text || '').trim();
-    if (!text) return res.status(400).json({ error: 'Сообщение не может быть пустым' });
-    if (text.length > 2000) return res.status(400).json({ error: 'Сообщение слишком длинное (до 2000 символов)' });
-    const msg = store.createOrderMessage({ orderId: found.id, userId: a.user.id, from: 'user', text });
-    bus.emit('order_message', { order: found, message: msg, user: a.user });
-    res.json({ message: { id: msg.id, orderId: msg.orderId, from: msg.from, text: msg.text, at: msg.at } });
+  const postMessage = (from) => (req, res, next) => {
+    const order = chatOrder(req, res, from);
+    if (!order) return;
+    try {
+      const file = attachments.decodeUpload(req.body?.attachment);
+      res.json({ message: orderChat.post(order, from, req.body?.text, file) });
+    } catch (err) {
+      if (err instanceof attachments.InputError) return res.status(err.status).json({ error: err.message });
+      next(err);
+    }
+  };
+  app.post('/api/order/:id/messages', postMessage('user'));
+  app.post('/api/admin/order/:id/messages', postMessage('admin'));
+  app.get('/api/order/:id/messages/:messageId/attachment', (req, res, next) => {
+    const order = chatOrder(req, res, 'read');
+    if (!order) return;
+    const file = store.getOrderMessages(order.id).find((m) => m.id === Number(req.params.messageId))?.attachment;
+    if (!file) return res.status(404).json({ error: 'Вложение не найдено' });
+    res.download(attachments.filePath(file), file.name, {
+      cacheControl: false,
+      headers: { 'Content-Type': file.type, 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'" },
+    }, (err) => {
+      if (!err) return;
+      if (!res.headersSent && err.status === 404) return res.status(404).json({ error: 'Вложение не найдено' });
+      next(err);
+    });
   });
 
   /* ---------- promo codes ---------- */
@@ -831,15 +867,6 @@ function createApp() {
       if (upd && upd.promoId && !upd.promoReleased) store.releaseOrderPromo(upd.id);
       bus.emit('order_event', { order: upd, type: 'cancelled' });
       res.json({ order: clientOrder(upd) });
-    });
-    app.post('/api/admin/order/:id/messages', (req, res) => {
-      const o = store.getOrder(req.params.id);
-      if (!o) return res.status(404).json({ error: 'Заявка не найдена' });
-      const text = String((req.body || {}).text || '').trim();
-      if (!text) return res.status(400).json({ error: 'Сообщение не может быть пустым' });
-      const msg = store.createOrderMessage({ orderId: o.id, userId: o.userId, from: 'admin', text });
-      bus.emit('order_message', { order: o, message: msg });
-      res.json({ message: msg });
     });
     app.post('/api/admin/support/:userId/reply', (req, res) => {
       const userId = String(req.params.userId);

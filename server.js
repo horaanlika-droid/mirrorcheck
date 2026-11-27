@@ -4,7 +4,7 @@ const { startWeb } = require('./src/web');
 const { startBot } = require('./src/bot');
 const { startRates } = require('./src/rates');
 
-console.log('🌌 Pricelex Worldwide | Official — выкуп USD gift-карт → BTC');
+console.log('🌌 Pricelex Worldwide | Official — выкуп USD gift-карт → USDT (BEP-20)');
 console.log(
   `[Pricelex Worldwide] HTTP ${config.host}:${config.port} ← ${config.portSource}` +
     (process.env.SERVER_PORT ? ` SERVER_PORT=${process.env.SERVER_PORT}` : '') +

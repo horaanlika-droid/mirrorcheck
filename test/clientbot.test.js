@@ -25,6 +25,7 @@ let calls = [];
 const API_SEQ = { n: 9000 };
 bot.api.config.use(async (_prev, method, payload) => {
   calls.push({ method, ...payload });
+  if (method === 'getFile') return { ok: true, result: { file_path: `files/${payload.file_id}` } };
   return { ok: true, result: method === 'answerCallbackQuery' ? true : {
     message_id: ++API_SEQ.n, date: 1, chat: { id: Number(payload.chat_id) || 0, type: 'private' }, text: payload.text || '',
   } };
@@ -87,7 +88,7 @@ test('клиентский бот показывает четыре разных
   const original = JSON.parse(JSON.stringify(store.get().settings));
   try {
     store.mutate((db) => {
-      db.settings.btcUsd = 40_000;
+      db.settings.usdtUsd = 1.0002;
       db.settings.cardFees = { GOOGLE_USD: 0, ITUNES_USD: 10, XBOX_USD: 20, APPLE_STORE_USD: 30 };
       db.settings.cardRates = currencies.allCardRates(db.settings);
     });
@@ -148,16 +149,19 @@ test('gift flow end-to-end: menu → exchange → Google Gift Card → paid → 
   const askWallet = lastCall('editMessageText');
   assert.match(String(askWallet.text), /кошел/i, 'после номинала спрашивают только кошелёк');
   assert.ok(!/код|code/i.test(String(askWallet.text)), 'до создания заявки код не спрашивают');
-  // Bitcoin address.
+  assert.match(askWallet.text, /BNB Smart Chain \(BEP-20\)/);
   await text(client, 'bc1' + 'a'.repeat(30));
+  assert.ok(!store.get().orders.some((o) => String(o.userId) === String(client)));
+  assert.match(lastCall('sendMessage').text, /0x/);
+  await text(client, '0x' + 'a'.repeat(40));
   const created = store.get().orders.find((o) => String(o.userId) === String(client));
   assert.ok(created, 'order created');
   assert.equal(created.direction, 'sell');
   assert.equal(created.units, 10);
   assert.equal(created.currency, 'GOOGLE_USD');
-  assert.equal(created.payoutCurrency, 'BTC');
-  assert.equal(created.crypto, Math.floor(10 * created.rate * 1e8 + 1e-6) / 1e8, 'выплата считается по курсу этой карты');
-  assert.equal(created.network, null);
+  assert.equal(created.payoutCurrency, 'USDT');
+  assert.equal(created.crypto, Math.floor(10 * created.rate * 1e6 + 1e-6) / 1e6, 'выплата считается по курсу этой карты');
+  assert.equal(created.network, 'BEP20');
   assert.equal(created.giftCode ?? null, null, 'order has no code — the code comes only after the operator joins');
   assert.equal(created.status, 'new');
 
@@ -178,7 +182,7 @@ test('gift flow end-to-end: menu → exchange → Google Gift Card → paid → 
   assert.ok(calls.some((c) => c.method === 'sendMessage' && String(c.chat_id) === '111' && String(c.text).includes(`#${created.id}`)));
 });
 
-test('iTunes, Xbox and Apple Store each create a BTC gift order with the selected brand', async () => {
+test('iTunes, Xbox and Apple Store each create a USDT (BEP-20) gift order with the selected brand', async () => {
   const products = [
     ['ITUNES_USD', 'iTunes Gift Card', 1101],
     ['XBOX_USD', 'Xbox Gift Card', 1102],
@@ -194,14 +198,14 @@ test('iTunes, Xbox and Apple Store each create a BTC gift order with the selecte
     const nominal = lastCall('editMessageText');
     assert.ok(String(nominal.text).includes(label));
     await click(client, `c:units:${key}:10`);
-    await text(client, 'bc1' + 'a'.repeat(30));
+    await text(client, '0x' + 'a'.repeat(40));
     const order = store.get().orders.find((o) => String(o.userId) === String(client));
     assert.ok(order, `${label} order created`);
     assert.equal(order.currency, key);
-    assert.equal(order.payoutCurrency, 'BTC');
-    assert.equal(order.network, null);
+    assert.equal(order.payoutCurrency, 'USDT');
+    assert.equal(order.network, 'BEP20');
     assert.equal(order.units, 10);
-    assert.equal(order.crypto, Math.floor(10 * order.rate * 1e8 + 1e-6) / 1e8);
+    assert.equal(order.crypto, Math.floor(10 * order.rate * 1e6 + 1e-6) / 1e6);
     const adminCard = calls.find((c) => c.method === 'sendMessage' && String(c.chat_id) === '111' && String(c.text).includes(`#${order.id}`));
     assert.ok(adminCard && String(adminCard.text).includes(label), `operator sees ${label}`);
   }
@@ -221,7 +225,7 @@ test('widget send is attempted when WIDGETS=1 and falls back to text on Telegram
   await click(client, 'c:buy:GOOGLE_USD');
   await click(client, 'c:giftnom');
   await click(client, 'c:units:10');
-  await text(client, 'bc1' + 'b'.repeat(30));
+  await text(client, '0x' + 'b'.repeat(40));
   const order = store.get().orders.find((o) => String(o.userId) === String(client));
   assert.ok(order);
 
@@ -266,7 +270,7 @@ test('widget_query is answered and message state refreshed via editMessageWidget
   await click(client, 'c:buy:GOOGLE_USD');
   await click(client, 'c:giftnom');
   await click(client, 'c:units:10');
-  await text(client, 'bc1' + 'c'.repeat(30));
+  await text(client, '0x' + 'c'.repeat(40));
   const order = store.get().orders.find((o) => String(o.userId) === String(client));
   assert.ok(order);
   // "I paid" in the widget works for an order with a code (compatibility with legacy clients):
@@ -307,7 +311,7 @@ test('виджет курсов передаёт четыре отдельных
   const original = JSON.parse(JSON.stringify(store.get().settings));
   try {
     store.mutate((db) => {
-      db.settings.btcUsd = 40_000;
+      db.settings.usdtUsd = 1.0002;
       db.settings.cardFees = { GOOGLE_USD: 0, ITUNES_USD: 9, XBOX_USD: 18, APPLE_STORE_USD: 27 };
       db.settings.cardRates = currencies.allCardRates(db.settings);
     });
@@ -331,7 +335,7 @@ test('widget «paid» is rejected for someone else’s order', async () => {
   await click(owner, 'c:buy:GOOGLE_USD');
   await click(owner, 'c:giftnom');
   await click(owner, 'c:units:10');
-  await text(owner, 'bc1' + 'd'.repeat(30));
+  await text(owner, '0x' + 'd'.repeat(40));
   const order = store.get().orders.find((o) => String(o.userId) === String(owner));
 
   const res = await (async () => {
@@ -343,7 +347,7 @@ test('widget «paid» is rejected for someone else’s order', async () => {
   assert.equal(store.getOrder(order.id).status, 'new');
 });
 
-test('клиентский бот: применение промокода увеличивает выплату BTC и отображается оператору', async () => {
+test('клиентский бот: применение промокода увеличивает выплату USDT и отображается оператору', async () => {
   const client = 1099;
   const promo = store.createPromo({ code: 'TG5', percent: 5, maxUses: 1 });
   try {
@@ -358,7 +362,7 @@ test('клиентский бот: применение промокода ув�
     assert.ok(String(screen.text).includes('TG5') && String(screen.text).includes('+5%'));
 
     await click(client, 'c:units:GOOGLE_USD:100');
-    await text(client, 'bc1' + 'e'.repeat(30));
+    await text(client, '0x' + 'e'.repeat(40));
     const order = store.get().orders.find((o) => String(o.userId) === String(client));
     assert.ok(order, 'заявка с промокодом создана');
     assert.equal(order.promoCode, 'TG5');
@@ -376,4 +380,47 @@ test('клиентский бот: применение промокода ув�
   } finally {
     store.deletePromo(promo.id);
   }
+});
+
+
+test('диалог в Telegram: клиент и оператор обмениваются фото и файлами в выбранной сделке', async (t) => {
+  const client = 1177;
+  const order = store.createOrder({ userId: String(client), currency: 'XBOX_USD' });
+  const photo = { photo: [{ file_id: 'image', file_size: 4, width: 1, height: 1 }] };
+  const document = { document: { file_id: 'paper', file_name: 'Ответ.pdf', file_size: 16 } };
+  t.mock.method(globalThis, 'fetch', async (url) => new Response(String(url).endsWith('/paper')
+    ? Buffer.from('%PDF-1.4\n%%EOF') : Buffer.from([255, 216, 255, 217])));
+  const media = (id, fields) => bot.handleUpdate({ update_id: ++seq, message: {
+    message_id: ++seq, date: 1, chat: { id, type: 'private' }, from: { id, first_name: 'Test', is_bot: false }, ...fields,
+  } });
+  await media(client, photo);
+  await click(1178, `c:chat:${order.id}`);
+  await media(1178, photo);
+  assert.deepEqual(store.getOrderMessages(order.id), [], 'без выбора своей сделки файл не отправляется');
+  await click(client, `c:chat:${order.id}`);
+  await media(client, photo);
+  let messages = store.getOrderMessages(order.id);
+  assert.equal(messages[0].attachment.type, 'image/jpeg');
+  assert.equal(messages[0].text, '');
+  assert.ok(calls.some((c) => c.method === 'sendDocument' && String(c.chat_id) === '111' && markupCallbacks(c).includes(`o:${order.id}:chat`)));
+  await click(111, `o:${order.id}:chat`);
+  await media(111, { ...document, caption: 'Посмотрите документ' });
+  messages = store.getOrderMessages(order.id);
+  assert.equal(messages[1].from, 'admin');
+  assert.equal(messages[1].text, 'Посмотрите документ');
+  assert.equal(messages[1].attachment.name, 'Ответ.pdf');
+  assert.ok(calls.some((c) => c.method === 'sendDocument' && Number(c.chat_id) === client && c.caption.includes('Посмотрите документ')));
+  await click(client, `c:chat:${order.id}`);
+  const fileButton = `c:file:${order.id}:${messages[1].id}`;
+  assert.ok(markupCallbacks(lastCall('sendMessage')).includes(fileButton));
+  await click(client, fileButton);
+  assert.equal(Number(lastCall('sendDocument').chat_id), client);
+  assert.equal(lastCall('sendDocument').document.filename, 'Ответ.pdf');
+  await click(1178, fileButton);
+  assert.match(lastCall('sendMessage').text, /Вложение не найдено/);
+  await text(client, 'Спасибо!');
+  await text(client, '/cancel');
+  await media(client, photo);
+  assert.equal(store.getOrderMessages(order.id).length, 3);
+  assert.equal(store.getOrder(order.id).status, 'new');
 });
