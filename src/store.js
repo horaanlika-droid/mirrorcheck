@@ -37,8 +37,10 @@ const defaults = () => {
     orders: [],
     flags: {},
     support: [], // support chat: { id, userId, from: 'user'|'admin', text, at }
-    reviews: [], // reviews: { id, userId, orderId, name, rating, text, at, source }
+    reviews: [], // reviews: { id, userId, orderId, name, rating, text, at, source, reply, replyAt }
     reviewSeq: 1,
+    orderMessages: [], // диалог клиента и оператора по заявке: { id, orderId, userId, from: 'user'|'admin', text, at }
+    orderMsgSeq: 1,
     promos: [], // promo codes: { id, code, percent, maxUses, usedCount, minUnits, expiresAt, active, createdAt, updatedAt }
     promoSeq: 1,
   };
@@ -60,6 +62,10 @@ function load() {
       if (!Array.isArray(db.reviews)) db.reviews = [];
       if (!Number.isFinite(db.reviewSeq)) {
         db.reviewSeq = db.reviews.reduce((m, r) => Math.max(m, Number(r && r.id) || 0), 0) + 1;
+      }
+      if (!Array.isArray(db.orderMessages)) db.orderMessages = [];
+      if (!Number.isFinite(db.orderMsgSeq)) {
+        db.orderMsgSeq = db.orderMessages.reduce((m, m0) => Math.max(m, Number(m0 && m0.id) || 0), 0) + 1;
       }
       if (!Array.isArray(db.promos)) db.promos = [];
       if (!Number.isFinite(db.promoSeq)) {
@@ -326,6 +332,31 @@ function getSupportMessages(userId) {
     .slice(-200);
 }
 
+/* ---------- диалог по заявке: клиент ↔ оператор ---------- */
+// Диалог живёт внутри карточки заявки — от начала сделки (статус «new») до финала
+// («completed»/«rejected»/«cancelled»), так что клиент остаётся на связи всю сделку.
+function createOrderMessage({ orderId, userId, from, text }) {
+  return mutate((d) => {
+    const msg = {
+      id: d.orderMsgSeq++,
+      orderId: Number(orderId),
+      userId: String(userId),
+      from, // 'user' | 'admin'
+      text: String(text || '').trim().slice(0, 2000),
+      at: Date.now(),
+    };
+    d.orderMessages.push(msg);
+    if (d.orderMessages.length > 5000) d.orderMessages.splice(0, d.orderMessages.length - 5000);
+    return msg;
+  });
+}
+
+function getOrderMessages(orderId) {
+  return db.orderMessages
+    .filter((m) => m.orderId === Number(orderId))
+    .sort((a, b) => a.at - b.at || (a.id || 0) - (b.id || 0));
+}
+
 function getSupportThreads() {
   const map = new Map();
   for (const m of db.support) {
@@ -352,7 +383,18 @@ const publicReview = (r) => ({
   text: r.text,
   at: r.at,
   source: r.source || 'order',
+  // Ответ площадки (витрисы) на отзыв — добавляется оператором через админку, клиент его видит.
+  reply: r.reply ? String(r.reply).trim().slice(0, 1000) : '',
+  replyAt: r.replyAt || null,
 });
+
+// Средний рейтинг всегда висит в пределах 0–5 звёзд: при счёте показа площадки
+// ничего не может выйти за пять звёзд, даже если данные пришли извне.
+const clampAvg = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(5, Math.max(0, n));
+};
 
 function reviewSummary(list) {
   const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
@@ -366,7 +408,7 @@ function reviewSummary(list) {
   const count = list.length;
   return {
     count,
-    avg: count ? sum / count : 0,
+    avg: clampAvg(count ? sum / count : 0),
     dist,
   };
 }
@@ -414,6 +456,17 @@ function updateReview(id, patch = {}) {
     }
     if (patch.text !== undefined) {
       review.text = String(patch.text || '').trim().slice(0, 1000);
+    }
+    if (patch.reply !== undefined) {
+      review.reply = String(patch.reply || '').trim().slice(0, 1000);
+      if (review.reply) {
+        review.replyAt = Number.isFinite(Number(patch.replyAt)) ? Math.round(Number(patch.replyAt)) : Date.now();
+      } else {
+        review.replyAt = null;
+      }
+    }
+    if (patch.replyAt !== undefined && patch.replyAt !== null && Number.isFinite(Number(patch.replyAt))) {
+      review.replyAt = Math.round(Number(patch.replyAt));
     }
     if (patch.at !== undefined && patch.at !== null && Number.isFinite(Number(patch.at))) {
       review.at = Math.round(Number(patch.at));
@@ -564,6 +617,8 @@ module.exports = {
   getSupportMessages,
   getSupportThreads,
   countSupportUnread,
+  createOrderMessage,
+  getOrderMessages,
   publicReview,
   reviewSummary,
   listReviews,

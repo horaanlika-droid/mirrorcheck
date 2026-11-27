@@ -1283,8 +1283,10 @@
     return out || '?';
   };
   // Static showcase stars: the filled fraction is computed from the rating.
+  // Рейтинг ограничен пятью звёздами — отображаемый средний рейтинг не может выходить за них.
   const starsHtml = (rating, cls) => {
-    const pct = Math.max(0, Math.min(100, ((Number(rating) || 0) / 5) * 100));
+    const r = Math.min(5, Math.max(0, Number(rating) || 0));
+    const pct = Math.max(0, Math.min(100, (r / 5) * 100));
     const row = ICONS.star + ICONS.star + ICONS.star + ICONS.star + ICONS.star;
     return `<span class="stars${cls ? ' ' + cls : ''}" aria-hidden="true"><span class="stars-bg">${row}</span><span class="stars-fg" style="width:${pct}%">${row}</span></span>`;
   };
@@ -1360,7 +1362,7 @@
     const summary = data.summary || { count: 0, avg: 0, dist: {} };
     const dist = summary.dist || {};
     const total = Math.max(0, Number(summary.count) || 0);
-    const avg = Number(summary.avg) || 0;
+    const avg = Math.min(5, Math.max(0, Number(summary.avg) || 0));
     const reviews = Array.isArray(data.reviews) ? data.reviews : [];
     const pending = reviewableOrder();
     const distRow = (n) => {
@@ -1389,6 +1391,7 @@
             ${starsHtml(r.rating, 'small')}
           </div>
           ${r.text ? `<div class="rev-text">${esc(r.text)}</div>` : ''}
+          ${r.reply ? `<div class="rev-reply">${ICONS.chat}<div class="rev-reply-text">${esc(r.reply)}</div><div class="rev-reply-who">Ответ площадки${fmtDateFull(r.replyAt || r.at)}</div></div>` : ''}
         </div>`
         )
         .join('')}
@@ -1653,7 +1656,7 @@
   }
   /* ---------- admin: reviews ---------- */
   const adminStarsText = (r) => {
-    const n = Math.min(5, Math.max(1, Math.round(Number(r) || 0)));
+    const n = Math.min(5, Math.max(0, Math.round(Number(r) || 0)));
     return '★'.repeat(n) + '☆'.repeat(5 - n);
   };
   function resetAdminReviewForm() {
