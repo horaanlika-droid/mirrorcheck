@@ -554,6 +554,29 @@ function createApp() {
     res.json({ order: clientOrder(o) });
   });
 
+  /* ---------- диалог по заявке: клиент ↔ оператор ---------- */
+  // Диалог открывается в карточке заявки от создания до финала сделки, так что клиент остаётся на связи всю сделку.
+  app.get('/api/order/:id/messages', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const found = store.getOrder(req.params.id);
+    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'Заявка не найдена' });
+    res.json({ messages: store.getOrderMessages(found.id).map((m) => ({ ...m, userId: undefined })) });
+  });
+
+  app.post('/api/order/:id/messages', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    const found = store.getOrder(req.params.id);
+    if (!found || found.userId !== String(a.user.id)) return res.status(404).json({ error: 'Заявка не найдена' });
+    const text = String((req.body || {}).text || '').trim();
+    if (!text) return res.status(400).json({ error: 'Сообщение не может быть пустым' });
+    if (text.length > 2000) return res.status(400).json({ error: 'Сообщение слишком длинное (до 2000 символов)' });
+    const msg = store.createOrderMessage({ orderId: found.id, userId: a.user.id, from: 'user', text });
+    bus.emit('order_message', { order: found, message: msg, user: a.user });
+    res.json({ message: { id: msg.id, orderId: msg.orderId, from: msg.from, text: msg.text, at: msg.at } });
+  });
+
   /* ---------- promo codes ---------- */
   app.post('/api/promo/check', (req, res) => {
     const a = needAuth(req, res);
@@ -728,6 +751,21 @@ function createApp() {
   app.put('/api/admin/reviews/:id', handleUpdateReview);
   app.patch('/api/admin/reviews/:id', handleUpdateReview);
 
+  // Площадка отвечает на отзыв: оператор пишет ответ (или чистит его), клиент его видит.
+  app.post('/api/admin/reviews/:id/reply', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
+    const existing = store.getReview(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Отзыв не найден' });
+    const reply = String((req.body || {}).reply || '').trim().slice(0, 1000);
+    if (reply.length > 0 && reply.length < 3) {
+      return res.status(400).json({ error: 'Ответ на отзыв — коротко, опишите положение дел.' });
+    }
+    const updated = store.updateReview(existing.id, { reply });
+    res.json({ review: { ...store.publicReview(updated), orderId: updated.orderId ?? null } });
+  });
+
   app.delete('/api/admin/reviews/:id', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
@@ -793,6 +831,15 @@ function createApp() {
       if (upd && upd.promoId && !upd.promoReleased) store.releaseOrderPromo(upd.id);
       bus.emit('order_event', { order: upd, type: 'cancelled' });
       res.json({ order: clientOrder(upd) });
+    });
+    app.post('/api/admin/order/:id/messages', (req, res) => {
+      const o = store.getOrder(req.params.id);
+      if (!o) return res.status(404).json({ error: 'Заявка не найдена' });
+      const text = String((req.body || {}).text || '').trim();
+      if (!text) return res.status(400).json({ error: 'Сообщение не может быть пустым' });
+      const msg = store.createOrderMessage({ orderId: o.id, userId: o.userId, from: 'admin', text });
+      bus.emit('order_message', { order: o, message: msg });
+      res.json({ message: msg });
     });
     app.post('/api/admin/support/:userId/reply', (req, res) => {
       const userId = String(req.params.userId);
