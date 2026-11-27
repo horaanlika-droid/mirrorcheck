@@ -51,7 +51,7 @@
   // dir — selected direction (key from /api/settings → rates[]).
   // screen — which exchange sub-screen we are on: 'picker' (asset selection) or 'form' (exchange form).
   // sheet — which bottom sheet is open (crypto | gift) or null.
-  const S = { settings: null, me: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, reviews: null, reviewsLoading: false, reviewTarget: null, reviewRating: 5, reviewOpen: false, adminReviewRating: 5, adminReviewEditId: null, adminReviews: [], adminPromos: [], adminPromoEditId: null, appliedPromo: null, inlineEdit: false };
+  const S = { settings: null, me: null, loyalty: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, reviews: null, reviewsLoading: false, reviewTarget: null, reviewRating: 5, reviewOpen: false, adminReviewRating: 5, adminReviewEditId: null, adminReviews: [], adminPromos: [], adminPromoEditId: null, appliedPromo: null, inlineEdit: false };
 
   const USDT_DECIMALS = 6; // точность выплаты сервиса
   // Без актуальных курсов показываем карты, но не разрешаем создать заявку.
@@ -733,7 +733,12 @@
     const dir = isGiftDir(currentDir()) ? currentDir() : currentSellDir();
     const step = Number(dir && dir.step) || 10;
     const minUnits = Number(dir && dir.minUnits) || step;
-    const rate = Number(dir && dir.rate) || 0;
+    const loyaltyDiscount = S.loyalty && S.loyalty.eligible
+      ? Number(S.loyalty.feeDiscounts && S.loyalty.feeDiscounts[dir.currency]) || 0
+      : 0;
+    const loyaltyRate = loyaltyDiscount > 0 ? Number(S.loyalty.rates && S.loyalty.rates[dir.currency]) : 0;
+    const rate = loyaltyRate > 0 ? loyaltyRate : Number(dir && dir.rate) || 0;
+    const payoutDir = loyaltyRate > 0 ? { ...dir, rate } : dir;
     const title = $('#giftTitle');
     if (title && dir) title.textContent = dir.label;
     const cardIcon = $('#giftCardIcon');
@@ -745,8 +750,8 @@
     const promoTooLow = promo && promo.minUnits && nominal > 0 && nominal < Number(promo.minUnits);
     const promoActive = !!(promo && !promoExpired && !promoTooLow);
     const effectiveRate = promoActive ? applyPromoRate(rate, promo.percent) : rate;
-    const basePayout = giftPayout(nominal, dir, 0);
-    const payout = promoActive ? giftPayout(nominal, dir, promo.percent) : basePayout;
+    const basePayout = giftPayout(nominal, payoutDir, 0);
+    const payout = promoActive ? giftPayout(nominal, payoutDir, promo.percent) : basePayout;
     const scale = 10 ** dir.payoutDecimals;
     const bonus = promoActive && payout && basePayout ? Math.max(0, Math.round((payout - basePayout) * scale) / scale) : 0;
     const out = $('#outPayout');
@@ -801,6 +806,7 @@
       meta.innerHTML = `
         <div class="row"><span>Номинал карты</span><b>$${nominal}</b></div>
         <div class="row"><span>Курс карты</span><b>1 $ = ${effectiveRate ? fmtUsdt(effectiveRate) : '—'}</b></div>
+        ${loyaltyDiscount > 0 ? `<div class="row"><span>Бонус за каждый 5-й обмен</span><b class="meta-promo">−${loyaltyDiscount} п.п. комиссии</b></div>` : ''}
         ${promoActive ? `<div class="row"><span>Промокод ${esc(promo.code)}</span><b class="meta-promo">+${promo.percent}%${bonus > 0 ? ` (+${fmtUsdt(bonus)})` : ''}</b></div>` : ''}
         <div class="row"><span>Выплата</span><b>${payout ? fmtUsdt(payout) : '—'}</b></div>`;
     }
@@ -835,11 +841,12 @@
     const atEnd = panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 4;
     if (atEnd && !guideReachedEnd) { guideReachedEnd = true; guideUpdateConfirm(); }
   }
-  function giftRulesOpen() {
+  function giftRulesOpen({ readOnly = false } = {}) {
     const dlg = $('#giftRules');
     if (!dlg) return;
     const dir = isGiftDir(currentDir()) ? currentDir() : currentSellDir();
-    S.giftRuleKey = dir && dir.key;
+    S.giftRuleKey = readOnly ? null : dir && dir.key;
+    dlg.classList.toggle('guide-readonly', readOnly);
     if (rulesCloseTimer) { clearTimeout(rulesCloseTimer); rulesCloseTimer = null; }
     // Reset the guide gate each time the sheet opens.
     guideReachedEnd = false;
@@ -974,6 +981,9 @@
     const promoBadge = o.promoCode
       ? `<div class="order-promo-badge">🏷 Промокод <b>${esc(o.promoCode)}</b> · +${o.promoPercent}%</div>`
       : '';
+    const loyaltyBadge = Number(o.loyaltyDiscountPercent) > 0
+      ? `<div class="order-promo-badge">🎉 Каждый 5-й обмен · комиссия −${o.loyaltyDiscountPercent} п.п.</div>`
+      : '';
     if (o.status === 'new' && o.giftCode) {
       // Compatibility with legacy orders where the code was provided at creation time.
       box.innerHTML = `
@@ -981,6 +991,7 @@
           ${chip('details')}
           <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
           ${promoBadge}
+          ${loyaltyBadge}
           <div class="stage-title">Подтвердите передачу карты</div>
           <div class="stage-sub">Заявка <b>#${o.id}</b>. Проверьте код — он уйдёт оператору, как только вы нажмёте «Я оплатил».</div>
           <div class="req-box" id="giftCodeBox">Код карты: ${esc(o.giftCode)}</div>
@@ -1012,6 +1023,7 @@
           ${chip('new', 'Ждём оператора')}
           <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
           ${promoBadge}
+          ${loyaltyBadge}
           <div class="stage-title">Заявка #${o.id} создана</div>
           <div class="stage-sub"><b>Код и фото карты пока не отправляйте.</b><br>Дождитесь запроса оператора в этой заявке.</div>
           <div class="note">${ttlText(o)}</div>
@@ -1027,6 +1039,7 @@
           ${chip('details', 'Оператор на связи')}
           <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
           ${promoBadge}
+          ${loyaltyBadge}
           <div class="stage-title">Оператор на связи</div>
           <div class="stage-sub">Оператор подключился к заявке <b>#${o.id}</b> и ждёт код карты.<br>Введите код ${esc(giftLabelOf(o))} на <b>$${giftNominal(o)}</b>:</div>
           <div class="f-box" style="margin-top:12px"><div class="coin-ic ${esc(giftDirOfOrder(o).coin)}">${coinInner(giftDirOfOrder(o))}</div><input id="inGiftSendCode" placeholder="Например XXXX-XXXX-XXXX-XXXX" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off"></div>
@@ -1067,6 +1080,7 @@
         <div class="card stage">
           <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🔎</div></div>
           ${promoBadge}
+          ${loyaltyBadge}
           <div class="stage-title">Карта на проверке</div>
           <div class="stage-sub">Оператор проверяет ${esc(giftLabelOf(o))} на <b>$${giftNominal(o)}</b>, регион (<b>США</b>) и валюту (<b>USD</b>).<br>Если всё сходится, отправим ${payout} на ваш кошелёк. Обычно 5–15 минут.</div>
           <div class="req-box">Код карты: ${esc(o.giftCode || '—')}</div>
@@ -1080,6 +1094,7 @@
           <svg class="okmark" viewBox="0 0 100 100"><circle cx="50" cy="50" r="41"/><path d="M32 51l13 13 24-27"/></svg>
           <div class="stage-title">Готово! Выплата отправлена</div>
           ${promoBadge}
+          ${loyaltyBadge}
           <div class="stage-sub">За ${esc(giftLabelOf(o))} на $${giftNominal(o)} отправлено <b>${payout}</b>.<br>Спасибо за обмен!</div>
           ${o.txUrl ? `
             <div class="tx-box">
@@ -2614,7 +2629,14 @@
         const i = S.orders.findIndex((o) => o.id === order.id);
         if (i >= 0) S.orders[i] = order; else S.orders.unshift(order);
         renderOrderStage();
-        if (order.status === 'completed') haptic('heavy');
+        if (order.status === 'completed') {
+          haptic('heavy');
+          try {
+            const profile = await api('/api/me');
+            S.loyalty = profile.loyalty || null;
+            renderFormMeta();
+          } catch {}
+        }
       }
     } catch (e) {
       if (S.order === current) syncStatus('⚠️ Не удалось обновить заявку. Переподключаемся автоматически…');
@@ -2638,6 +2660,8 @@
     const m = await api('/api/me');
     S.orders = m.orders;
     S.me = m.me;
+    S.loyalty = m.loyalty || null;
+    renderFormMeta();
     if (!S.order) {
       const act = S.orders.find((o) => !TERMINAL.includes(o.status));
       if (act) {
@@ -2694,6 +2718,12 @@
   if (sheetCloseBtn) sheetCloseBtn.addEventListener('click', () => { haptic('light'); closeAssetSheet(); });
   const sheetOverlay = $('#sheetOverlay');
   if (sheetOverlay) sheetOverlay.addEventListener('click', closeAssetSheet);
+  const guideLink = $('#userGuideLink');
+  if (guideLink) guideLink.addEventListener('click', (event) => {
+    event.preventDefault();
+    haptic('light');
+    giftRulesOpen({ readOnly: true });
+  });
   const rulesConfirm = $('#giftRulesConfirm');
   if (rulesConfirm) rulesConfirm.addEventListener('click', createGiftOrder);
   const rulesCancel = $('#giftRulesCancel');
@@ -2735,6 +2765,7 @@
       const m = await api('/api/me');
       S.orders = m.orders;
       S.me = m.me;
+      S.loyalty = m.loyalty || null;
       S.order = S.orders.find((o) => !TERMINAL.includes(o.status)) || null;
       // preload support
       try {

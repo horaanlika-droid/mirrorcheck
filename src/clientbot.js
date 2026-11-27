@@ -19,6 +19,9 @@ const isGiftOrder = (o) => o && o.direction === 'sell';
 const giftLabel = (o) => currencies.label(o.currency);
 const giftUnits = (o) => Number(o.units) || 0;
 const payoutOf = (o) => esc(fmtOrderPayout(o));
+const loyaltyLabel = (o) => Number(o.loyaltyDiscountPercent) > 0
+  ? `🎉 Скидка комиссии за каждый 5-й обмен: ${Number(o.loyaltyDiscountPercent)} п.п.\n`
+  : '';
 
 /* ---------- тексты ---------- */
 
@@ -139,7 +142,13 @@ function giftRules(ctx, pair) {
 
 function giftIntro(ctx, pair, promo = null) {
   const s = store.get().settings;
-  const baseRate = currencies.rateOf(s, pair.currency);
+  ensureUser(ctx);
+  const loyalty = store.loyaltyStatus(uidOf(ctx));
+  const feeDiscount = loyalty.eligible
+    ? currencies.rateAfterFeeDiscount(s, pair.currency, loyalty.discountPercent).feeDiscountPercent
+    : 0;
+  const regularRate = currencies.rateOf(s, pair.currency);
+  const baseRate = feeDiscount > 0 ? currencies.rateAfterFeeDiscount(s, pair.currency, feeDiscount).rate : regularRate;
   const effectiveRate = promo ? currencies.applyPromoToRate(baseRate, promo.percent) : baseRate;
   clientFlows.set(uidOf(ctx), { type: 'gift_select', key: pair.key, promoCode: promo ? promo.code : null });
   const kb = new InlineKeyboard()
@@ -155,6 +164,7 @@ function giftIntro(ctx, pair, promo = null) {
     `${esc(pair.label)} → USDT (BEP-20)\n\n` +
     `Вы отдаёте код карты ${esc(pair.label)} номиналом в <b>USD</b> — мы отправляем USDT на ваш кошелёк в сети BNB Smart Chain (BEP-20).\n\n` +
     `💱 Курс этой карты: <b>1 $ = ${esc(fmtUsdt(effectiveRate))}</b>. Курс обновляется автоматически.\n` +
+    (feeDiscount > 0 ? `🎉 Каждый 5-й обмен: комиссия снижена на <b>${feeDiscount} п.п.</b>.\n` : '') +
     (promo ? `🏷 Промокод <b>${esc(promo.code)}</b>: <b>+${promo.percent}%</b> к выплате${promo.minUnits ? ` (от $${promo.minUnits})` : ''}.\n` : '') +
     `⏱ На сделку — 1 час с момента создания заявки.\n` +
     `✅ Только карты региона США в долларах (USD).\n\n` +
@@ -168,12 +178,18 @@ function askGiftWallet(ctx, units, pair, promoCode = null) {
   const back = new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`);
   const check = promoCode ? store.validatePromo(promoCode, { units }) : null;
   if (check && !check.ok) return show(ctx, esc(check.error), back);
-  const quote = currencies.giftPayout(store.get().settings, units, pair.currency, check?.promo.percent);
+  ensureUser(ctx);
+  const loyalty = store.loyaltyStatus(uidOf(ctx));
+  const feeDiscount = loyalty.eligible
+    ? currencies.rateAfterFeeDiscount(store.get().settings, pair.currency, loyalty.discountPercent).feeDiscountPercent
+    : 0;
+  const quote = currencies.giftPayout(store.get().settings, units, pair.currency, check?.promo.percent, feeDiscount);
   if (!quote) return assetScreen(ctx);
   clientFlows.set(uidOf(ctx), { type: 'gift_wallet', units, key: pair.key, promoCode: promoCode || null });
   return show(ctx,
     `👛 <b>Кошелёк для USDT (BEP-20)</b>\n\n` +
     `Выплата за карту на $${units} по текущему курсу: <b>${fmtUsdt(quote.crypto)}</b>.\n` +
+    (feeDiscount > 0 ? `🎉 Учтена скидка комиссии <b>${feeDiscount} п.п.</b> за каждый 5-й обмен.\n` : '') +
     `В кошельке или на бирже выберите получение USDT в сети <b>BNB Smart Chain (BEP-20)</b>. ` +
     `Пришлите адрес: <b>0x</b> и 40 шестнадцатеричных символов. По одному адресу сеть определить нельзя.\n\n` +
     `/cancel — отмена`, back);
@@ -194,11 +210,15 @@ function createGiftOrder(ctx, units, wallet, pair, promoCode = null) {
     if (!check.ok) return { error: check.error };
     promo = check.promo;
   }
-  const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0);
+  const usr = ensureUser(ctx);
+  const loyalty = store.loyaltyStatus(uidOf(ctx));
+  const feeDiscount = loyalty.eligible
+    ? currencies.rateAfterFeeDiscount(s, pair.currency, loyalty.discountPercent).feeDiscountPercent
+    : 0;
+  const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0, feeDiscount);
   if (!payout || !(payout.crypto > 0)) {
     return { error: 'Курс выплаты в USDT временно недоступен — попробуйте позже.' };
   }
-  const usr = ensureUser(ctx);
   const order = store.createOrder({
     userId: uidOf(ctx),
     userName: ctx.from.first_name || 'Клиент',
@@ -213,6 +233,8 @@ function createGiftOrder(ctx, units, wallet, pair, promoCode = null) {
     promoCode: promo ? promo.code : null,
     promoPercent: promo ? promo.percent : null,
     baseCrypto: promo ? payout.baseCrypto : null,
+    loyaltyDiscountPercent: payout.feeDiscountPercent,
+    loyaltyExchangeNumber: payout.feeDiscountPercent > 0 ? loyalty.exchangeNumber : null,
     referrer: usr && usr.referrer,
   });
   if (promo) store.consumePromo(promo.id);
@@ -276,7 +298,7 @@ const orderActionsKb = (o) => {
 };
 
 function orderDetailText(o) {
-  const head = `<b>Заявка #${o.id}</b> · ${esc(fmtDate(o.createdAt))}\n`;
+  const head = `<b>Заявка #${o.id}</b> · ${esc(fmtDate(o.createdAt))}\n` + loyaltyLabel(o);
   if (o.status === 'new') {
     if (o.giftCode) {
       // Совместимость со старыми заявками, где код передавался при создании.
@@ -567,6 +589,7 @@ async function handleClientText(ctx) {
       `✅ <b>Заявка #${order.id} создана!</b>\n\n` +
       `🎁 ${esc(giftLabel(order))} <b>$${giftUnits(order)}</b> → <b>${payoutOf(order)}</b>\n` +
       (order.promoCode ? `🏷 Промокод <b>${esc(order.promoCode)}</b> (+${order.promoPercent}%)\n` : '') +
+      loyaltyLabel(order) +
       `\n⏳ <b>Ждём подключения оператора</b> — дождитесь его сигнала в этом чате.\n` +
       `<b>Ничего не отправляйте и не сообщайте код карты</b>, пока оператор не попросит. На сделку — 1 час.`,
       new InlineKeyboard().text('📦 Мои заявки', 'c:orders').text('❌ Отменить', `c:cancel:${order.id}`));

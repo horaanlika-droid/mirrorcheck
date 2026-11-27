@@ -242,6 +242,19 @@ function giftRateFor(settings, key) {
   return giftRateFromPercent(feeOf(settings, pair.key), settings);
 }
 
+// Уменьшаем комиссию карты на указанное число процентных пунктов (не процентов от комиссии).
+function rateAfterFeeDiscount(settings, currency, discountPercent = 1) {
+  const pair = find(currency);
+  if (!pair || pair.kind !== 'gift') return { rate: null, feeDiscountPercent: 0 };
+  const fee = feeOf(settings, pair.key);
+  const requested = clampFee(discountPercent);
+  const feeDiscountPercent = Math.min(fee, requested);
+  return {
+    rate: feeDiscountPercent > 0 ? giftRateFromPercent(fee - feeDiscountPercent, settings) : rateOf(settings, pair.key),
+    feeDiscountPercent,
+  };
+}
+
 // Все курсы разом: { GOOGLE_USD: rate, ITUNES_USD: rate, ... }.
 function allCardRates(settings) {
   const out = {};
@@ -268,11 +281,14 @@ function applyPromoToRate(baseRate, percent) {
 }
 
 // Сколько USDT получит клиент за выбранную карту. Округляем выплату вниз до точности сервиса.
-// При переданном promoPercent (>0) итоговый курс увеличивается на указанный процент.
-function giftPayout(settings, units, currency = GIFT_KEY, promoPercent = 0) {
+// feeDiscountPercent уменьшает комиссию карты на процентные пункты; промокод затем
+// применяется к уже сниженному курсу.
+function giftPayout(settings, units, currency = GIFT_KEY, promoPercent = 0, feeDiscountPercent = 0) {
   const pair = find(currency);
   if (!pair || pair.kind !== 'gift') return null;
-  const baseRate = rateOf(settings, pair.currency);
+  const regularRate = rateOf(settings, pair.currency);
+  const discount = rateAfterFeeDiscount(settings, pair.key, feeDiscountPercent);
+  const baseRate = discount.feeDiscountPercent > 0 ? discount.rate : regularRate;
   if (!(baseRate > 0)) return null;
   const n = Number(units);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -290,6 +306,8 @@ function giftPayout(settings, units, currency = GIFT_KEY, promoPercent = 0) {
     rate: effectiveRate,
     baseRate,
     cardRate: baseRate,
+    regularRate,
+    feeDiscountPercent: discount.feeDiscountPercent,
     promoPercent: appliedPercent,
     payoutCurrency: pair.payoutCurrency,
     network: pair.network,
@@ -316,6 +334,7 @@ module.exports = {
   rateOf,
   feeOf,
   clampFee,
+  rateAfterFeeDiscount,
   label: (currency) => { const p = find(currency); return p ? p.label : norm(currency); },
   shortLabel: (currency) => { const p = find(currency); return p ? p.key.replace('_', ' · ') : norm(currency); },
   symbol,
