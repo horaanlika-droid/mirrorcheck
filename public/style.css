@@ -61,6 +61,12 @@ body {
   font-size: 8.5px; letter-spacing: .14em; color: #8edfeb; margin-top: 4px; font-weight: 600;
   text-shadow: 0 0 10px rgba(142, 223, 235, 0.35);
 }
+.hdr-guide-link {
+  display: inline-block; margin-top: 8px; padding: 5px 10px; border-radius: 999px;
+  color: var(--teal); font-size: 11px; font-weight: 700; text-decoration: underline;
+  text-decoration-color: rgba(0, 220, 203, .45); text-underline-offset: 3px;
+}
+.hdr-guide-link:hover, .hdr-guide-link:focus-visible { color: #bffcf0; text-decoration-color: currentColor; }
 .hdr-status { margin-top: 10px; }
 .pill {
   display: inline-flex; align-items: center; gap: 7px;
@@ -586,6 +592,12 @@ body.sheet-lock { overflow: hidden; }
 .guide-consent input { width: 18px; height: 18px; margin-top: 1px; flex: none; accent-color: var(--teal); }
 .guide-consent label { font-size: 12.5px; line-height: 1.45; color: var(--txt); }
 .guide-hint { font-size: 11px; line-height: 1.4; color: var(--mut); text-align: center; margin-bottom: 8px; }
+/* The homepage link opens the same guide for reading, without the order-creation gate. */
+#giftRules.guide-readonly .guide-consent,
+#giftRules.guide-readonly .guide-hint,
+#giftRules.guide-readonly #giftRulesConfirm,
+#giftRules.guide-readonly #giftRulesCancel { display: none !important; }
+#giftRules.guide-readonly .sheet-panel { max-height: 88vh; }
 /* Overridden text blocks render operator newlines as line breaks. */
 .copy-applied { white-space: pre-line; }
 

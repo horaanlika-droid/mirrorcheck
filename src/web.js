@@ -30,6 +30,8 @@ const clientOrder = (o, reviewedIds) => ({
   promoCode: o.promoCode || null,
   promoPercent: o.promoPercent ?? null,
   baseCrypto: o.baseCrypto ?? null,
+  loyaltyDiscountPercent: o.loyaltyDiscountPercent ?? 0,
+  loyaltyExchangeNumber: o.loyaltyExchangeNumber ?? null,
   status: o.status,
   requisites: o.requisites,
   receipt: o.receipt || null,
@@ -406,7 +408,17 @@ function createApp() {
     if (!a) return;
     const user = store.touchUser(a.user, req.query.startParam || '');
     const reviewedIds = store.getReviewedOrderIds();
-    res.json({ me: clientUser(user), orders: store.userOrders(user.id).map((o) => clientOrder(o, reviewedIds)) });
+    const loyalty = store.loyaltyStatus(user.id);
+    if (loyalty.eligible) {
+      loyalty.rates = Object.fromEntries(currencies.GIFT_KEYS.map((key) => {
+        const adjusted = currencies.rateAfterFeeDiscount(store.get().settings, key, loyalty.discountPercent);
+        return [key, adjusted.rate];
+      }));
+      loyalty.feeDiscounts = Object.fromEntries(currencies.GIFT_KEYS.map((key) => [
+        key, currencies.rateAfterFeeDiscount(store.get().settings, key, loyalty.discountPercent).feeDiscountPercent,
+      ]));
+    }
+    res.json({ me: clientUser(user), loyalty, orders: store.userOrders(user.id).map((o) => clientOrder(o, reviewedIds)) });
   });
 
   app.post('/api/orders', (req, res) => {
@@ -452,7 +464,9 @@ function createApp() {
       promo = check.promo;
     }
 
-    const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0);
+    const loyalty = store.loyaltyStatus(user.id);
+    const loyaltyDiscountPercent = loyalty.eligible ? loyalty.discountPercent : 0;
+    const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0, loyaltyDiscountPercent);
     if (!payout) {
       return res.status(400).json({ error: 'Курс выплаты в USDT временно недоступен — попробуйте позже.' });
     }
@@ -475,6 +489,8 @@ function createApp() {
       promoCode: promo ? promo.code : null,
       promoPercent: promo ? promo.percent : null,
       baseCrypto: promo ? payout.baseCrypto : null,
+      loyaltyDiscountPercent: payout.feeDiscountPercent,
+      loyaltyExchangeNumber: payout.feeDiscountPercent > 0 ? loyalty.exchangeNumber : null,
       referrer: user.referrer,
     });
     if (promo) store.consumePromo(promo.id);

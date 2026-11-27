@@ -214,6 +214,23 @@ function touchUser(u, refParam) {
 
 const getUser = (id) => db.users[String(id)] || null;
 
+function completedOrderCount(userId) {
+  const id = String(userId);
+  return db.orders.filter((order) => String(order.userId) === id && order.status === 'completed').length;
+}
+
+function loyaltyStatus(userId) {
+  const completedExchanges = completedOrderCount(userId);
+  const exchangeNumber = completedExchanges + 1;
+  return {
+    completedExchanges,
+    exchangeNumber,
+    eligible: exchangeNumber % 5 === 0,
+    exchangesUntilReward: 5 - (completedExchanges % 5),
+    discountPercent: 1,
+  };
+}
+
 function createOrder(o) {
   return mutate((d) => {
     const order = {
@@ -236,6 +253,8 @@ function createOrder(o) {
       promoCode: o.promoCode || null,
       promoPercent: o.promoPercent ?? null,
       baseCrypto: o.baseCrypto ?? null,
+      loyaltyDiscountPercent: o.loyaltyDiscountPercent ?? 0,
+      loyaltyExchangeNumber: o.loyaltyExchangeNumber ?? null,
       promoReleased: false,
       status: 'new', // new orders wait for the operator to join
       requisites: null,
@@ -616,6 +635,8 @@ module.exports = {
   publicSettings,
   touchUser,
   getUser,
+  completedOrderCount,
+  loyaltyStatus,
   createOrder,
   getOrder,
   expireIfNeeded,

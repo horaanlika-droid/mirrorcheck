@@ -320,6 +320,54 @@ test('проверка промокода и создание заявки с п
   assert.equal(afterCancel.status, 200);
 });
 
+test('каждый пятый завершённый обмен конкретного клиента уменьшает комиссию на 1 п.п.', async () => {
+  const wallet = '0x' + 'aB12'.repeat(10);
+  store.mutate((db) => {
+    for (let id = 1; id <= 4; id++) {
+      db.orders.push({ id: 1000 + id, userId: CLIENT_DEMO.id, status: 'completed' });
+    }
+  });
+
+  const profile = await req('GET', '/api/me', { demo: CLIENT_DEMO });
+  assert.equal(profile.data.loyalty.completedExchanges, 4);
+  assert.equal(profile.data.loyalty.eligible, true);
+  assert.equal(profile.data.loyalty.rates.GOOGLE_USD, 0.91);
+  assert.equal(profile.data.loyalty.feeDiscounts.GOOGLE_USD, 1);
+
+  const cancelledAttempt = await req('POST', '/api/orders', {
+    demo: CLIENT_DEMO,
+    body: { currency: 'GOOGLE_USD', units: 100, wallet },
+  });
+  await req('POST', `/api/order/${cancelledAttempt.data.order.id}/cancel`, { demo: CLIENT_DEMO });
+
+  const fifth = await req('POST', '/api/orders', {
+    demo: CLIENT_DEMO,
+    body: { currency: 'GOOGLE_USD', units: 100, wallet },
+  });
+  assert.equal(fifth.status, 200);
+  assert.equal(fifth.data.order.crypto, 91);
+  assert.equal(fifth.data.order.loyaltyDiscountPercent, 1);
+  assert.equal(fifth.data.order.loyaltyExchangeNumber, 5);
+
+  await req('POST', `/api/admin/order/${fifth.data.order.id}/confirm`);
+  const after = await req('GET', '/api/me', { demo: CLIENT_DEMO });
+  assert.equal(after.data.loyalty.completedExchanges, 5);
+  assert.equal(after.data.loyalty.eligible, false);
+
+  const sixth = await req('POST', '/api/orders', {
+    demo: CLIENT_DEMO,
+    body: { currency: 'GOOGLE_USD', units: 100, wallet },
+  });
+  assert.equal(sixth.data.order.crypto, 90);
+  assert.equal(sixth.data.order.loyaltyDiscountPercent, 0);
+
+  const anotherClient = await req('POST', '/api/orders', {
+    demo: { id: '900003', name: 'Another client' },
+    body: { currency: 'GOOGLE_USD', units: 100, wallet },
+  });
+  assert.equal(anotherClient.data.order.crypto, 90, 'счётчик ведётся отдельно для каждого клиента');
+});
+
 test('истёкший промокод не применяется и не проходит проверку', async () => {
   const pastTs = Date.now() - 60_000;
   const created = await req('POST', '/api/admin/promos', {
@@ -361,6 +409,9 @@ test('руководство пользователя показывается �
 
   // Шапка sheet — заголовок сменился на «Руководство пользователя».
   assert.equal(doc.getElementById('giftRulesTitle')?.textContent, 'Руководство пользователя');
+  const homepageGuideLink = doc.getElementById('userGuideLink');
+  assert.equal(homepageGuideLink?.tagName, 'A', 'руководство доступно с главной страницы по гиперссылке');
+  assert.equal(homepageGuideLink?.getAttribute('href'), '#giftRules');
   // Тело руководства со всеми разделами и обязательный согласительный чекбокс.
   assert.ok(doc.getElementById('guideBody'), 'контейнер руководства #guideBody присутствует');
   assert.ok(doc.querySelector('#guideBody .guide-section:last-child .guide-tagline'), 'руководство заканчивается финальным блоком');
