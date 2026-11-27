@@ -1,4 +1,4 @@
-/* Pricelex Worldwide — веб-приложение: подарочные карты USD → BTC. */
+/* Pricelex Worldwide — веб-приложение: подарочные карты USD → USDT (BEP-20). */
 (() => {
   'use strict';
 
@@ -53,13 +53,14 @@
   // sheet — which bottom sheet is open (crypto | gift) or null.
   const S = { settings: null, me: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, reviews: null, reviewsLoading: false, reviewTarget: null, reviewRating: 5, reviewOpen: false, adminReviewRating: 5, adminReviewEditId: null, adminReviews: [], adminPromos: [], adminPromoEditId: null, appliedPromo: null, inlineEdit: false };
 
-  // Fallback direction registry: needed if an older server did not send rates.
+  const USDT_DECIMALS = 6; // точность выплаты сервиса
+  // Без актуальных курсов показываем карты, но не разрешаем создать заявку.
   const giftFallback = (key, label, symbol, coin) => ({
-    key, direction: 'sell', currency: key, network: null, kind: 'gift', payoutCurrency: 'BTC', payoutDecimals: 8,
+    key, direction: 'sell', currency: key, network: 'BEP20', kind: 'gift', payoutCurrency: 'USDT', payoutDecimals: USDT_DECIMALS,
     label, symbol, coin, decimals: 0, display: 0, unit: 'USD', step: 10, minUnits: 10,
-    walletHint: 'Адрес Bitcoin-кошелька (bc1… / 1… / 3…)',
-    walletPattern: '^(bc1[a-zA-HJ-NP-Z0-9]{25,62}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$',
-    walletError: 'Проверьте адрес Bitcoin-кошелька — он выглядит неверно.',
+    walletHint: 'Выберите для получения USDT сеть BNB Smart Chain (BEP-20). Адрес начинается с 0x.',
+    walletPattern: '^0x(?!0{40}$)[0-9a-fA-F]{40}$',
+    walletError: 'Укажите ненулевой адрес для USDT (BEP-20): 0x и 40 шестнадцатеричных символов.',
     infoNote: 'Где и по какому курсу куплена карта — не важно. Главное, чтобы она работала: США, USD ($), полный баланс.', currencyNote: 'Нужна карта региона США в USD ($).',
     rate: null, enabled: true,
   });
@@ -71,22 +72,25 @@
     giftFallback('APPLE_STORE_USD', 'Apple Store Gift Card', '🍎', 'apple'),
   ];
 
-  // Only USD gift cards are enabled as sell → BTC directions.
+  // Никогда не показываем курсы старого сервера как выплаты в USDT.
   function dirs() {
     const s = S.settings;
     if (!s) return [];
-    if (Array.isArray(s.rates) && s.rates.length) return s.rates;
+    if (Array.isArray(s.rates)) {
+      const supported = s.rates.filter((d) => d.kind === 'gift' && d.payoutCurrency === 'USDT' && d.network === 'BEP20');
+      if (supported.length) return supported;
+    }
     return FALLBACK_DIRS;
   }
   const isGiftDir = (d) => !!d && (d.kind === 'gift' || d.direction === 'sell');
-  // A card direction is shown only when its BTC payout rate is available.
+  // A card direction is shown only when its USDT payout rate is available.
   const eligible = (d) => d.enabled !== false && (isGiftDir(d) ? Number(d.rate) > 0 : true);
   const available = () => dirs().filter(eligible);
-  // Gift cards are sold for BTC; there is no fiat payment flow.
+  // Gift cards are sold for USDT; there is no fiat payment flow.
   const sellDirs = () => available().filter(isGiftDir);
   const currentSellDir = () => sellDirs()[0] || dirs().find(isGiftDir) || FALLBACK_DIRS.find(isGiftDir);
 
-  // How much BTC we pay for a card of `units` $; the BTC per $1 rate comes from the server.
+  // How much USDT we pay for a card of `units` $; the USDT per $1 rate comes from the server.
   function applyPromoRate(baseRate, percent) {
     const r = Number(baseRate) || 0;
     const p = Number(percent) || 0;
@@ -99,7 +103,7 @@
     const baseRate = Number(dir && dir.rate) || 0;
     if (!(baseRate > 0)) return null;
     const effectiveRate = promoPercent > 0 ? applyPromoRate(baseRate, promoPercent) : baseRate;
-    return floorTo((Number(units) || 0) * effectiveRate, 8);
+    return floorTo((Number(units) || 0) * effectiveRate, dir.payoutDecimals);
   }
   function giftWalletValid(address, product = null) {
     const dir = product || (isGiftDir(currentDir()) ? currentDir() : currentSellDir());
@@ -118,11 +122,10 @@
     S.dir = dir ? dir.key : key;
     return S.dir;
   }
-  // Storage/rounding precision (USDT — 6, BTC/LTC — 8).
+  // Precision of the original asset for legacy orders.
   function decimalsOf(dir) {
     return Number.isFinite(Number(dir.decimals)) ? Number(dir.decimals) : 8;
   }
-  // Display precision for the client (USDT — 2 decimals, BTC/LTC — 8).
   function displayOf(dir) {
     const d = dir.display;
     return Number.isFinite(Number(d)) && d !== null && d !== undefined ? Number(d) : decimalsOf(dir);
@@ -147,19 +150,16 @@
     if (d) return d;
     // Legacy orders may store network TRC20/ERC20; detect the product by currency.
     if (isGiftOrder(o)) return giftDirOfOrder(o);
-    return FALLBACK_DIRS.find((x) => x.currency === o.currency && (x.network || null) === (o.network || null)) || { coin: String(o.currency || '').toLowerCase(), symbol: o.currency === 'BTC' ? '₿' : o.currency === 'LTC' ? 'Ł' : '₮', decimals: 8, display: o.currency === 'USDT' ? 2 : 8 };
+    return FALLBACK_DIRS.find((x) => x.currency === o.currency && (x.network || null) === (o.network || null)) || { coin: String(o.currency || '').toLowerCase(), symbol: '🪙', decimals: 8, display: o.currency === 'USDT' ? 2 : 8 };
   }
   const currenciesDecimals = (o) => displayOf(dirOfOrder(o));
-  const giftCurrencyOf = (o) => o.payoutCurrency || (o.network ? 'USDT' : 'BTC');
-  const giftPayoutText = (o) => {
-    const currency = giftCurrencyOf(o);
-    const suffix = currency === 'USDT' && o.network ? ` (${o.network})` : '';
-    return `${fmtCrypto(o.crypto, currency, currency === 'USDT' ? 2 : 8)}${suffix}`;
-  };
+  // Данные выплаты берём из самой заявки, а не из текущего направления.
+  const giftPayoutLabel = (o) => o.payoutLabel || o.payoutCurrency;
+  const giftPayoutText = (o) => esc(fmtCrypto(o.crypto, giftPayoutLabel(o), o.payoutDecimals));
   // Payout amount for display to the client.
   const cryptoOf = (o) => (isGiftOrder(o)
     ? giftPayoutText(o)
-    : fmtCrypto(o.crypto, o.currency, currenciesDecimals(o)));
+    : esc(fmtCrypto(o.crypto, o.currency, currenciesDecimals(o))));
 
   const STATUS = {
     new: { label: 'Новая', color: '#ffb648' },
@@ -172,7 +172,7 @@
   };
 
   const esc = (s) => String(s ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' }[c]));
-  // dec — precision from the direction (USDT — 2 decimals, BTC/LTC — 8); without it, precision is inferred from magnitude.
+  // dec — точность актива или суммы выплаты из заявки.
   const fmtCrypto = (v, cur, dec) => {
     const n = Number(v) || 0;
     const d = Number.isFinite(Number(dec)) && dec !== null ? Number(dec) : n >= 1000 ? 2 : n >= 1 ? 4 : 6;
@@ -180,6 +180,7 @@
     const trimmed = fixed.includes('.') ? fixed.replace(/\.?0+$/, '') : fixed;
     return (trimmed || '0') + ' ' + cur;
   };
+  const fmtUsdt = (v) => fmtCrypto(v, 'USDT', USDT_DECIMALS);
   const fmtDate = (ts) => {
     const d = new Date(ts);
     const p = (x) => String(x).padStart(2, '0');
@@ -205,9 +206,9 @@
   };
   const fmtSize = (n) => {
     n = Number(n) || 0;
-    if (n < 1024) return n + ' B';
-    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
-    return (n / 1024 / 1024).toFixed(1) + ' MB';
+    if (n < 1024) return n + ' Б';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' КБ';
+    return (n / 1024 / 1024).toFixed(1) + ' МБ';
   };
   let pendingReceipt = null;
   const haptic = (t) => { try { tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred(t || 'light'); } catch (e) {} };
@@ -238,11 +239,10 @@
 
   async function api(path, opts = {}) {
     const q = new URLSearchParams(opts.query || {});
-    if (initData) q.set('initData', initData);
-    else if (demo) { q.set('demo[id]', demo.id); q.set('demo[name]', demo.name); }
+    if (!initData && demo) { q.set('demo[id]', demo.id); q.set('demo[name]', demo.name); }
     const sep = path.includes('?') ? '&' : '?';
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => controller.abort(), opts.timeoutMs || 10000);
     try {
       const method = (opts.method || 'GET').toUpperCase();
       const hasBody = method === 'POST' || method === 'PUT' || method === 'PATCH';
@@ -250,9 +250,10 @@
         method,
         cache: 'no-store',
         signal: controller.signal,
-        headers: hasBody ? { 'content-type': 'application/json' } : undefined,
-        body: hasBody ? JSON.stringify(Object.assign({ initData, demo }, opts.body || {})) : undefined,
+        headers: { ...(initData ? { 'x-telegram-init-data': initData } : {}), ...(hasBody ? { 'content-type': 'application/json' } : {}) },
+        body: hasBody ? JSON.stringify(Object.assign({ demo }, opts.body || {})) : undefined,
       });
+      if (opts.binary && res.ok) return await res.blob();
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Ошибка сервера');
       return data;
@@ -295,6 +296,8 @@
     left: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
     chevDown: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
   };
+
+  const orderChat = window.createOrderChat({ api, readAsBase64, esc, fmtDate, fmtSize, icons: ICONS });
 
   function renderHeader() {
     const s = S.settings;
@@ -361,7 +364,7 @@
             const sub = off
               ? 'Временно недоступна'
               : kind === 'gift'
-                ? `1 $ = ${fmtCrypto(d.rate, 'BTC', 8)} · выплата в BTC`
+                ? `1 $ = ${fmtUsdt(d.rate)} · сеть BEP-20`
                 : 'Карта в USD'
             return `<button class="sheet-row${on ? ' on' : ''}${off ? ' off' : ''}" data-key="${esc(d.key)}" role="option" aria-selected="${on ? 'true' : 'false'}"${off ? ' aria-disabled="true"' : ''}>
               <span class="coin-ic ${esc(d.coin)}">${coinInner(d)}</span>
@@ -373,7 +376,7 @@
       : '<div class="sheet-empty">Сейчас нет доступных направлений</div>';
     const foot = $('#sheetFoot');
     if (foot) {
-      foot.textContent = kind === 'gift' ? 'Принимаем карты США в USD · выплата в BTC' : '';
+      foot.textContent = kind === 'gift' ? 'Принимаем карты США в USD · выплата в USDT (BEP-20)' : '';
       foot.classList.toggle('hidden', !foot.textContent);
     }
     list.querySelectorAll('.sheet-row').forEach((b) =>
@@ -457,8 +460,6 @@
     haptic('medium');
     closeAssetSheet();
     setScreen('form');
-    const w = $('#inWallet');
-    if (w) w.placeholder = want.walletHint;
     syncAssetChip();
     renderFormMeta();
   }
@@ -490,18 +491,18 @@
         <div id="assetPicker" role="region" aria-label="Выберите подарочную карту">
           <section class="exchange-hero">
             <div class="hero-copy">
-              <div class="hero-kicker"><i></i> ПРИВАТНЫЙ ОБМЕН ЦИФРОВЫХ ПОДАРОЧНЫХ КАРТ</div>
-              <h1>Подарочные карты<br>на <span>Bitcoin</span></h1>
-              <p>Приватный обмен цифровых подарочных карт. Укажите номинал — увидите выплату в BTC до создания заявки.</p>
+              <div class="hero-kicker"><i></i> Привет! Я робот PRICELEX.</div>
+              <h1>Подарочные карты<br>на <span>USDT</span></h1>
+              <p>Выберите карту и номинал — покажу сумму до обмена. Выплата только в сети BNB Smart Chain (BEP-20).</p>
               <button class="hero-cta" id="heroStart">Начать обмен <span aria-hidden="true">→</span></button>
-              <div class="hero-footnote"><span>Курс BTC/USD</span><b>·</b><span>Личная поддержка</span></div>
+              <div class="hero-footnote"><span>Курс USDT/USD</span><b>·</b><span>Личная поддержка</span></div>
             </div>
             <div class="hero-visual" aria-hidden="true">
               <div class="hero-aura"></div>
               <div class="hero-orbit orbit-one"></div>
               <div class="hero-orbit orbit-two"></div>
               <div class="hero-orbit orbit-three"></div>
-              <div class="hero-core"><span>₿</span></div>
+              <img class="hero-core" src="/mascot/hello.webp" width="144" height="144" alt="" decoding="async">
               ${[['APPLE_STORE_USD','token-apple'],['XBOX_USD','token-xbox'],['GOOGLE_USD','token-google'],['ITUNES_USD','token-itunes']].map(([key, placement]) => { const d = dirs().find((x) => x.key === key); return d ? `<div class="hero-token ${placement}"><span class="coin-ic ${esc(d.coin)}">${coinInner(d)}</span></div>` : ''; }).join('')}
             </div>
           </section>
@@ -514,17 +515,24 @@
               <button class="supported-card${eligible(d) && S.settings.online ? '' : ' off'}" data-key="${esc(d.key)}" ${eligible(d) && S.settings.online ? '' : 'disabled aria-disabled="true"'}>
                 <span class="supported-icon coin-ic ${esc(d.coin)}">${coinInner(d)}</span>
                 <b>${esc(d.label)}</b>
-                <small>${Number(d.rate) > 0 ? '1 $ = ' + fmtCrypto(d.rate, 'BTC', 8) : 'USD · от $10'}</small>
+                <small>${Number(d.rate) > 0 ? '1 $ = ' + fmtUsdt(d.rate) : 'USD · от $10'}</small>
                 <span class="supported-arrow" aria-hidden="true">↗</span>
               </button>`).join('')}
           </div>
           <div class="picker-empty${cryptoOn || giftOn ? ' hidden' : ''}" id="pickerEmpty">Направления временно недоступны.<br>Загляните чуть позже.</div>
-          <div class="telegram-cta"><span><b>Начните обмен прямо сейчас</b><small>Выберите карту и номинал</small></span><span class="telegram-cta-mark">↗</span></div>
+          <details class="exchange-steps">
+            <summary>Как проходит обмен?</summary>
+            <ol>
+              <li>Выберите карту, укажите адрес USDT (BEP-20) и создайте заявку.</li>
+              <li>Дождитесь оператора. Передайте код карты только по его запросу.</li>
+              <li>После проверки получите USDT на свой кошелёк.</li>
+            </ol>
+          </details>
           <div class="buy-note" role="note">
             <div class="gain-note-title"><span class="gain-note-ic" aria-hidden="true">🛒</span>Где купить карту — решать вам</div>
             <div class="gain-item"><span class="gain-num">✦</span><p>Нам <b>не важно, где вы купили карту и по какому курсу</b>: на маркетплейсе, в магазине цифровых кодов, у знакомых, за наличные — где угодно. Чек и цену покупки мы не спрашиваем.</p></div>
             <div class="gain-item"><span class="gain-num">✓</span><p>Важно одно: <b>карта работает</b>. Регион <b>США</b>, номинал в <b>USD ($)</b>, баланс полный и не тронутый. Всё остальное — детали, которые нас не касаются.</p></div>
-            <div class="gain-item"><span class="gain-num">₿</span><p>Сумма выплаты видна до создания заявки и не зависит от того, сколько вы заплатили за карту.</p></div>
+            <div class="gain-item"><span class="gain-num">₮</span><p>Сумма выплаты видна до создания заявки и не зависит от того, сколько вы заплатили за карту.</p></div>
           </div>
         </div>
         <div id="assetForm" class="hidden">
@@ -540,7 +548,7 @@
             <aside class="trade-steps" aria-label="Шаги обмена">
               <div class="trade-step active"><i>01</i><span>Выберите карту</span></div>
               <div class="trade-step"><i>02</i><span>Укажите данные и курс</span></div>
-              <div class="trade-step"><i>03</i><span>Получите Bitcoin</span></div>
+              <div class="trade-step"><i>03</i><span>Получите USDT</span></div>
             </aside>
             <div class="trade-main">
         <div id="giftForm" class="hidden">
@@ -551,8 +559,8 @@
             <div class="f-box" style="margin-top:10px"><div class="coin-ic ${esc(sell.coin)}" id="giftCardIcon">${coinInner(sell)}</div><input id="inUnits" type="number" inputmode="numeric" placeholder="10" min="${minUnits}" step="${step}" value="10"></div>
             <div class="f-hint">Номинал карты: от $${minUnits}, шаг $${step}</div>
             <div class="f-sep"><div class="arr">${ICONS.down}</div></div>
-            <div class="f-label"><span>Вы получите</span><span id="giftLimits"></span></div>
-            <div class="f-box"><div class="coin-ic btc">₿</div><input id="outBtc" type="text" readonly placeholder="—"></div>
+            <div class="f-label"><span>Вы получите · BEP-20</span><span id="giftLimits"></span></div>
+            <div class="f-box"><div class="coin-ic usdt">₮</div><input id="outPayout" type="text" readonly placeholder="—"></div>
             <div class="promo-wrap">
               <div class="promo-row">
                 <div class="f-box promo-box"><span class="promo-ic" aria-hidden="true">🏷</span><input id="inPromo" placeholder="Промокод (если есть)" maxlength="32" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off" value="${esc(S.appliedPromo ? S.appliedPromo.code : '')}"></div>
@@ -562,27 +570,28 @@
               <div class="f-err" id="promoErr"></div>
             </div>
             <div class="f-meta" id="giftMeta"></div>
-            <div class="info-note" style="margin-top:10px">⏱ На сделку даётся <b>1 час</b>: создайте заявку → <b>дождитесь оператора</b> → отправьте код <b>только после его запроса</b> — оператор проверит карту и выплатит BTC.</div>
+            <div class="info-note" style="margin-top:10px">⏱ На сделку даётся <b>1 час</b>: создайте заявку → <b>дождитесь оператора</b> → отправьте код <b>только после его запроса</b> — оператор проверит карту и выплатит USDT (BEP-20).</div>
           </div>
           <div class="card">
             <div class="card-title">Где взять карту</div>
             <div class="info-note" id="giftInfo">Где и по какому курсу вы купили карту — не важно. Мы не спрашиваем чек и цену покупки: важно, чтобы карта работала. Регион <b>США</b>, номинал в <b>USD</b>, полный неиспользованный баланс.</div>
             <div class="info-warn">⚠️ Проверьте регион карты: США, валюта номинала — <b>USD ($)</b>.</div>
-            <div class="info-note" style="margin-top:10px">🛡 <b>Минимальный цифровой след</b><br>Карту можно купить <b>за наличные</b> — она не привязана к банковскому счёту или паспорту. Мы не просим документы и регистрацию: только код карты и Bitcoin-адрес. Выплата приходит прямо на кошелёк — без банков, бирж и посредников. Меньше следов данных — спокойнее.</div>
+            <div class="info-note" style="margin-top:10px">🛡 <b>Минимальный цифровой след</b><br>Карту можно купить <b>за наличные</b> — она не привязана к банковскому счёту или паспорту. Мы не просим документы и регистрацию: только код карты и адрес для выплаты USDT. Выплата приходит прямо на кошелёк — без банков, бирж и посредников. Меньше следов данных — спокойнее.</div>
           </div>
           <div class="card">
-            <div class="card-title">Bitcoin-кошелёк для выплаты</div>
-            <div class="f-box"><div class="coin-ic btc">₿</div><input id="inBtcWallet" placeholder="bc1… / 1… / 3…" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
-            <div class="f-hint" id="giftBtcHint">Адрес Bitcoin-кошелька: bc1…, 1… или 3…</div>
+            <div class="card-title">Адрес для выплаты USDT (BEP-20)</div>
+            <div class="f-box"><div class="coin-ic usdt">₮</div><input id="inPayoutWallet" placeholder="0x…" aria-label="Адрес кошелька USDT (BEP-20)" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
+            <div class="f-hint" id="giftWalletHint">${esc(sell.walletHint)}</div>
             <div class="f-err" id="giftErr"></div>
           </div>
-          <button class="btn btn-primary" style="margin-top:14px" id="btnSell">${ICONS.bolt}<span>Сдать карту за BTC</span></button>
+          <button class="btn btn-primary" style="margin-top:14px" id="btnSell">${ICONS.bolt}<span>Сдать карту за USDT</span></button>
         </div>
             </div>
           </div>
         </div>
       </div>
       <div id="exOrder" class="${S.order ? '' : 'hidden'}"></div>
+      <section id="orderChat" class="card hidden" aria-label="Диалог сделки"></section>
     `;
 
     // Selection of a supported gift card in the bottom sheet.
@@ -636,7 +645,7 @@
         unitsInput.value = String(n);
         renderFormMeta();
       });
-      $('#inBtcWallet').addEventListener('input', renderFormMeta);
+      $('#inPayoutWallet').addEventListener('input', renderFormMeta);
       const promoInput = $('#inPromo');
       const promoBtn = $('#btnPromoApply');
       if (promoInput) {
@@ -716,7 +725,7 @@
     renderGiftMeta();
   }
 
-  // Gift card: nominal in $ → BTC payout at the current BTC/USD rate.
+  // Gift card: nominal in $ → USDT payout at the current USDT/USD rate.
   function renderGiftMeta() {
     const units = $('#inUnits');
     if (!units) return;
@@ -730,7 +739,7 @@
     const cardIcon = $('#giftCardIcon');
     if (cardIcon && dir) { cardIcon.className = 'coin-ic ' + dir.coin; cardIcon.innerHTML = coinInner(dir); }
     const nominal = Math.max(0, Math.floor((Number(units.value) || 0) / step) * step);
-    const wallet = ($('#inBtcWallet') && $('#inBtcWallet').value) || '';
+    const wallet = ($('#inPayoutWallet') && $('#inPayoutWallet').value) || '';
     const promo = S.appliedPromo;
     const promoExpired = promo && promo.expiresAt && Date.now() > Number(promo.expiresAt);
     const promoTooLow = promo && promo.minUnits && nominal > 0 && nominal < Number(promo.minUnits);
@@ -738,10 +747,10 @@
     const effectiveRate = promoActive ? applyPromoRate(rate, promo.percent) : rate;
     const basePayout = giftPayout(nominal, dir, 0);
     const payout = promoActive ? giftPayout(nominal, dir, promo.percent) : basePayout;
-    const bonus = promoActive && payout && basePayout ? Math.max(0, Math.round((payout - basePayout) * 1e8) / 1e8) : 0;
-    const out = $('#outBtc');
-    const amount = (v) => fmtCrypto(v, 'BTC', 8);
-    if (out) out.value = nominal && payout ? amount(payout) : '—';
+    const scale = 10 ** dir.payoutDecimals;
+    const bonus = promoActive && payout && basePayout ? Math.max(0, Math.round((payout - basePayout) * scale) / scale) : 0;
+    const out = $('#outPayout');
+    if (out) out.value = nominal && payout ? fmtUsdt(payout) : '—';
     const rule = $('#giftRule');
     if (rule) rule.textContent = `от $${minUnits} · шаг $${step}`;
     const info = $('#giftInfo');
@@ -749,7 +758,7 @@
     const limits = $('#giftLimits');
     if (limits) {
       limits.textContent = effectiveRate
-        ? `${fmtCrypto(effectiveRate, 'BTC', 8)} за $1 номинала`
+        ? `${fmtUsdt(effectiveRate)} за $1 номинала`
         : 'направление недоступно';
     }
     const promoBox = $('#promoApplied');
@@ -779,26 +788,26 @@
         promoBox.innerHTML = '';
       }
     }
-    const hint = $('#giftBtcHint');
+    const hint = $('#giftWalletHint');
     if (hint) {
       hint.textContent = wallet
         ? giftWalletValid(wallet)
-          ? `Выплата: ${payout ? amount(payout) : '—'} за $${nominal}`
-          : 'Проверьте Bitcoin-адрес: bc1…, 1… или 3…'
-        : 'Адрес Bitcoin-кошелька: bc1…, 1… или 3…';
+          ? `Выплата: ${payout ? fmtUsdt(payout) : '—'} в сети BEP-20 за карту на $${nominal}`
+          : dir.walletError
+        : dir.walletHint;
     }
     const meta = $('#giftMeta');
     if (meta) {
       meta.innerHTML = `
         <div class="row"><span>Номинал карты</span><b>$${nominal}</b></div>
-        <div class="row"><span>Курс карты</span><b>1 $ = ${effectiveRate ? fmtCrypto(effectiveRate, 'BTC', 8) : '—'}</b></div>
-        ${promoActive ? `<div class="row"><span>Промокод ${esc(promo.code)}</span><b class="meta-promo">+${promo.percent}%${bonus > 0 ? ` (+${amount(bonus)})` : ''}</b></div>` : ''}
-        <div class="row"><span>Выплата</span><b>${payout ? amount(payout) : '—'}</b></div>`;
+        <div class="row"><span>Курс карты</span><b>1 $ = ${effectiveRate ? fmtUsdt(effectiveRate) : '—'}</b></div>
+        ${promoActive ? `<div class="row"><span>Промокод ${esc(promo.code)}</span><b class="meta-promo">+${promo.percent}%${bonus > 0 ? ` (+${fmtUsdt(bonus)})` : ''}</b></div>` : ''}
+        <div class="row"><span>Выплата</span><b>${payout ? fmtUsdt(payout) : '—'}</b></div>`;
     }
     const btn = $('#btnSell');
     if (btn) {
       btn.disabled = !s.online || !rate;
-      btn.querySelector('span').textContent = s.online ? 'Сдать карту за BTC' : '⛔ Обмен временно недоступен';
+      btn.querySelector('span').textContent = s.online ? 'Сдать карту за USDT' : '⛔ Обмен временно недоступен';
     }
   }
 
@@ -871,11 +880,11 @@
     const step = Number(dir && dir.step) || 10;
     const minUnits = Number(dir && dir.minUnits) || step;
     const units = Math.floor((Number($('#inUnits').value) || 0) / step) * step;
-    const wallet = ($('#inBtcWallet').value || '').trim();
+    const wallet = ($('#inPayoutWallet').value || '').trim();
     if (!s.online) return (err.textContent = '⛔ Обмен временно недоступен — попробуйте позже.');
     if (!(Number(dir.rate) > 0)) return (err.textContent = 'Выкуп этой карты сейчас недоступен.');
     if (!units || units < minUnits) return (err.textContent = `Минимум $${minUnits}, шаг $${step}.`);
-    if (!giftWalletValid(wallet, dir)) return (err.textContent = 'Введите корректный Bitcoin-адрес: bc1…, 1… или 3….');
+    if (!giftWalletValid(wallet, dir)) return (err.textContent = dir.walletError);
     const typedPromo = ($('#inPromo') && $('#inPromo').value || '').trim().toUpperCase();
     if (typedPromo && (!S.appliedPromo || S.appliedPromo.code !== typedPromo)) {
       const ok = await applyPromoCode(true);
@@ -899,7 +908,7 @@
     const step = Number(dir && dir.step) || 10;
     const minUnits = Number(dir && dir.minUnits) || step;
     const units = Math.floor((Number($('#inUnits').value) || 0) / step) * step;
-    const wallet = ($('#inBtcWallet').value || '').trim();
+    const wallet = ($('#inPayoutWallet').value || '').trim();
     if (!s.online || !eligible(dir) || !giftWalletValid(wallet, dir) || !units || units < minUnits) {
       giftRulesClose();
       return renderGiftMeta();
@@ -911,7 +920,7 @@
       const promoCode = S.appliedPromo ? S.appliedPromo.code : '';
       const r = await api('/api/orders', {
         method: 'POST',
-        body: { units, wallet, currency: dir.currency, promoCode, startParam },
+        body: { units, wallet, currency: dir.currency, payoutCurrency: dir.payoutCurrency, network: dir.network, promoCode, startParam },
       });
       S.order = r.order;
       S.orders.unshift(r.order);
@@ -941,7 +950,7 @@
     return `<span class="chip" style="color:${m.color};background:${m.color}1a;border:1px solid ${m.color}55">${text}</span>`;
   }
 
-  // Gift order: the client gave the card code and awaits the BTC payout (legacy orders may still pay USDT).
+  // Gift orders keep the payout terms agreed at creation.
   const GIFT_KEYS = new Set(['GOOGLE_USD', 'ITUNES_USD', 'XBOX_USD', 'APPLE_STORE_USD']);
   const isGiftOrder = (o) => !!o && (o.direction === 'sell' || GIFT_KEYS.has(String(o.currency || '').toUpperCase()));
   const giftNominal = (o) => Number(o.units) || 0;
@@ -999,13 +1008,13 @@
       // Two-phase deal: wait until the operator joins the order.
       box.innerHTML = `
         <div class="card stage">
-          <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🤝</div></div>
+          <img class="stage-mascot" src="/mascot/wait.webp" width="64" height="64" alt="" decoding="async">
           ${chip('new', 'Ждём оператора')}
           <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
           ${promoBadge}
-          <div class="stage-title">Ждём подключения оператора</div>
-          <div class="stage-sub">Заявка <b>#${o.id}</b> передана оператору.<br>Обычно это несколько минут — <b>не закрывайте приложение</b>.</div>
-          <div class="note">${ttlText(o)}<br><b>Ничего не отправляйте и никому не сообщайте код карты</b>, пока оператор не подключится и не попросит его.</div>
+          <div class="stage-title">Заявка #${o.id} создана</div>
+          <div class="stage-sub"><b>Код и фото карты пока не отправляйте.</b><br>Дождитесь запроса оператора в этой заявке.</div>
+          <div class="note">${ttlText(o)}</div>
           <button class="btn btn-ghost" style="margin-top:14px" id="btnCancel">Отменить заявку</button>
         </div>`;
       $('#btnCancel').addEventListener('click', async () => { haptic('light'); await changeOrder(o, 'cancel'); });
@@ -1068,10 +1077,10 @@
     if (o.status === 'completed') {
       box.innerHTML = `
         <div class="card stage">
-          <svg class="okmark" viewBox="0 0 100 100"><circle cx="50" cy="50" r="41"/><path d="M32 51l13 13 24-27"/></svg>
-          <div class="stage-title">Карта принята — ${esc(giftCurrencyOf(o))} выплачен</div>
+          <img class="stage-mascot" src="/mascot/done.webp" width="64" height="64" alt="" decoding="async">
+          <div class="stage-title">Готово! Выплата отправлена</div>
           ${promoBadge}
-          <div class="stage-sub">${esc(giftLabelOf(o))} $${giftNominal(o)} → <b>${payout}</b><br>отправлены на ваш кошелёк. Спасибо, что выбрали Pricelex Worldwide ✦</div>
+          <div class="stage-sub">За ${esc(giftLabelOf(o))} на $${giftNominal(o)} отправлено <b>${payout}</b>.<br>Спасибо за обмен!</div>
           ${o.txUrl ? `
             <div class="tx-box">
               <div class="tx-label">🔗 Транзакция в блокчейне</div>
@@ -1119,12 +1128,13 @@
     const box = $('#exOrder');
     const o = S.order;
     if (!box) return;
+    orderChat.show($('#orderChat'), isGiftOrder(o) ? o.id : null, S.isDemo && S.me?.isAdmin);
     if (!o) { box.innerHTML = ''; return; }
     if (isGiftOrder(o) && renderGiftStage(o)) return;
     box.innerHTML = `
       <div class="card stage">
         <div class="stage-title">Эта заявка не поддерживается</div>
-        <div class="stage-sub">Pricelex Worldwide работает только с подарочными картами USD → BTC. Создайте новую заявку.</div>
+        <div class="stage-sub">Pricelex Worldwide работает только с подарочными картами USD → USDT (BEP-20). Создайте новую заявку.</div>
         <button class="btn btn-primary" style="margin-top:18px" id="btnNew">Новая заявка</button>
       </div>`;
     $('#btnNew').addEventListener('click', resetToForm);
@@ -1232,13 +1242,13 @@
         .map(
           (o) => `
         <div class="card h-item" data-order="${o.id}" role="button" tabindex="0">
-          <div class="h-ic ${esc(dirOfOrder(o).coin)}">${coinInner(dirOfOrder(o))}${o.network ? `<small>${esc(o.network === 'TRC20' ? 'TRC' : 'ERC')}</small>` : ''}</div>
+          <div class="h-ic ${esc(dirOfOrder(o).coin)}">${coinInner(dirOfOrder(o))}${!isGiftOrder(o) && o.network ? `<small>${esc(o.network)}</small>` : ''}</div>
           <div class="h-main">
             ${isGiftOrder(o)
-              ? `<div class="h-top"><span>${esc(giftLabelOf(o))} $${giftNominal(o)} → ${esc(giftCurrencyOf(o))}</span><span>${giftPayoutText(o)}</span></div>`
-              : `<div class="h-top"><span>${esc(dirLabel(o))} → BTC</span><span>${cryptoOf(o)}</span></div>`}
+              ? `<div class="h-top"><span>${esc(giftLabelOf(o))} $${giftNominal(o)}</span><span>${giftPayoutText(o)}</span></div>`
+              : `<div class="h-top"><span>${esc(dirLabel(o))}</span><span>${cryptoOf(o)}</span></div>`}
             <div class="h-sub"><span>#${o.id}${o.receipt ? ' 🧾' : ''}${o.txUrl ? ' 🔗' : ''}${o.promoCode ? ` · 🏷 ${esc(o.promoCode)}` : ''} · ${fmtDate(o.createdAt)}</span>${chip(o.status)}</div>
-            <div class="h-sub" style="margin-top:2px"><span>${esc(o.wallet.slice(0, 10) + '…' + o.wallet.slice(-6))}</span><b style="color:#9fd8ff">${cryptoOf(o)}</b></div>
+            <div class="h-sub" style="margin-top:2px"><span>${esc(o.wallet.slice(0, 10) + '…' + o.wallet.slice(-6))}</span></div>
             ${o.txUrl ? `<div class="h-sub" style="margin-top:6px"><a href="${esc(o.txUrl)}" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;word-break:break-all">🔗 ${esc(o.txUrl.slice(0,50))}…</a></div>` : ''}
             ${o.status === 'completed' ? `<div class="h-review">${o.reviewed ? `<span class="h-review-done">★ Вы оставили отзыв</span>` : `<button class="h-review-btn" data-review="${o.id}">★ Оставить отзыв</button>`}</div>` : ''}
           </div>
@@ -1413,7 +1423,7 @@
     S.reviewRating = 5;
     const line = $('#reviewOrderLine');
     if (line) {
-      line.innerHTML = `<b>${esc(giftLabelOf(o))}</b> $${esc(giftNominal(o))} → ${esc(giftCurrencyOf(o))}<span>заявка #${o.id}</span>`;
+      line.innerHTML = `<b>${esc(giftLabelOf(o))}</b> $${esc(giftNominal(o))} → ${esc(giftPayoutLabel(o))}<span>заявка #${o.id}</span>`;
     }
     renderStarInput($('#reviewStars'), S.reviewRating, (val) => { S.reviewRating = val; });
     const text = $('#reviewText');
@@ -1527,19 +1537,19 @@
     ['XBOX_USD', 'Xbox Gift Card', 'США · USD', 'xbox', BRAND_MARKS.xbox],
     ['APPLE_STORE_USD', 'Apple Store Gift Card', 'США · USD', 'apple', BRAND_MARKS.apple],
   ];
-  // У каждой карты своя скидка → свой курс. Предпросмотр считается из общего спота BTC/USD.
+  // У каждой карты своя скидка → свой курс. Предпросмотр считается из общего спота USDT/USD.
   const cardRateOf = (key, fee) => {
     const A = S.admin || {};
-    const btcUsd = Number(A.btcUsd) || 0;
-    if (!(btcUsd > 0)) return 0;
+    const usdtUsd = Number(A.usdtUsd) || 0;
+    if (!(usdtUsd > 0)) return 0;
     const p = Number(fee);
     const safe = Number.isFinite(p) ? Math.min(Math.max(p, 0), 50) : 0;
-    return (1 / btcUsd) * (1 - safe / 100);
+    return Math.round((1 / usdtUsd) * (1 - safe / 100) * 1e12) / 1e12;
   };
   const cardPreviewText = (key, fee) => {
     const rate = cardRateOf(key, fee);
-    const out = floorTo(10 * rate, 8);
-    return `Карта $10 → ${fmtCrypto(out, 'BTC', 8)}`;
+    const out = floorTo(10 * rate, USDT_DECIMALS);
+    return `Карта $10 → ${fmtUsdt(out)}`;
   };
   // Строка настроек курса для каждой карты: иконка, название, скидка %, итоговый курс и выплата за $10.
   function renderAdminFees() {
@@ -1550,7 +1560,7 @@
     const rates = A.cardRates || {};
     box.innerHTML = GIFT_DIR
       .map(([key, label, , coin, icon]) => `<div class="adm-fee-row" data-fee="${esc(key)}">
-        <div class="adm-fee-head"><span class="coin-ic ${esc(coin)} adm-coin" aria-hidden="true">${icon}</span><b>${esc(label)}</b><small>1 $ = ${Number(rates[key]) > 0 ? fmtCrypto(rates[key], 'BTC', 8) : '—'}</small></div>
+        <div class="adm-fee-head"><span class="coin-ic ${esc(coin)} adm-coin" aria-hidden="true">${icon}</span><b>${esc(label)}</b><small>1 $ = ${Number(rates[key]) > 0 ? fmtUsdt(rates[key]) : '—'}</small></div>
         <div class="f-box"><input type="number" inputmode="decimal" min="0" max="50" step="1" data-fee-input="${esc(key)}" value="${Number(fees[key]) || 0}" aria-label="Скидка для ${esc(label)}, %"></div>
         <div class="adm-fee-preview" data-fee-preview="${esc(key)}">${cardPreviewText(key, Number(fees[key]) || 0)}</div>
       </div>`)
@@ -1801,9 +1811,9 @@
       el.classList.add('hidden');
       return;
     }
-    const baseOut = floorTo(100 * sampleRate, 8);
-    const boostedOut = floorTo(100 * applyPromoRate(sampleRate, pct), 8);
-    el.textContent = `Пример для $100: +${pct}% → ${fmtCrypto(boostedOut, 'BTC', 8)} вместо ${fmtCrypto(baseOut, 'BTC', 8)}`;
+    const baseOut = floorTo(100 * sampleRate, USDT_DECIMALS);
+    const boostedOut = floorTo(100 * applyPromoRate(sampleRate, pct), USDT_DECIMALS);
+    el.textContent = `Пример для $100: +${pct}% → ${fmtUsdt(boostedOut)} вместо ${fmtUsdt(baseOut)}`;
     el.classList.remove('hidden');
   }
   function resetAdminPromoForm() {
@@ -2549,14 +2559,15 @@
       } else if (o.status === 'details' && isGiftOrder(o)) {
         toast('Оператор на связи — ждём код карты от клиента');
       } else if (!isGiftOrder(o)) {
-        toast('Поддерживаются только заявки «карта USD → BTC»');
+        toast('Поддерживаются только заявки «карта USD → USDT (BEP-20)»');
       } else if (o.status === 'paid') {
         const r = await api(`/api/admin/order/${o.id}/confirm`, { method: 'POST' });
         S.order = r.order;
         renderOrderStage();
         toast('Оператор подтвердил выплату (демо)');
       } else if (o.status === 'completed') {
-        const url = prompt('Ссылка на блокчейн (необязательно):', o.txUrl || 'https://blockchair.com/bitcoin/transaction/');
+        const hint = o.network === 'BEP20' ? ' (BscScan: https://bscscan.com/tx/0x…)' : '';
+        const url = prompt(`Ссылка на транзакцию${hint}:`, o.txUrl || '');
         if (url) {
           const r = await api(`/api/admin/order/${o.id}/tx`, { method: 'POST', body: { txUrl: url } });
           S.order = r.order;
@@ -2643,7 +2654,8 @@
 
   function startPolling() {
     const running = new Set();
-    const refresh = () => Promise.all([pollOrder, pollSettings, pollProfile, () => pollSupport(false)].map(async (poll) => {
+    const pollChat = () => S.tab === 'exchange' && orderChat.refresh();
+    const refresh = () => Promise.all([pollOrder, pollChat, pollSettings, pollProfile, () => pollSupport(false)].map(async (poll) => {
       if (typeof poll !== 'function') return;
       if (running.has(poll)) return;
       running.add(poll);

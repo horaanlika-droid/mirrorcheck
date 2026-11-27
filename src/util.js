@@ -1,7 +1,9 @@
+const currencies = require('./currencies');
+
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-// Crypto amount formatting; BTC payouts use eight decimal places.
+// Форматируем сумму без незначащих нулей.
 // dec overrides the automatic precision when the caller knows the asset precision.
 const fmtCrypto = (v, cur, dec) => {
   const n = Number(v) || 0;
@@ -9,6 +11,9 @@ const fmtCrypto = (v, cur, dec) => {
   const s = n.toFixed(d);
   return d === 0 ? s + ' ' + cur : s.replace(/\.?0+$/, '').replace(/\.$/, '') + ' ' + cur;
 };
+
+const fmtUsdt = (amount) => fmtCrypto(amount, currencies.PAYOUT_CURRENCY, currencies.PAYOUT_DECIMALS);
+const fmtOrderPayout = (o) => fmtCrypto(o.crypto, currencies.payoutLabelOf(o), currencies.payoutDecimals(currencies.payoutCurrencyOf(o)));
 
 const fmtDate = (ts) => {
   const d = new Date(ts);
@@ -39,4 +44,4 @@ const parseNum = (s) => {
   return isFinite(n) ? n : NaN;
 };
 
-module.exports = { esc, fmtCrypto, fmtDate, fmtSize, plural, parseNum };
+module.exports = { esc, fmtCrypto, fmtUsdt, fmtOrderPayout, fmtDate, fmtSize, plural, parseNum };

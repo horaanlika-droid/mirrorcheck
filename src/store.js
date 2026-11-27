@@ -2,15 +2,16 @@ const fs = require('fs');
 const path = require('path');
 const currencies = require('./currencies');
 const textCatalogue = require('./texts');
+const attachments = require('./attachments');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 const defaults = () => {
   const settings = {
-    // Прямой спот BTC/USD; выплата за карту считается без фиатной прослойки.
-    btcUsd: 100000, // запасной курс до первого обновления с бирж
-    // У каждой карты своя скидка к споту (%) и свой итоговый курс (BTC за $1 номинала).
+    // Цена 1 USDT в USD. До получения котировки используем паритет.
+    usdtUsd: 1,
+    // У каждой карты своя скидка к споту (%) и свой итоговый курс (USDT за $1 номинала).
     cardFees: Object.fromEntries(currencies.GIFT_KEYS.map((key) => [key, 0])),
     cardRates: {}, // заполняется ниже из спота и скидок
     enabled: {
@@ -64,9 +65,8 @@ function load() {
         db.reviewSeq = db.reviews.reduce((m, r) => Math.max(m, Number(r && r.id) || 0), 0) + 1;
       }
       if (!Array.isArray(db.orderMessages)) db.orderMessages = [];
-      if (!Number.isFinite(db.orderMsgSeq)) {
-        db.orderMsgSeq = db.orderMessages.reduce((m, m0) => Math.max(m, Number(m0 && m0.id) || 0), 0) + 1;
-      }
+      db.orderMsgSeq = Math.max(Number(raw.orderMsgSeq) || 1,
+        db.orderMessages.reduce((max, m) => Math.max(max, Number(m.id) || 0), 0) + 1);
       if (!Array.isArray(db.promos)) db.promos = [];
       if (!Number.isFinite(db.promoSeq)) {
         db.promoSeq = db.promos.reduce((m, p) => Math.max(m, Number(p && p.id) || 0), 0) + 1;
@@ -95,7 +95,14 @@ function load() {
           );
         }
       }
-      // Курс всегда выводится из спота и скидки конкретной карты.
+      // Не переносим абсолютные курсы и дату котировки другой валюты. Скидки
+      // безразмерны, их сохраняем. Суммы и кошельки открытых и старых заявок не меняем.
+      if (!currencies.usdtUsdQuote(rawSettings.usdtUsd)) {
+        s.usdtUsd = 1;
+        s.rateUpdatedAt = null;
+        s.rateSource = 'manual';
+      }
+      delete s.btcUsd;
       s.cardRates = currencies.allCardRates(s);
       delete s.giftPercent;
       delete s.rateGOOGLEUSD;
@@ -147,7 +154,7 @@ const mutate = (fn) => {
 
 function publicSettings() {
   const s = db.settings;
-  // The client only sees gift-card directions and the final BTC payout per $1 of face value.
+  // The client only sees gift-card directions and the final USDT payout per $1 of face value.
   return {
     texts: textCatalogue().filter((item) => Object.prototype.hasOwnProperty.call(s.textOverrides || {}, item.id)).map((item) => ({ text: item.text, value: s.textOverrides[item.id] })),
     rates: currencies.publicRates(s).map((r) => ({ ...r, rate: r.direction === 'sell' ? r.rate : null })),
@@ -214,10 +221,10 @@ function createOrder(o) {
       userId: o.userId,
       userName: o.userName || 'Клиент',
       userUsername: o.userUsername || null,
-      direction: 'sell', // gift card sale for BTC only
-      payoutCurrency: 'BTC',
+      direction: 'sell',
+      payoutCurrency: currencies.PAYOUT_CURRENCY,
       currency: o.currency || null, // gift-card currency/key (e.g. GOOGLE_USD)
-      network: o.network || null,   // always null for gift cards
+      network: currencies.PAYOUT_NETWORK, // fixed server-side; never supplied by the client
       expiresAt: o.expiresAt ?? null, // deal time limit (gift cards — 1 hour)
       paidAt: null, // when the client tapped "I paid"
       units: o.units ?? null, // gift card face value, $
@@ -335,7 +342,7 @@ function getSupportMessages(userId) {
 /* ---------- диалог по заявке: клиент ↔ оператор ---------- */
 // Диалог живёт внутри карточки заявки — от начала сделки (статус «new») до финала
 // («completed»/«rejected»/«cancelled»), так что клиент остаётся на связи всю сделку.
-function createOrderMessage({ orderId, userId, from, text }) {
+function createOrderMessage({ orderId, userId, from, text, attachment }) {
   return mutate((d) => {
     const msg = {
       id: d.orderMsgSeq++,
@@ -343,10 +350,16 @@ function createOrderMessage({ orderId, userId, from, text }) {
       userId: String(userId),
       from, // 'user' | 'admin'
       text: String(text || '').trim().slice(0, 2000),
+      ...(attachment ? { attachment } : {}),
       at: Date.now(),
     };
     d.orderMessages.push(msg);
-    if (d.orderMessages.length > 5000) d.orderMessages.splice(0, d.orderMessages.length - 5000);
+    if (d.orderMessages.length > 5000) {
+      for (const old of d.orderMessages.splice(0, d.orderMessages.length - 5000)) {
+        try { attachments.remove(old.attachment); }
+        catch { console.error('[store] не удалось удалить вложение сообщения', old.id); }
+      }
+    }
     return msg;
   });
 }

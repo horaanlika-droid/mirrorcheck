@@ -5,8 +5,10 @@ const bus = require('./bus');
 const admins = require('./admins');
 const rates = require('./rates');
 const receipts = require('./receipts');
+const attachments = require('./attachments');
+const orderChat = require('./orderchat');
 const currencies = require('./currencies');
-const { esc, fmtCrypto, fmtDate, fmtSize, parseNum } = require('./util');
+const { esc, fmtUsdt, fmtOrderPayout, fmtDate, fmtSize, parseNum } = require('./util');
 const clientbot = require('./clientbot');
 const widget = require('./widget');
 
@@ -26,7 +28,7 @@ const STATUS_LABEL = {
 
 const dirLabel = (o) => currencies.label(o.currency);
 const giftUnits = (o) => Number(o.units) || 0;
-const payoutText = (o) => fmtCrypto(o.crypto, 'BTC', 8);
+const payoutText = (o) => esc(fmtOrderPayout(o));
 
 function orderText(o) {
   const ref = o.referrer ? store.getUser(o.referrer) : null;
@@ -67,7 +69,7 @@ function orderKb(o) {
     // Оператор подключился — ждём код карты от клиента.
     kb.text('🔄 Обновить', `o:${o.id}`).text('❌ Отклонить', `o:${o.id}:reject`);
   } else if (o.status === 'paid') {
-    // Код прислан и клиент нажал «Я оплатил» → проверяем карту и выплачиваем BTC.
+    // Код прислан и клиент нажал «Я оплатил» → проверяем карту и выплачиваем сумму заявки.
     kb.text(`✅ Карта проверена — выплатить ${payoutText(o)}`, `o:${o.id}:confirm`)
       .row()
       .text('❌ Карта недействительна', `o:${o.id}:unpaid`);
@@ -80,7 +82,7 @@ function orderKb(o) {
     if (o.txUrl) kb.text('🔗 Ссылка на блокчейн', `o:${o.id}:tx`).row();
     kb.text(' К списку заявок', 'm:orders');
   }
-  return kb;
+  return kb.row().text('💬 Диалог сделки', `o:${o.id}:chat`);
 }
 
 const orderQueues = new Map();
@@ -130,7 +132,7 @@ async function broadcast(text, options = {}) {
 const CLIENTS_ANNOUNCE_OPEN =
   '🟢 <b>Pricelex Worldwide: приём карт открыт!</b>\n\n' +
   'Снова принимаем подарочные карты Google, iTunes, Xbox и Apple Store региона США в USD 🎁\n' +
-  'Выплата в BTC, без документов и регистрации — в приложении и в боте.';
+  'Выплата только в USDT (BEP-20), без документов и регистрации — в приложении и в боте.';
 
 async function announceToClients(text) {
   if (!bot) return { sent: 0, failed: 0 };
@@ -154,7 +156,7 @@ async function sendReceiptTo(adminId, o) {
   }
   try {
     await bot.api.sendDocument(adminId, new InputFile(file, `check-${o.id}.pdf`), {
-      caption: `🧾 Pricelex Worldwide · заявка #${o.id} · $${o.units || 0} → ${fmtCrypto(o.crypto, 'BTC', 8)} · ${o.receipt.name} (${fmtSize(o.receipt.size)})`,
+      caption: `🧾 Pricelex Worldwide · заявка #${o.id} · $${o.units || 0} → ${fmtOrderPayout(o)} · ${o.receipt.name} (${fmtSize(o.receipt.size)})`,
     });
     return true;
   } catch (e) {
@@ -218,6 +220,27 @@ async function onOrderEvent({ order, type }) {
     await sendOrUpdateOrderAdmin(order);
     await notifyClientTx(order);
   }
+}
+
+// The same order thread is used by the Mini App and both Telegram roles.
+async function onOrderMessage({ order, message }) {
+  const fromClient = message.from === 'user';
+  const recipients = fromClient ? admins.all() : [order.userId];
+  const reply = new InlineKeyboard().text('💬 Ответить в сделке', fromClient ? `o:${order.id}:chat` : `c:chat:${order.id}`);
+  const heading = `💬 Сделка #${order.id} · ${fromClient ? 'Клиент' : 'Оператор'}`;
+  const text = message.text ? `${heading}\n${message.text}` : heading;
+  await Promise.all(recipients.map(async (id) => {
+    try {
+      if (message.attachment) {
+        const file = message.attachment;
+        // A Telegram document caption is limited to 1024 characters.
+        await bot.api.sendDocument(id, new InputFile(attachments.filePath(file), file.name), {
+          caption: text.length <= 1024 ? text : heading, reply_markup: reply,
+        });
+      }
+      if (!message.attachment || text.length > 1024) await bot.api.sendMessage(id, text, { reply_markup: reply });
+    } catch { console.error('[bot] не доставлено сообщение сделки', order.id, message.id); }
+  }));
 }
 
 /* ---------- support chat ---------- */
@@ -301,12 +324,12 @@ async function supportThreadView(ctx, userId, edit = true) {
 
 /* ---------- меню ---------- */
 
-// Курсы включённых направлений — у каждой карты своя строка (BTC за $1 номинала).
+// Курсы включённых направлений — у каждой карты своя строка (USDT за $1 номинала).
 function rateLine(s) {
   return currencies
     .list()
     .filter((p) => currencies.isEnabled(s, p.key) && currencies.rateOf(s, p.currency) > 0)
-    .map((p) => `${p.symbol} ${p.label.replace(' Gift Card', '')}: 1 $ = ${fmtCrypto(currencies.rateOf(s, p.currency), 'BTC', 8)}`)
+    .map((p) => `${p.symbol} ${p.label.replace(' Gift Card', '')}: 1 $ = ${fmtUsdt(currencies.rateOf(s, p.currency))}`)
     .join('\n');
 }
 
@@ -327,7 +350,7 @@ async function mainMenu(ctx, edit = false) {
     '🌌 <b>Pricelex Worldwide | Official</b> — пульт оператора',
     s.online ? '🟢 Обменник <b>ОНЛАЙН</b>' : '🔴 Обменник <b>ОФФЛАЙН</b>',
     rateLine(s),
-    s.rateUpdatedAt ? 'Официальный курс от ' + fmtDate(s.rateUpdatedAt) + ' (' + esc(s.rateSource || '?') + ')' : 'ещё не подтянут — действует сохранённая цена BTC/USD',
+    s.rateUpdatedAt ? 'Официальный курс от ' + fmtDate(s.rateUpdatedAt) + ' (' + esc(s.rateSource || '?') + ')' : 'ещё не подтянут — действует сохранённая цена USDT/USD',
     'Активных заявок: ' + active + ' · 💬 Чатов: ' + supportCount,
   ].join('\n');
   if (edit) await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
@@ -367,7 +390,7 @@ function settingsKb(s) {
   // Отдельная кнопка скидки/курса на каждый бренд: меняем один — остальные не трогаем.
   for (const p of currencies.list()) {
     const short = p.label.replace(' Gift Card', '');
-    kb.row().text(`💱 ${short}: скидка ${currencies.feeOf(s, p.key)}% · ${fmtCrypto(currencies.rateOf(s, p.currency) || 0, 'BTC', 8)}`, `s:fee_${p.key}`);
+    kb.row().text(`💱 ${short}: скидка ${currencies.feeOf(s, p.key)}% · ${fmtUsdt(currencies.rateOf(s, p.currency) || 0)}`, `s:fee_${p.key}`);
   }
   return kb
     .row()
@@ -385,16 +408,16 @@ function settingsKb(s) {
 }
 
 function settingsText(s) {
-  const base = Number(s.btcUsd) > 0 ? `$${Number(s.btcUsd).toLocaleString('en-US', { maximumFractionDigits: 2 })} за BTC` : 'ещё не подтянут';
+  const base = Number(s.usdtUsd) > 0 ? `$${Number(s.usdtUsd).toLocaleString('ru-RU', { maximumFractionDigits: 8 })} за USDT` : 'ещё не подтянут';
   const cards = currencies.list().map((p) => {
     const rate = currencies.rateOf(s, p.currency);
     const example = currencies.giftPayout(s, 10, p.currency);
-    return `• ${esc(p.label)}: <b>1 $ = ${rate ? fmtCrypto(rate, 'BTC', 8) : '—'}</b> ` +
-      `(скидка ${currencies.feeOf(s, p.key)}% · $10 = ${example ? fmtCrypto(example.crypto, 'BTC', 8) : '—'}) ${currencies.isEnabled(s, p.key) ? '✅' : '⛔'}`;
+    return `• ${esc(p.label)}: <b>1 $ = ${rate ? fmtUsdt(rate) : '—'}</b> ` +
+      `(скидка ${currencies.feeOf(s, p.key)}% · $10 = ${example ? fmtUsdt(example.crypto) : '—'}) ${currencies.isEnabled(s, p.key) ? '✅' : '⛔'}`;
   }).join('\n');
   return (
     `⚙️ <b>Настройки</b> (применяются мгновенно)\n\n` +
-    `📊 Спотовый курс BTC/USD: <b>${base}</b>\n` +
+    `📊 Выплата: <b>USDT (BEP-20)</b>\nСпотовый курс USDT/USD: <b>${base}</b>\n` +
     (s.rateUpdatedAt ? `Обновлён: ${fmtDate(s.rateUpdatedAt)} (${esc(s.rateSource || '?')})\n` : '') +
     `\n🎁 <b>Курс каждой карты — отдельный:</b>\n${cards}\n` +
     `\n🎁 Реферальный процент: <b>${s.refPercent}%</b>\n` +
@@ -449,7 +472,7 @@ const SET_FIELDS = {
 // Скидка (а значит и курс) настраивается для КАЖДОЙ карты отдельно.
 for (const p of currencies.list()) {
   SET_FIELDS[`fee_${p.key}`] = {
-    label: `скидку для ${p.label} в % от BTC-эквивалента номинала (0–50; курс этой карты пересчитается, остальные не изменятся)`,
+    label: `скидку для ${p.label} в % от USDT-эквивалента номинала (0–50; курс этой карты пересчитается, остальные не изменятся)`,
     num: true,
     discount: true,
     feeKey: p.key,
@@ -457,9 +480,10 @@ for (const p of currencies.list()) {
 }
 
 async function txPrompt(ctx, o) {
+  const example = o.network === currencies.PAYOUT_NETWORK ? ' (например, https://bscscan.com/tx/0x…)' : '';
   flows.set(ctx.from.id, { type: 'tx', orderId: o.id, version: o.version || 0 });
   return ctx.reply(
-    `🔗 Заявка #${o.id} — отправьте ссылку на транзакцию в блокчейне (например https://blockchair.com/bitcoin/transaction/…).\n\nСсылка появится у клиента в завершённой заявке. Это опционально — можно оставить пустым, отправив /cancel.\n\nТекущая: ${o.txUrl ? esc(o.txUrl) : '— нет —'}\n/cancel — отмена`,
+    `🔗 Заявка #${o.id} — отправьте ссылку на транзакцию в блокчейне${example}.\n\nСсылка появится у клиента в завершённой заявке. Это опционально — можно оставить пустым, отправив /cancel.\n\nТекущая: ${o.txUrl ? esc(o.txUrl) : '— нет —'}\n/cancel — отмена`,
     { parse_mode: 'HTML' }
   );
 }
@@ -473,6 +497,12 @@ async function supportReplyPrompt(ctx, userId) {
   );
 }
 
+async function receiveAdminChat(ctx, id) {
+  const order = store.getOrder(id);
+  if (!order) return ctx.reply('Заявка не найдена.');
+  return orderChat.receiveTelegram(ctx, order, 'admin');
+}
+
 async function handleAdminText(ctx) {
   const f = flows.get(ctx.from.id);
   if (!f) return ctx.reply('Выберите заявку через /menu, затем нажмите «🤝 Подключить» или откройте чат поддержки.');
@@ -481,6 +511,7 @@ async function handleAdminText(ctx) {
     flows.delete(ctx.from.id);
     return ctx.reply('❌ Ввод отменён.', { reply_markup: homeKb() });
   }
+  if (f.type === 'order_chat') return receiveAdminChat(ctx, f.orderId);
   if (f.type === 'support') {
     if (!text || text.length > 2000) return ctx.reply('Сообщение должно содержать от 1 до 2000 символов.');
     flows.delete(ctx.from.id);
@@ -502,7 +533,7 @@ async function handleAdminText(ctx) {
         return ctx.reply('Ссылку на блокчейн можно добавить только после подтверждения оплаты (статус «Завершена»).', { reply_markup: homeKb() });
       }
       if (!/^https?:\/\/.{4,800}$/i.test(text)) {
-        return ctx.reply('Пришлите корректную ссылку, начинающуюся с https:// (до 800 символов). Пример: https://blockchair.com/bitcoin/transaction/abc…');
+        return ctx.reply('Пришлите корректную ссылку, начинающуюся с https:// (до 800 символов).');
       }
       flows.delete(ctx.from.id);
       const upd = store.updateOrder(o.id, { txUrl: text });
@@ -517,7 +548,7 @@ async function handleAdminText(ctx) {
         const n = parseNum(text);
         if (!isFinite(n) || n < 0 || n > 50) {
           return ctx.reply(field.discount
-            ? 'Скидка карты — число от 0 до 50 %. Она удерживается из BTC-эквивалента номинала (например, 15 = минус 15% от выплаты). Курс меняется только у выбранной карты.'
+            ? 'Скидка карты — число от 0 до 50 %. Она удерживается из USDT-эквивалента номинала (например, 15 = минус 15% от выплаты). Курс меняется только у выбранной карты.'
             : 'Процент — число от 0 до 50. Пример: 2');
         }
         store.mutate((db) => {
@@ -624,6 +655,8 @@ function register() {
       return ctx.answerCallbackQuery({ text: '⛔️' }).catch(() => {});
     }
     await ctx.answerCallbackQuery().catch(() => {});
+    const file = d.match(/^o:file:(\d+):(\d+)$/);
+    if (file) return orderChat.sendFile(ctx, store.getOrder(Number(file[1])), Number(file[2]));
     flows.delete(ctx.from.id);
 
     if (d === 'm:home') return mainMenu(ctx, true);
@@ -699,6 +732,10 @@ function register() {
       if (!act) {
         return ctx.editMessageText(orderText(o), { parse_mode: 'HTML', reply_markup: orderKb(o) }).catch(() => {});
       }
+      if (act === 'chat') {
+        flows.set(ctx.from.id, { type: 'order_chat', orderId: id });
+        return orderChat.openTelegram(ctx, o, 'admin');
+      }
       if (act === 'receipt') {
         if (!o.receipt) return ctx.reply('Чек по этой заявке не прикреплён.');
         await sendReceiptTo(ctx.from.id, o);
@@ -751,11 +788,12 @@ function register() {
     await handleAdminText(ctx);
   });
 
-  bot.on('message:document', async (ctx) => {
-    if (!isAdmin(ctx)) {
-      if (ctx.chat?.type !== 'private') return;
-      return clientbot.handleClientDocument(ctx, bot);
-    }
+  bot.on(['message:document', 'message:photo'], async (ctx) => {
+    if (ctx.chat?.type !== 'private') return;
+    if (!isAdmin(ctx)) return clientbot.handleClientDocument(ctx);
+    const flow = flows.get(ctx.from.id);
+    if (flow?.type === 'order_chat') return receiveAdminChat(ctx, flow.orderId);
+    return ctx.reply('Чтобы отправить вложение, откройте нужную заявку и нажмите «💬 Диалог сделки».');
   });
 }
 
@@ -765,6 +803,7 @@ function createBot(options = {}) {
   bot = new Bot(config.botToken, { client: { timeoutSeconds: 15 }, ...options });
   register();
   bus.on('order_event', onOrderEvent);
+  bus.on('order_message', onOrderMessage);
   bus.on('support_message', onSupportMessage);
   bus.on('announce', ({ text }) => announceToClients(text));
   return bot;

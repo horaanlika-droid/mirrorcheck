@@ -147,7 +147,6 @@ body {
   display: flex; align-items: center; justify-content: center;
   font-weight: 800; font-size: 15px;
 }
-.coin-ic.btc { background: linear-gradient(140deg, #00dccb, #8edfeb); color: #031014; }
 .coin-ic.ltc { background: linear-gradient(140deg, #d7dee8, #8fa1b8); color: #fff; }
 .coin-ic.usdt { background: linear-gradient(140deg, #3fe0b0, #009393); color: #fff; }
 .coin-ic.google { background: #ffffff; color: transparent; font-size: 0; box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08); }
@@ -289,11 +288,8 @@ input[readonly] { color: #9fe8d6 !important; }
 .file-name { font-size: 12px; color: var(--mut); text-align: center; word-break: break-all; line-height: 1.5; }
 .file-name.ok { color: var(--ok); font-weight: 700; }
 
-/* ---------- success ---------- */
-.okmark { width: 64px; height: 64px; margin: 0 auto 16px; display: block; }
-.okmark circle { stroke: var(--ok); stroke-width: 2.5; fill: rgba(127, 176, 155, 0.08); stroke-dasharray: 260; stroke-dashoffset: 260; animation: draw 0.9s ease forwards; }
-.okmark path { stroke: var(--ok); stroke-width: 4; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 60; stroke-dashoffset: 60; animation: draw 0.5s 0.55s ease forwards; }
-@keyframes draw { to { stroke-dashoffset: 0; } }
+/* The mascot replaces a status illustration; instructions always remain text. */
+.stage-mascot { display: block; width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 50%; border: 1px solid var(--line); }
 
 /* ---------- history ---------- */
 .h-item { display: flex; align-items: center; gap: 12px; padding: 13px 14px; }
@@ -440,6 +436,15 @@ input[readonly] { color: #9fe8d6 !important; }
 .chat-input textarea::placeholder { color: #52717e; }
 .chat-input .btn { width: 38px; height: 38px; padding: 0; border-radius: 11px; flex: none; }
 
+#orderChat { margin-top: 14px; }
+#orderChat textarea { min-width: 0; }
+#orderChat .f-hint { margin-top: 6px; }
+.deal-picked, .deal-role { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; }
+.deal-picked[hidden] { display: none; }
+.deal-picked span { overflow-wrap: anywhere; }
+.deal-picked button, .deal-download { border: 0; background: transparent; color: inherit; cursor: pointer; }
+.deal-download { display: block; max-width: 100%; padding: 4px 0; font: inherit; text-align: left; overflow-wrap: anywhere; text-decoration: underline; }
+
 .view { animation: fadein .28s ease; }
 @keyframes fadein { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
 
@@ -461,7 +466,6 @@ input[readonly] { color: #9fe8d6 !important; }
 }
 .group-card:active { transform: scale(0.98); border-color: rgba(0, 220, 203, 0.4); }
 .group-card .group-ic { width: 40px; height: 40px; font-size: 19px; border-radius: 12px; }
-.group-card .group-ic.btc { font-size: 24px; }
 .group-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .group-text b { font-size: 15.5px; font-weight: 800; letter-spacing: .01em; }
 .group-text i { font-style: normal; font-size: 11px; color: var(--mut); }
@@ -775,7 +779,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 .hero-footnote b { color:var(--teal); }
 .hero-visual { position:relative; width:min(100%,410px); aspect-ratio:1.13; margin:0 auto; display:grid; place-items:center; isolation:isolate; }
 .hero-aura { position:absolute; width:70%; height:70%; border-radius:50%; background:radial-gradient(circle,rgba(0,220,203,.17),rgba(0,220,203,.05) 40%,transparent 73%); filter:blur(5px); }
-.hero-core { position:absolute; z-index:2; width:104px; height:104px; display:grid; place-items:center; border-radius:50%; color:#8edfeb; font:400 70px/1 'Inter',sans-serif; background:radial-gradient(circle at 35% 28%,rgba(142,223,235,.2),rgba(9,12,14,.84) 70%); border:1px solid rgba(142,223,235,.38); box-shadow:0 0 45px rgba(0,220,203,.22),inset 0 0 22px rgba(142,223,235,.12); text-shadow:0 0 26px rgba(0,220,203,.6); }
+.hero-core { position:absolute; z-index:2; width:144px; height:144px; border-radius:50%; border:1px solid rgba(142,223,235,.42); box-shadow:0 0 32px rgba(0,220,203,.16); object-fit:cover; }
 .hero-orbit { position:absolute; width:88%; height:42%; border:1px solid rgba(0,220,203,.42); border-radius:50%; transform:rotate(-18deg); box-shadow:0 0 14px rgba(0,220,203,.08); }
 .hero-orbit::after { content:''; position:absolute; left:18%; top:-4px; width:7px; height:7px; border-radius:50%; background:#8edfeb; box-shadow:0 0 15px 4px rgba(0,220,203,.62); }
 .orbit-two { width:76%; height:57%; transform:rotate(35deg); border-color:rgba(142,223,235,.25); }
@@ -808,11 +812,12 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 .trust-icon { grid-row:span 2; color:var(--teal); font-size:20px; line-height:1; text-shadow:0 0 16px rgba(0,220,203,.42); }
 .trust-item b { color:#e6f2f5; font-size:10px; font-weight:600; }
 .trust-item small { margin-top:4px; color:#8299a9; font-size:9px; line-height:1.35; }
-.telegram-cta { position:relative; display:flex; align-items:center; justify-content:space-between; margin:23px 0 18px; padding:15px 20px; overflow:hidden; border:1px solid rgba(0,220,203,.32); border-radius:22px; background:linear-gradient(100deg,rgba(10,13,15,.96),rgba(5,7,8,.9)); box-shadow:inset 0 0 28px rgba(0,220,203,.06); }
-.telegram-cta b,.telegram-cta small { display:block; }
-.telegram-cta b { color:#eaf8fa; font-size:13px; font-weight:500; }
-.telegram-cta small { margin-top:4px; color:#8299a9; font-size:10px; }
-.telegram-cta-mark { display:grid; place-items:center; width:34px; height:34px; border:1px solid rgba(142,223,235,.36); border-radius:50%; color:#8edfeb; font-size:18px; }
+.exchange-steps { margin: 16px 0; padding: 0 16px; border: 1px solid var(--line); border-radius: 16px; background: rgba(9,12,14,.72); }
+.exchange-steps summary { padding: 13px 0; color: #d6ecf0; font-size: 13px; cursor: pointer; }
+.exchange-steps summary::marker, .exchange-steps li::marker { color: var(--teal); }
+.exchange-steps summary:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.exchange-steps ol { padding: 0 0 14px 20px; margin: 0; color: #a9bdc7; font-size: 12px; line-height: 1.55; }
+.exchange-steps li + li { margin-top: 4px; }
 
 /* ---------- footnote: accepting gift-card payments ---------- */
 .gain-note {
@@ -856,7 +861,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
   .hero-copy h1 { font-size:clamp(31px,9vw,43px); }
   .hero-copy p { max-width:360px; font-size:12px; }
   .hero-visual { width:min(86%,320px); margin:-5px auto -6px; }
-  .hero-core { width:76px; height:76px; font-size:52px; }
+  .hero-core { width:104px; height:104px; }
   .hero-token { width:40px; height:40px; border-radius:13px; }
   .hero-token .coin-ic { width:25px; height:25px; }
   .supported-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }

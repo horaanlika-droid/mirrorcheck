@@ -17,6 +17,7 @@ const zlib = require('zlib');
 const config = require('./config');
 const store = require('./store');
 const currencies = require('./currencies');
+const { fmtOrderPayout } = require('./util');
 
 // Test injection point: defaults to the global fetch.
 let fetchImpl = (...args) => globalThis.fetch(...args);
@@ -74,14 +75,15 @@ const GRP =
 
 // chatData is passed to and parsed by the widget at runtime (TelegramWidget.chatData → JSON.parse),
 // so all inner JS is static — no substitutions at build time.
-// Виджет курсов: у каждой карты своя строка со своим курсом (BTC за $1 номинала).
+// Виджет курсов: у каждой карты своя строка со своим курсом (USDT за $1 номинала).
 const ratesHtml = () => `<!doctype html><meta charset="utf-8"><style>${SHELL_CSS}</style>
 <div class="c"><div class="h">✦ Pricelex Worldwide · КУРСЫ КАРТ</div><div id="r"></div>
 <button class="bt" id="ex">💱 Сдать карту</button></div>
 <script>var W=window.TelegramWidget,d={};try{d=JSON.parse(W.chatData||"{}" )}catch(e){}
-var rows=(d.r||[]).map(function(x){return '<div class="r"><span>🎁 '+x[0]+'</span><b>'+(x[2]?('1 $ = '+(Number(x[1])||0).toFixed(8)+' BTC'):'недоступна')+'</b></div>'}).join('');
+var rows=(d.r||[]).map(function(x){return '<div class="r"><span>🎁 '+x[0]+'</span><b>'+(x[2]?('1 $ = '+Number((Number(x[1])||0).toFixed(${currencies.PAYOUT_DECIMALS}))+' USDT'):'недоступна')+'</b></div>'}).join('');
 document.getElementById("r").innerHTML=rows+
 '<div class="r"><span>Регион / валюта</span><b>США · USD</b></div>'+
+'<div class="r"><span>Выплата</span><b>USDT (BEP-20)</b></div>'+
 '<div class="s">'+(d.on?"🟢 Приём заявок открыт":"🔴 Приём заявок закрыт")+'</div>';
 document.getElementById("ex").addEventListener("click",function(){W.request("ex")});</script>`;
 
@@ -89,17 +91,19 @@ const orderHtml = () => `<!doctype html><meta charset="utf-8"><style>${SHELL_CSS
 <div class="c"><div class="h">✦ Pricelex Worldwide · ЗАЯВКА <span id="i"></span></div>
 <div class="st" id="st"></div><div class="s" id="sub"></div>
 <button class="bt" id="paid">✅ Я оплатил</button>
+<button class="bt w" id="chat">💬 Диалог сделки</button>
 <button class="bt w" id="ref">🔄 Обновить</button>
 <button class="bt w" id="cancel">❌ Отменить заявку</button></div>
 <script>var W=window.TelegramWidget,d={};try{d=JSON.parse(W.chatData||"{}" )}catch(e){}
 var L={new:"🕐 Ждём оператора",details:"🤝 Ждём код карты",paid:"⏳ Карта на проверке",completed:"🟢 Завершена",rejected:"🔴 Отклонена",cancelled:"⚪ Отменена"};
 document.getElementById("i").textContent="#" + (d.id || "");
 document.getElementById("st").textContent = L[d.st] || d.st || "";
-document.getElementById("sub").textContent = "$" + (d.un || 0) + " → " + (d.cr || 0) + " BTC";
+document.getElementById("sub").textContent = "$" + (d.un || 0) + " → " + (d.payout || "—");
 var p = document.getElementById("paid");
 var canPaid = d.st === "new" && d.gc === 1;
 if (!canPaid) { p.style.display = "none" }
 p.addEventListener("click", function(){ W.request("paid:" + d.id) });
+document.getElementById("chat").addEventListener("click", function(){ W.request("chat:" + d.id) });
 document.getElementById("ref").addEventListener("click", function(){ W.request("ref:" + d.id) });
 document.getElementById("cancel").addEventListener("click", function(){ W.request("cancel:" + d.id) });</script>`;
 
@@ -157,11 +161,11 @@ async function handleWidgetQuery(ctx, wq, clientbot) {
     return apiCall('editMessageWidgetData', { chat_id: chatId, message_id: messageId, chat_data: JSON.stringify(fresh) })
       .catch((e) => console.error('[widget] edit:', e.message)); // "not modified" is fine too
   };
-  const sendMenuShim = () => clientbot.sendClientMenu({
+  const clientContext = {
     chat: { id: chatId, type: 'private' },
     from: { id: from.id, first_name: from.first_name, username: from.username },
-    reply: (text, opts) => ctx.reply(text, opts),
-  });
+    reply: (text, opts) => ctx.api.sendMessage(chatId, text, opts),
+  };
   const loadOwn = (id) => {
     const o = store.getOrder(id);
     return o && String(o.userId) === userId ? store.expireIfNeeded(o) || o : null;
@@ -173,8 +177,12 @@ async function handleWidgetQuery(ctx, wq, clientbot) {
     if (qType && qType !== 'data') {
       answer = { ok: 0, e: 'unsupported_type' };
     } else if (data === 'ex') {
-      await sendMenuShim();
+      await clientbot.sendClientMenu(clientContext);
       answer = { ok: 1 };
+    } else if (data.startsWith('chat:')) {
+      // The reply prompt and any subsequent attachments belong in a private chat.
+      if (String(chatId) !== userId) answer = { ok: 0, e: 'not_allowed' };
+      else await clientbot.openOrderChat(clientContext, Number(data.slice(5)));
     } else if (data.startsWith('paid:')) {
       const res = await clientbot.clientPaidWidget({ from }, Number(data.slice(5)));
       fresh = res && res.order ? orderChatData(res.order) : null;
@@ -217,7 +225,7 @@ module.exports = {
 
 function ratesChatData() {
   const s = store.get().settings;
-  // [название, курс BTC за $1, доступна] для каждой карты отдельно.
+  // [название, курс USDT за $1, доступна] для каждой карты отдельно.
   return {
     r: currencies.list().map((p) => [
       p.label.replace(' Gift Card', ''),
@@ -233,7 +241,8 @@ function orderChatData(o) {
     id: o.id,
     st: o.status,
     un: Number(o.units) || 0,
-    cr: Number(o.crypto) || 0,
+    cr: Number(o.crypto) || 0, // для виджетов, отправленных до смены валюты
+    payout: fmtOrderPayout(o),
     gc: o.giftCode ? 1 : 0,
   };
 }
