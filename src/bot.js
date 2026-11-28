@@ -66,6 +66,75 @@ function orderText(o) {
   );
 }
 
+// Завершение сделки: оператор проверил карту и выплатил клиенту валюту.
+// Используется и из карточки заявки, и прямо из диалога сделки.
+const CONFIRM_PROMPT = 'confirm';
+
+async function completeOrder(ctx, id) {
+  const o = store.getOrder(id);
+  if (!o) return ctx.reply('Заявка не найдена.', { reply_markup: homeKb() });
+  if (o.status === 'completed') {
+    return ctx.reply(`✅ Заявка #${o.id} уже завершена — выплата ${payoutText(o)} на кошелёк:\n👛 <code>${esc(o.wallet)}</code>`, {
+      parse_mode: 'HTML',
+      reply_markup: new InlineKeyboard().text('🔗 Ссылка на блокчейн', `o:${o.id}:tx`),
+    });
+  }
+  if (o.status !== 'paid') {
+    return ctx.reply(
+      `⚠️ Заявку #${o.id} нельзя завершить: статус «${STATUS_LABEL[o.status] || o.status}».\n` +
+      'Выплата доступна после того, как клиент пришлёт код карты и нажмёт «Я оплатил».',
+      { parse_mode: 'HTML', reply_markup: orderKb(o) }
+    );
+  }
+  // Деньги нельзя выдать дважды: статус меняется атомарно с проверкой.
+  const fresh = store.getOrder(o.id);
+  if (!fresh || fresh.status !== 'paid') {
+    return ctx.reply('Статус заявки уже изменился — откройте её заново.', { reply_markup: homeKb() });
+  }
+  const upd = store.updateOrder(o.id, { status: 'completed', completedAt: Date.now() });
+  await sendOrUpdateOrderAdmin(upd);
+  // Клиенту в Telegram — отдельное сообщение о выплате; веб-клиенту — статус в приложении.
+  await notifyClientCompleted(upd);
+  return ctx.reply(
+    `📨 <b>Заявка #${upd.id} завершена — валюта выдана.</b>\n` +
+    `🎁 Карта ${dirLabel(upd)} на ${giftUnits(upd)} проверена.\n` +
+    `💸 Выплачено: <b>${payoutText(upd)}</b>\n` +
+    `👛 Кошелёк клиента: <code>${esc(upd.wallet)}</code>\n\n` +
+    '💡 Опционально добавьте ссылку на блокчейн-транзакцию — клиент увидит её в заявке.',
+    {
+      parse_mode: 'HTML',
+      reply_markup: new InlineKeyboard()
+        .text('🔗 Добавить ссылку на блокчейн', `o:${upd.id}:tx`)
+        .row()
+        .text('💬 Вернуться в диалог', `o:${upd.id}:chat`)
+        .text('📥 К заявкам', 'm:orders'),
+    }
+  );
+}
+
+// Подпись кнопки «выдать» в диалоге: сумма и сеть выплаты.
+function orderChatPayout(o) {
+  return `${fmtOrderPayout(o)} · ${currencies.payoutLabelOf(o)}`;
+}
+
+async function notifyClientCompleted(o) {
+  if (!telegramChatId(o.userId)) return false;
+  try {
+    await bot.api.sendMessage(
+      o.userId,
+      `✅ <b>Заявка #${o.id} завершена.</b>\n\n` +
+      `Оператор проверил карту ${esc(dirLabel(o))} на ${giftUnits(o)}.\n` +
+      `💸 Выплата <b>${payoutText(o)}</b> отправлена на ваш кошелёк:\n<code>${esc(o.wallet)}</code>\n\n` +
+      'Спасибо за обмен! Отзыв можно оставить в приложении или через /menu → ⭐ Отзывы.',
+      { parse_mode: 'HTML' }
+    );
+    return true;
+  } catch (e) {
+    console.error(`[bot] completed → client ${o.userId}:`, e.message);
+    return false;
+  }
+}
+
 function orderKb(o) {
   const kb = new InlineKeyboard();
   if (o.status === 'new') {
@@ -77,7 +146,7 @@ function orderKb(o) {
     kb.text('🔄 Обновить', `o:${o.id}`).text('❌ Отклонить', `o:${o.id}:reject`);
   } else if (o.status === 'paid') {
     // Код прислан и клиент нажал «Я оплатил» → проверяем карту и выплачиваем сумму заявки.
-    kb.text(`✅ Карта проверена — выплатить ${payoutText(o)}`, `o:${o.id}:confirm`)
+    kb.text(`✅ Проверено — выдать ${payoutText(o)}`, `o:${o.id}:confirm`)
       .row()
       .text('❌ Карта недействительна', `o:${o.id}:unpaid`);
   } else if (o.status === 'completed') {
@@ -875,7 +944,16 @@ function register() {
       }
       if (act === 'chat') {
         flows.set(ctx.from.id, { type: 'order_chat', orderId: id });
-        return orderChat.openTelegram(ctx, o, 'admin');
+        return orderChat.openTelegram(ctx, o, 'admin', { payout: orderChatPayout(o) });
+      }
+      // Завершение сделки доступно из любого статуса: completeOrder сам объяснит,
+      // почему нельзя (не оплачено) или что уже выдано (идемпотентность).
+      // Обе кнопки выдачи ведут в один обработчик: из диалога — сразу,
+      // из карточки — после подтверждения суммы (состояние проверяется внутри).
+      if (act === 'paid_yes') return completeOrder(ctx, id);
+      if (act === 'confirm' && o.status !== 'paid') {
+        // Нечего подтверждать: completeOrder объяснит причину (ждём код/уже выдано).
+        return completeOrder(ctx, id);
       }
       if (act === 'receipt') {
         if (!o.receipt) return ctx.reply('Чек по этой заявке не прикреплён.');
@@ -907,16 +985,21 @@ function register() {
         return sendOrUpdateOrderAdmin(upd);
       }
       if (act === 'confirm') {
-        const upd = store.updateOrder(id, { status: 'completed' });
-        await sendOrUpdateOrderAdmin(upd);
-        await ctx.reply(
-          `📨 <b>Заявка #${id} завершена.</b>\n` +
-          `🎁 Карта ${dirLabel(upd)} на $${giftUnits(upd)} проверена.\n` +
-          `Отправьте клиенту <b>${payoutText(upd)}</b> на кошелёк:\n👛 <code>${esc(upd.wallet)}</code>\n\n` +
-          `💡 Теперь вы можете опционально отправить ссылку на блокчейн-транзакцию — нажмите кнопку ниже.`,
-          { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('🔗 Добавить ссылку на блокчейн', `o:${id}:tx`) }
+        // Деньги выдаются только после явного подтверждения суммы и адреса —
+        // одинаково из карточки и из диалога сделки.
+        return ctx.reply(
+          `💸 <b>Заявка #${o.id} — выдать ${payoutText(o)}?</b>\n\n` +
+          `🎁 ${dirLabel(o)} на ${giftUnits(o)}\n` +
+          `👛 Кошелёк: <code>${esc(o.wallet)}</code>\n` +
+          `🌐 Сеть: ${esc(currencies.payoutLabelOf(o))}\n\n` +
+          'Проверьте, что валюта отправлена на этот адрес, и подтвердите.',
+          {
+            parse_mode: 'HTML',
+            reply_markup: new InlineKeyboard()
+              .text('✅ Да, валюта выдана', `o:${o.id}:paid_yes`)
+              .text('↩️ Отмена', `o:${o.id}`),
+          }
         );
-        return;
       }
     }
   });
