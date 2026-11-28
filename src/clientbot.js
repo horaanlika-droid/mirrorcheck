@@ -12,7 +12,6 @@ const currencies = require('./currencies');
 const { esc, fmtCrypto, fmtUsdt, fmtOrderPayout, fmtDate, parseNum } = require('./util');
 const widget = require('./widget');
 
-const clientFlows = new Map(); // userId -> состояние FSM
 const isPrivate = (ctx) => ctx.chat?.type === 'private' && ctx.from;
 const uidOf = (ctx) => String(ctx.from.id);
 const isGiftOrder = (o) => o && o.direction === 'sell';
@@ -38,6 +37,60 @@ const GIFT_PRIVACY =
 const ensureUser = (ctx, refParam = '') =>
   store.touchUser({ id: ctx.from.id, first_name: ctx.from.first_name || 'Клиент', username: ctx.from.username || null }, refParam);
 
+// Псевдоним, выданный сервером, остаётся за профилем: в Telegram показываем его,
+// чтобы клиент узнавал себя и не получал незнакомое «имя».
+function displayName(ctx) {
+  const user = store.getUser(uidOf(ctx));
+  return (user && user.name) || ctx.from.first_name || 'Клиент';
+}
+
+// /link — одноразовый код для привязки браузерной сессии к этому Telegram-профилю.
+// Код живёт 10 минут и не раскрывает Telegram ID: его вводит только владелец экрана.
+async function sendLinkCode(ctx) {
+  if (!isPrivate(ctx)) return;
+  const session = require('./session');
+  const { code, exp } = session.linkCode(uidOf(ctx));
+  return ctx.reply(
+    `🔗 <b>Привязка браузера к Telegram</b>\n\n` +
+    `Код: <code>${code}</code>\n` +
+    `Действует 10 минут.\n\n` +
+    `Откройте сайт в браузере и введите код в профиле — заявки и чат станут общими,
+` +
+    `а этот профиль будет виден в Telegram.\n\n` +
+    `⚠️ Код даёт доступ к профилю: никому его не передавайте.`,
+    { parse_mode: 'HTML' }
+  );
+}
+
+/* ---------- состояние потоков ---------- */
+// Раньше шаг жил в Map в памяти процесса: рестарт, второй бот или другой
+// инстанс теряли состояние — на выборе сети бот молчал. Теперь шаг хранится
+// в базе (короткий TTL) + нужные данные есть в callback_data.
+const FLOW_TTL_MS = 60 * 60 * 1000;
+const flowKey = (id) => `cf:${id}`;
+function flowGet(id) {
+  const entry = (store.get().flags || {})[flowKey(id)];
+  if (!entry || !entry.flow) return null;
+  if (Date.now() > Number(entry.exp || 0)) { flowDel(id); return null; }
+  return entry.flow;
+}
+function flowSet(id, flow) {
+  store.mutate((db) => {
+    db.flags = db.flags || {};
+    db.flags[flowKey(id)] = { flow, exp: Date.now() + FLOW_TTL_MS };
+    // Заодно подчищаем просроченные, чтобы база не росла.
+    if (Object.keys(db.flags).length > 500) {
+      for (const [k, v] of Object.entries(db.flags)) {
+        if (k.startsWith('cf:') && (!v || Number(v.exp) < Date.now())) delete db.flags[k];
+      }
+    }
+  });
+}
+function flowDel(id) {
+  store.mutate((db) => { if (db.flags) delete db.flags[flowKey(id)]; });
+}
+const clientFlows = { get: flowGet, set: flowSet, delete: flowDel };
+
 const availableGift = () =>
   currencies.list().filter(
     (p) => currencies.isEnabled(store.get().settings, p.key) && currencies.rateOf(store.get().settings, p.currency) > 0
@@ -53,8 +106,8 @@ const rateListText = () => availableGift()
 function menuKb(s) {
   const kb = new InlineKeyboard()
     .text('💱 Сдать карту', 'c:exchange').text('📦 Мои заявки', 'c:orders').row()
-    .text('💬 Поддержка', 'c:support').text('ℹ️ Информация', 'c:info').row()
-    .text('🎁 Реферальная программа', 'c:refs');
+    .text('💬 Поддержка', 'c:support').text('⭐ Отзывы', 'c:reviews').row()
+    .text('ℹ️ Информация', 'c:info').text('🎁 Реферальная программа', 'c:refs');
   // Telegram принимает кнопки web_app только по https — иначе всё сообщение отклоняется и клиент видит тишину.
   if (s.publicUrl && /^https:\/\//i.test(s.publicUrl)) kb.row().webApp('📱 Открыть приложение', s.publicUrl);
   return kb;
@@ -178,6 +231,7 @@ function giftIntro(ctx, pair, promo = null) {
 function askGiftWallet(ctx, units, pair, promoCode = null, payoutId = 'USDT_BEP20') {
   const s = store.get().settings;
   let opt = currencies.findPayoutOption(payoutId) || currencies.PAYOUT_OPTIONS.USDT_BEP20;
+  // Если выбранную сеть отключили в настройках, возвращаемся к BEP-20.
   if (!currencies.isPayoutEnabled(s, opt)) opt = currencies.PAYOUT_OPTIONS.USDT_BEP20;
   const check = promoCode ? store.validatePromo(promoCode, { units }) : null;
   if (check && !check.ok) {
@@ -191,14 +245,18 @@ function askGiftWallet(ctx, units, pair, promoCode = null, payoutId = 'USDT_BEP2
   const quote = currencies.giftPayout(s, units, pair.currency, check?.promo.percent, feeDiscount, opt);
   if (!quote) return assetScreen(ctx);
 
+  // Выбор сети всегда доступен, даже если оператор выключил все сети в настройках:
+  // иначе поток молча останавливался на этом шаге.
   const kb = new InlineKeyboard();
   const enabledNets = currencies.PAYOUT_OPTION_LIST.filter((o) => currencies.isPayoutEnabled(s, o));
-  enabledNets.forEach((o, idx) => {
+  const nets = enabledNets.length ? enabledNets : currencies.PAYOUT_OPTION_LIST;
+  nets.forEach((o, idx) => {
     const netFee = currencies.networkFeeOf(s, o);
     const active = o.id === opt.id ? '✓ ' : '';
     const suffix = o.instant ? '0%' : `-${netFee} ${o.feeUnit}`;
-    kb.text(`${active}${o.shortLabel} (${suffix})`, `c:pnet:${o.id}`);
-    if (idx % 2 === 1 || idx === enabledNets.length - 1) kb.row();
+    // units и id сети — прямо в кнопке: шаг не зависит от памяти процесса.
+    kb.text(`${active}${o.shortLabel} (${suffix})`, `c:pnet:${pair.key}:${units}:${o.id}`);
+    if (idx % 2 === 1 || idx === nets.length - 1) kb.row();
   });
   kb.text('↩️ К номиналу', `c:giftnom:${pair.key}`);
 
@@ -339,6 +397,10 @@ const orderActionsKb = (o) => {
     kb.text('🔄 Обновить', `c:order:${o.id}`);
   }
   if (['new', 'details'].includes(o.status)) kb.text('❌ Отменить', `c:cancel:${o.id}`);
+  // Отзыв — как на сайте: после завершённой сделки и только один раз.
+  if (o.status === 'completed' && !store.getReviewByOrder(o.id)) {
+    kb.row().text('⭐ Оставить отзыв', `c:rate:${o.id}`);
+  }
   kb.row().text('💬 Диалог сделки', `c:chat:${o.id}`);
   kb.row().text('📦 Мои заявки', 'c:orders').text('↩️ Меню', 'c:menu');
   return kb;
@@ -402,6 +464,60 @@ async function orderDetail(ctx, id) {
   const sent = await widget.trySendOrderWidget(ctx, o);
   if (sent) return;
   return show(ctx, orderDetailText(o), orderActionsKb(o));
+}
+
+/* ---------- отзывы ---------- */
+// Витрина отзывов и оценка после сделки — те же данные, что в приложении.
+const STARS = ['1', '2', '3', '4', '5'];
+
+function reviewsScreen(ctx) {
+  const all = store.listReviews(500);
+  const summary = store.reviewSummary(all);
+  const shown = all.slice(0, 5).map((r) => {
+    const stars = '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating);
+    return `👤 <b>${esc(r.name)}</b> · ${stars}\n${esc(r.text.slice(0, 240))}` +
+      (r.reply ? `\n↳ <i>${esc(r.reply.slice(0, 200))}</i>` : '');
+  }).join('\n\n');
+  const head = `⭐ <b>Отзывы клиентов</b>\n\n` +
+    (summary.count ? `Средняя оценка: <b>${summary.avg.toFixed(1)} / 5</b> · ${summary.count}\n\n` : '') +
+    (shown || 'Пока нет отзывов — станьте первым.');
+  // Кнопка оценки — для завершённой заявки без отзыва.
+  const pending = store.userOrders(uidOf(ctx))
+    .find((o) => o.status === 'completed' && !store.getReviewByOrder(o.id));
+  const kb = new InlineKeyboard();
+  if (pending) kb.text('⭐ Оставить отзыв', `c:rate:${pending.id}`).row();
+  kb.text('💱 Сдать карту', 'c:exchange').text('↩️ Меню', 'c:menu');
+  return show(ctx, head, kb);
+}
+
+function ratePrompt(ctx, orderId) {
+  const o = store.getOrder(orderId);
+  if (!o || String(o.userId) !== uidOf(ctx)) return show(ctx, '🚫 Заявка не найдена.', backMenuKb());
+  if (o.status !== 'completed') return show(ctx, 'Отзыв можно оставить после завершения сделки.', orderActionsKb(o));
+  if (store.getReviewByOrder(o.id)) return show(ctx, 'Вы уже оставили отзыв по этой сделке. Спасибо! ✦', new InlineKeyboard().text('⭐ Отзывы', 'c:reviews').text('↩️ Меню', 'c:menu'));
+  // Оценка едет в callback_data: состояние в памяти не нужно.
+  const kb = new InlineKeyboard();
+  STARS.forEach((n) => kb.text(`${n} ★`, `c:ratev:${o.id}:${n}`));
+  kb.row().text('↩️ К заявке', `c:order:${o.id}`);
+  return show(ctx,
+    `⭐ <b>Отзыв по заявке #${o.id}</b>\n\n` +
+    `Сделка ${esc(giftLabel(o))} на $${giftUnits(o)} завершена.\n` +
+    `Поставьте оценку — затем пришлите пару слов одним сообщением.\n\n/cancel — пропустить`,
+    kb);
+}
+
+function startReview(ctx, orderId, rating) {
+  const o = store.getOrder(orderId);
+  const stars = Math.round(Number(rating));
+  if (!o || String(o.userId) !== uidOf(ctx)) return show(ctx, '🚫 Заявка не найдена.', backMenuKb());
+  if (o.status !== 'completed') return show(ctx, 'Отзыв можно оставить после завершения сделки.', orderActionsKb(o));
+  if (store.getReviewByOrder(o.id)) return show(ctx, 'Вы уже оставили отзыв по этой сделке. Спасибо! ✦', backMenuKb());
+  if (!Number.isFinite(stars) || stars < 1 || stars > 5) return ratePrompt(ctx, o.id);
+  clientFlows.set(uidOf(ctx), { type: 'review_text', orderId: o.id, rating: stars });
+  return show(ctx,
+    `⭐ Оценка: <b>${'★'.repeat(stars)}${'☆'.repeat(5 - stars)}</b>\n\n` +
+    `Напишите пару слов об обмене одним сообщением — отзыв появится на витрине.\n\n/cancel — пропустить`,
+    new InlineKeyboard().text('↩️ К заявке', `c:order:${o.id}`));
 }
 
 /* ---------- действия клиента ---------- */
@@ -500,6 +616,43 @@ async function clientStart(ctx, refParam = '') {
   return clientMenu(ctx);
 }
 
+/* ---------- выбор сети ---------- */
+// Форматы callback_data (все поддержаны, чтобы старые сообщения в чатах работали):
+//   c:pnet:<netId>                  — самый первый вариант
+//   c:pnet:<units>:<netId>          — номинал без карты
+//   c:pnet:<key>:<units>:<netId>    — текущий: карта и номинал едут вместе с кнопкой
+// Благодаря этому шаг не «зависает», если состояние потока потерялось
+// (рестарт процесса, другой инстанс, очистка базы).
+function parsePnet(data) {
+  const parts = String(data).slice('c:pnet:'.length).split(':').filter(Boolean);
+  const netId = parts.length ? parts[parts.length - 1] : '';
+  const nums = parts.filter((p) => /^\d+$/.test(p));
+  const keyPart = parts.find((p) => {
+    const pair = currencies.get(p);
+    return pair && pair.kind === 'gift';
+  });
+  return {
+    netId,
+    units: nums.length ? parseInt(nums[0], 10) : null,
+    key: keyPart || null,
+  };
+}
+
+function selectNetwork(ctx, data) {
+  const parsed = parsePnet(data);
+  const flow = clientFlows.get(uidOf(ctx));
+  const key = parsed.key || (flow && flow.key) || currencies.GIFT_KEY;
+  const pair = currencies.get(key);
+  const units = Number.isFinite(parsed.units) ? parsed.units : flow && flow.units;
+  if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
+  if (!Number.isFinite(units) || currencies.validateUnits(units)) {
+    return show(ctx,
+      'Не получилось вспомнить номинал. Выберите его заново — это один шаг.',
+      new InlineKeyboard().text('🎁 К номиналу', `c:giftnom:${pair.key}`));
+  }
+  return askGiftWallet(ctx, units, pair, flow && flow.key === pair.key ? flow.promoCode || null : null, parsed.netId);
+}
+
 /* ---------- маршрутизация входящих ---------- */
 
 async function handleClientCallback(ctx, d) {
@@ -514,6 +667,12 @@ async function handleClientCallback(ctx, d) {
   if (d === 'c:orders') return ordersList(ctx);
   if (d === 'c:info') return infoScreen(ctx);
   if (d === 'c:refs') return refsScreen(ctx);
+  if (d === 'c:reviews') return reviewsScreen(ctx);
+  if (d.startsWith('c:ratev:')) {
+    const [, , orderId, rating] = d.split(':');
+    return startReview(ctx, orderId, rating);
+  }
+  if (d.startsWith('c:rate:')) return ratePrompt(ctx, Number(d.slice('c:rate:'.length)));
   if (d === 'c:support') return supportPrompt(ctx);
   if (d === 'c:giftnom' || d.startsWith('c:giftnom:')) {
     const flow = clientFlows.get(uidOf(ctx));
@@ -553,11 +712,7 @@ async function handleClientCallback(ctx, d) {
       new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`));
   }
   if (d.startsWith('c:pnet:')) {
-    const flow = clientFlows.get(uidOf(ctx));
-    if (!flow || flow.type !== 'gift_wallet') return assetScreen(ctx);
-    const pair = currencies.get(flow.key);
-    if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
-    return askGiftWallet(ctx, flow.units, pair, flow.promoCode || null, d.slice('c:pnet:'.length));
+    return selectNetwork(ctx, d);
   }
   if (d.startsWith('c:units:')) {
     const parts = d.split(':');
@@ -671,6 +826,24 @@ async function handleClientText(ctx) {
       `🔎 <b>Заявка #${o.id}: код отправлен оператору.</b>\nПроверка обычно занимает 5–15 минут. Выплата — ${payoutOf(upd)}.`,
       new InlineKeyboard().text('📦 Мои заявки', 'c:orders').text('↩️ Меню', 'c:menu'));
   }
+  if (f.type === 'review_text') {
+    const o = await loadOwnOrder(ctx, f.orderId);
+    clientFlows.delete(uidOf(ctx));
+    if (!o || o.status !== 'completed') return show(ctx, 'Заявка уже недоступна для отзыва.', backMenuKb());
+    if (store.getReviewByOrder(o.id)) return show(ctx, 'Вы уже оставили отзыв по этой сделке. Спасибо! ✦', backMenuKb());
+    const user = ensureUser(ctx);
+    store.createReview({
+      userId: uidOf(ctx),
+      orderId: o.id,
+      name: user && user.name ? user.name : (ctx.from.first_name || 'Клиент'),
+      rating: f.rating,
+      text: text.slice(0, 1000),
+      source: 'order',
+    });
+    return show(ctx,
+      `🙏 <b>Спасибо за отзыв!</b>\n\nОценка: ${'★'.repeat(f.rating)}${'☆'.repeat(5 - f.rating)}\nОн уже виден в приложении и в боте.`,
+      new InlineKeyboard().text('⭐ Все отзывы', 'c:reviews').text('↩️ Меню', 'c:menu'));
+  }
   if (f.type === 'support') {
     ensureUser(ctx);
     const message = store.createSupportMessage(uidOf(ctx), 'user', text.slice(0, 2000));
@@ -697,6 +870,7 @@ module.exports = {
   handleClientText,
   handleClientDocument,
   openOrderChat,
+  sendLinkCode,
   clientPaidWidget,
   clientCancelWidget,
   GIFT_PRIVACY,

@@ -7,9 +7,10 @@ const { JSDOM } = require('jsdom');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pricelex-deal-chat-'));
 process.env.DATA_DIR = dir;
+process.env.ALLOW_DEMO_AUTH = '1'; // демо-личность для тестов вместо cookie-сессии
 delete process.env.BOT_TOKEN;
-delete process.env.ADMIN_ID;
-delete process.env.ADMIN_IDS;
+process.env.ADMIN_ID = '900001'; // оператор демо-панели — только реальный администратор
+process.env.ADMIN_IDS = '';
 const store = require('../src/store');
 const { createApp } = require('../src/web');
 const files = require('../src/attachments');
@@ -17,9 +18,12 @@ const { esc, fmtDate, fmtSize } = require('../src/util');
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aVkAAAAASUVORK5CYII=';
 const upload = { name: 'Снимок карты.png', data: png };
 const owner = '900002', stranger = '900003', operator = '900001';
+// Без параметра demo запрос идёт как анонимный клиент (свой профиль, без доступа к чужой заявке).
+const CLIENT_DEMO = { id: '900002' };
 let server, url, order, other;
 
-const request = (endpoint, who, body) => fetch(url + endpoint + (who ? `?demo[id]=${who}` : ''),
+// createApp() уже смонтировал middleware — потеря одного запроса здесь.
+const request = (endpoint, who, body) => fetch(url + endpoint + `?demo[id]=${who || CLIENT_DEMO.id}`,
   body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 before(async () => {
   server = createApp().listen(0, '127.0.0.1');
@@ -74,7 +78,8 @@ test('файл без подписи, обычный текст и ответ о
 test('вложения проверяют доступ и принадлежность сообщения именно этой заявке', async () => {
   const thread = `/api/order/${order.id}/messages`;
   const { message } = await (await request(thread, owner, { attachment: upload })).json();
-  assert.equal((await request(`${thread}/${message.id}/attachment`)).status, 401);
+  // Без demo-параметра сервер выдаёт анонимную cookie: чужое вложение всё равно недоступно.
+  assert.equal((await fetch(`${url}${thread}/${message.id}/attachment`)).status, 401);
   assert.equal((await request(`${thread}/${message.id}/attachment`, stranger)).status, 404);
   assert.equal((await request(`/api/order/${other.id}/messages/${message.id}/attachment`, stranger)).status, 404);
   assert.equal((await request(thread, stranger)).status, 404);

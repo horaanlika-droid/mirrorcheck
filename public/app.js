@@ -5,6 +5,8 @@
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   let initData = '';
   let startParam = '';
+  // Демо-личность — только для тестов/старых превью: ?demo[id]=… или запись в
+  // localStorage. Обычный браузер получает анонимную сессию от сервера.
   let demo = null;
   if (tg) {
     try {
@@ -18,13 +20,11 @@
   }
   if (!initData) {
     try {
-      demo = JSON.parse(localStorage.getItem('pricelex_demo') || 'null');
-      if (!demo) {
-        demo = { id: 900000 + Math.floor(Math.random() * 99999), name: 'Гость' };
-        localStorage.setItem('pricelex_demo', JSON.stringify(demo));
-      }
+      const urlDemo = new URLSearchParams(location.search).get('demo');
+      if (urlDemo) demo = { id: Number(urlDemo) || 900002, name: new URLSearchParams(location.search).get('name') || 'Гость' };
+      else demo = JSON.parse(localStorage.getItem('pricelex_demo') || 'null');
     } catch (e) {
-      demo = { id: 900001, name: 'Гость' };
+      demo = null;
     }
   }
 
@@ -72,7 +72,7 @@
   const DEFAULT_BLOCK_ORDER = {
     home: ['hero', 'marquee', 'cards', 'steps', 'buyNote'],
     form: ['formCalc', 'formInfo', 'formWallet'],
-    profile: ['profileHead', 'profileRef', 'profileContacts', 'profileAbout'],
+    profile: ['profileHead', 'profileRef', 'profilePrivacy', 'profileContacts', 'profileAbout'],
   };
   const BLOCK_LABELS = {
     hero: 'Главный экран',
@@ -85,6 +85,7 @@
     formWallet: 'Адрес для выплаты',
     profileHead: 'Профиль и статистика',
     profileRef: 'Реферальная программа',
+    profilePrivacy: 'Анонимность и привязка',
     profileContacts: 'Связаться с нами',
     profileAbout: 'О сервисе',
   };
@@ -466,9 +467,144 @@
     toast(msg || 'Скопировано');
   }
 
+  /* ---------- анонимная веб-сессия ---------- */
+  // Сервер выдаёт HttpOnly-cookie и придумывает псевдоним. Клиент только проходит
+  // proof-of-work и не хранит личность в localStorage (её нельзя подделать).
+  let sessionPromise = null;
+  // UTF-8 без TextEncoder (старые WebView и http-страницы).
+  function utf8Bytes(str) {
+    const out = [];
+    for (let i = 0; i < str.length; i++) {
+      let c = str.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
+        const d = str.charCodeAt(i + 1);
+        if (d >= 0xdc00 && d <= 0xdfff) {
+          c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00);
+          i++;
+        }
+      }
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return Uint8Array.from(out);
+  }
+  // Чистый JS SHA-256 — запасной путь, когда Web Crypto недоступен (http, старые браузеры).
+  const sha256Js = (str) => {
+    const K = [
+      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+      0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+      0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+      0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    ];
+    const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    const bytes = utf8Bytes(str);
+    const bitLen = bytes.length * 8;
+    const padded = new Uint8Array((((bytes.length + 9) >> 6) + 1) << 6);
+    padded.set(bytes);
+    padded[bytes.length] = 0x80;
+    const dv = new DataView(padded.buffer);
+    dv.setUint32(padded.length - 8, Math.floor(bitLen / 4294967296));
+    dv.setUint32(padded.length - 4, bitLen >>> 0);
+    const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+    const w = new Uint32Array(64);
+    for (let off = 0; off < padded.length; off += 64) {
+      for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4);
+      for (let i = 16; i < 64; i++) {
+        const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+        const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+      }
+      let [a, b, c, d, e, f, g, h] = H;
+      for (let i = 0; i < 64; i++) {
+        const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+        const ch = (e & f) ^ (~e & g);
+        const t1 = (h + S1 + ch + K[i] + w[i]) >>> 0;
+        const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+        const maj = (a & b) ^ (a & c) ^ (b & c);
+        const t2 = (S0 + maj) >>> 0;
+        h = g; g = f; f = e; e = (d + t1) >>> 0;
+        d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+      }
+      H[0] = (H[0] + a) >>> 0; H[1] = (H[1] + b) >>> 0; H[2] = (H[2] + c) >>> 0; H[3] = (H[3] + d) >>> 0;
+      H[4] = (H[4] + e) >>> 0; H[5] = (H[5] + f) >>> 0; H[6] = (H[6] + g) >>> 0; H[7] = (H[7] + h) >>> 0;
+    }
+    return H.map((x) => x.toString(16).padStart(8, '0')).join('');
+  };
+  async function sha256Hex(text) {
+    if (crypto && crypto.subtle && crypto.subtle.digest) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+    return sha256Js(text);
+  }
+  // Сколько старших бит нулевые — та же проверка, что и на сервере.
+  // Идём по hex-символам, а каждый символ — 4 бита (раньше считалось 8 — PoW не сходился).
+  const leadingZeroBits = (hex) => {
+    let bits = 0;
+    for (const ch of hex) {
+      const v = parseInt(ch, 16);
+      if (v === 0) { bits += 4; continue; }
+      bits += Math.clz32(v) - 28;
+      break;
+    }
+    return bits;
+  };
+  async function solveChallenge(challenge, bits) {
+    // challenge = base64url(JSON{s,e,b}) + '.' + подпись; проверяется sha256(`s:nonce`).
+    const b64 = challenge.slice(0, challenge.lastIndexOf('.')).replace(/-/g, '+').replace(/_/g, '/');
+    // atob → байты → UTF-8 (без TextDecoder: он есть не везде).
+    const bin = atob(b64);
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    let jsonStr = '';
+    for (let i = 0; i < bytes.length; i += 32768) {
+      jsonStr += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+    }
+    const { s } = JSON.parse(decodeURIComponent(escape(jsonStr)));
+    for (let nonce = 0; nonce < 20_000_000; nonce++) {
+      if (leadingZeroBits(await sha256Hex(`${s}:${nonce}`)) >= bits) return nonce;
+      if (nonce % 4096 === 0) await new Promise((r) => setTimeout(r, 0)); // не блокируем UI
+    }
+    throw new Error('Не удалось пройти проверку безопасности. Обновите страницу.');
+  }
+  async function ensureSession() {
+    if (initData) return null;
+    if (sessionPromise) return sessionPromise;
+    sessionPromise = (async () => {
+      const ch = await fetch('/api/session/challenge', { cache: 'no-store' }).then((r) => r.json());
+      const nonce = await solveChallenge(ch.challenge, ch.bits);
+      const res = await fetch('/api/session', {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ challenge: ch.challenge, nonce }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Не удалось открыть сессию');
+      return data;
+    })().catch((e) => {
+      sessionPromise = null;
+      throw e;
+    });
+    return sessionPromise;
+  }
+  // Повторная попытка с cookie: Telegram initData просрочен (или сессия ещё не открыта).
+  async function withSession(retry) {
+    if (initData || demo) return null;
+    await ensureSession();
+    return retry ? retry() : null;
+  }
+
   async function api(path, opts = {}) {
     const q = new URLSearchParams(opts.query || {});
-    if (!initData && demo) { q.set('demo[id]', demo.id); q.set('demo[name]', demo.name); }
+    // demo — только для тестов/старых превью и принимается сервером лишь во временном DATA_DIR.
+    if (demo) { q.set('demo[id]', demo.id); if (demo.name) q.set('demo[name]', demo.name); }
     const sep = path.includes('?') ? '&' : '?';
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), opts.timeoutMs || 10000);
@@ -478,9 +614,10 @@
       const res = await fetch(path + sep + q.toString(), {
         method,
         cache: 'no-store',
+        credentials: 'same-origin',
         signal: controller.signal,
         headers: { ...(initData ? { 'x-telegram-init-data': initData } : {}), ...(hasBody ? { 'content-type': 'application/json' } : {}) },
-        body: hasBody ? JSON.stringify(Object.assign({ demo }, opts.body || {})) : undefined,
+        body: hasBody ? JSON.stringify(Object.assign(demo ? { demo } : {}, opts.body || {})) : undefined,
       });
       if (opts.binary && res.ok) return await res.blob();
       const data = await res.json();
@@ -1663,7 +1800,10 @@
 
   const referralLinkOf = () => {
     const s = S.settings || {};
-    return s.botUsername ? `https://t.me/${s.botUsername}?startapp=ref${(S.me && S.me.id) || ''}` : null;
+    const me = S.me || {};
+    // Ссылка ref<id> имеет смысл только для Telegram-профиля (Mini App или привязанный браузер).
+    if (!s.botUsername || !me.telegramId) return null;
+    return `https://t.me/${s.botUsername}?startapp=ref${me.telegramId}`;
   };
   // Referral card — shared between the Reviews view and the profile.
   const referralCardHtml = (copyBtnId) => {
@@ -1824,12 +1964,93 @@
     }
   }
 
+  /* ---------- анонимность и привязка к Telegram ---------- */
+  // Псевдоним выдаёт сервер; сменить его нельзя, как и подделать сессию.
+  // Привязка нужна, чтобы получать уведомления в Telegram и не потерять заявки
+  // при очистке cookie.
+  const privacyInfo = () => S.privacy || (S.settings && S.settings.privacy) || {};
+  function privacyCardHtml() {
+    const me = S.me || {};
+    const info = privacyInfo();
+    const linkBot = info.linkBot || (S.settings && S.settings.linkBot) || null;
+    if (!me.anonymous && !me.linked) return ''; // Telegram Mini App — привязка не нужна
+    const ttl = 'Сессия хранится 180 дней только в этом браузере: cookie HttpOnly, без пароля и почты.';
+    if (me.linked) {
+      return `<div class="card profile-block privacy-card" data-block="profilePrivacy" data-block-section="profile" style="margin-bottom:12px">
+        <div class="card-title">Telegram привязан</div>
+        <div class="about" style="font-size:12.5px;line-height:1.6;color:var(--mut)">Заявки и чат общие с Telegram-профилем. Если отвязать — создастся новый анонимный профиль.</div>
+        <button class="btn btn-ghost btn-sm" id="lcUnlink" style="margin-top:10px">Отвязать Telegram</button>
+        <div class="f-err" id="lcPrivacyErr"></div>
+      </div>`;
+    }
+    return `<div class="card profile-block privacy-card" data-block="profilePrivacy" data-block-section="profile" style="margin-bottom:12px">
+      <div class="card-title">Анонимность и безопасность</div>
+      <div class="about" style="font-size:12.5px;line-height:1.6;color:var(--mut)">
+        Вы обмениваетесь анонимно: имя придумал сервер, документы и аккаунты не нужны. ${esc(ttl)}
+      </div>
+      <div class="about" style="font-size:12.5px;line-height:1.6;color:var(--mut);margin-top:8px">
+        Хотите получать уведомления в Telegram и не потерять заявки при очистке cookie — привяжите браузер к Telegram.
+      </div>
+      ${linkBot ? `<a class="btn btn-ghost btn-sm" id="lcLinkOpen" href="https://t.me/${esc(linkBot)}?start=link" target="_blank" rel="noopener" style="margin-top:10px;display:inline-flex;text-decoration:none">Получить код в @${esc(linkBot)}</a>` : ''}
+      ${linkBot ? '' : '<div class="empty" style="margin-top:8px">Код привязки выдаёт клиентский бот Pricelex Worldwide (/link).</div>'}
+      <label class="f-label" for="lcLinkCode" style="margin-top:10px"><span>Код из бота (/link)</span></label>
+      <div class="f-box"><input id="lcLinkCode" type="text" inputmode="text" autocomplete="one-time-code" maxlength="16" placeholder="НАПРИМЕР, A1B2C3D4E5"></div>
+      <button class="btn btn-primary btn-sm" id="lcLinkSubmit" style="margin-top:10px">Привязать</button>
+      <div class="f-err" id="lcPrivacyErr"></div>
+    </div>`;
+  }
+  function wirePrivacyCard() {
+    const submit = $('#lcLinkSubmit');
+    if (submit) submit.addEventListener('click', async () => {
+      const input = $('#lcLinkCode');
+      const err = $('#lcPrivacyErr');
+      const code = (input && input.value || '').trim();
+      if (err) err.textContent = '';
+      if (!code) { if (err) err.textContent = 'Введите код из бота.'; return; }
+      submit.disabled = true;
+      try {
+        const r = await api('/api/link', { method: 'POST', body: { code } });
+        S.me = r.me;
+        S.privacy = (r.settings && r.settings.privacy) || S.privacy;
+        haptic('heavy');
+        toast('Telegram привязан ✦');
+        renderProfile();
+      } catch (e) {
+        if (err) err.textContent = e.message;
+      } finally {
+        submit.disabled = false;
+      }
+    });
+    const unlink = $('#lcUnlink');
+    if (unlink) unlink.addEventListener('click', async () => {
+      const err = $('#lcPrivacyErr');
+      if (!window.confirm('Отвязать Telegram? Заявки останутся, но создастся новый анонимный профиль.')) return;
+      unlink.disabled = true;
+      try {
+        const r = await api('/api/link/revoke', { method: 'POST', body: { confirm: 'REVOKE' } });
+        S.me = r.me;
+        S.privacy = (r.settings && r.settings.privacy) || S.privacy;
+        toast('Telegram отвязан');
+        renderProfile();
+      } catch (e) {
+        if (err) err.textContent = e.message;
+      } finally {
+        unlink.disabled = false;
+      }
+    });
+  }
+
   function renderProfile() {
     const s = S.settings;
     const v = $('#view-profile');
     const me = S.me || {};
     const name = me.name || 'Клиент';
-    const userLine = [me.username ? '@' + me.username : null, 'ID ' + (me.id ?? '—')].filter(Boolean).join(' · ');
+    // Внутренний id не показываем: у анонимов его нет в ответе, у Telegram — только @username.
+    const userLine = [
+      me.username ? '@' + me.username : null,
+      me.anonymous ? 'анонимный профиль' : null,
+      me.linked ? 'привязан к Telegram' : null,
+    ].filter(Boolean).join(' · ');
     const doneOrders = S.orders.filter((o) => o.status === 'completed');
     const volume = doneOrders.reduce((sum, o) => sum + Number(o.units || 0), 0);
     const opLink = 'https://t.me/' + String(s.operator || '').replace(/^@/, '');
@@ -1850,6 +2071,7 @@
           </div>
         </div>`,
       profileRef: `<div class="profile-block" data-block="profileRef" data-block-section="profile" style="margin-bottom:12px">${referralCardHtml('lcCopyRef')}</div>`,
+      profilePrivacy: privacyCardHtml(),
       profileContacts: `
         <div class="card profile-block" data-block="profileContacts" data-block-section="profile" style="margin-bottom:12px">
           <div class="card-title">Связаться с нами</div>
@@ -1867,6 +2089,7 @@
       ${S.me.isAdmin ? `
       <button class="btn btn-ghost lc-admin-btn" id="lcOpenAdmin">🛠 <span>Панель оператора и настройки обмена</span></button>` : ''}`;
     bindReferralCopy('lcCopyRef');
+    wirePrivacyCard();
     const go = $('#goSupport');
     if (go) go.addEventListener('click', () => goTab('support'));
     const openAdmin = $('#lcOpenAdmin');
@@ -3603,11 +3826,12 @@
   });
   wireAdminSheet();
 
-  (async () => {
+  async function boot() {
     try {
       const r = await api('/api/init', { method: 'POST', body: { startParam } });
       S.settings = r.settings;
       S.me = r.me;
+      S.privacy = r.web || S.privacy;
       S.isDemo = !!r.demo;
       const m = await api('/api/me');
       S.orders = m.orders;
@@ -3620,6 +3844,17 @@
         S.support = sup.messages || [];
       } catch {}
     } catch (e) {
+      // Браузер вне Telegram: открываем анонимную сессию и повторяем инициализацию.
+      if (!initData && !demo) {
+        try {
+          await ensureSession();
+          return init();
+        } catch (err) {
+          try { syncStatus('⚠️ ' + (err.message || 'Не удалось открыть анонимную сессию.')); } catch (_) {}
+          hidePreloader();
+          return;
+        }
+      }
       try { syncStatus('⚠️ Не удалось связаться с сервером. Обновите страницу.'); } catch (_) {}
       hidePreloader();
       return;
@@ -3638,5 +3873,28 @@
     renderDemoAdmin();
     startPolling();
     hidePreloader();
-  })();
+  }
+  // Если cookie-сессия уже открыта, а initData Telegram просрочен — продолжаем как
+  // аноним: заявки в этом браузере всё равно принадлежат cookie-сессии.
+  function withAnonFallback(fn) {
+    return async (...args) => {
+      try {
+        return await fn(...args);
+      } catch (e) {
+        if (initData && !demo && /авториз/i.test(String(e.message || ''))) {
+          initData = '';
+          sessionPromise = null;
+          const opened = await ensureSession().catch(() => null);
+          if (opened) return fn(...args);
+        }
+        throw e;
+      }
+    };
+  }
+  // Точка для тестов: проверяем PoW и SHA-256 без реального браузера.
+  if (typeof window !== 'undefined' && new URLSearchParams(location.search).has('selftest')) {
+    window.__plxTest = { solveChallenge, sha256Hex, leadingZeroBits };
+  }
+  const init = withAnonFallback(boot);
+  init();
 })();

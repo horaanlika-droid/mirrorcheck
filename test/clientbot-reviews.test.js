@@ -1,0 +1,43 @@
+const { test, after } = require('node:test');
+const assert = require('node:assert/strict');
+const fs=require('node:fs'), os=require('node:os'), path=require('node:path');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'rev-'));
+process.env.DATA_DIR=dir;
+process.env.BOT_TOKEN='123456:test-token';
+process.env.ADMIN_ID='111'; process.env.ADMIN_IDS='';
+delete process.env.WIDGETS;
+const store=require('../src/store');
+const {createBot}=require('../src/bot');
+const botInfo={id:123456,is_bot:true,first_name:'Test',username:'plx_test_bot'};
+const bot=createBot({botInfo});
+let seq=1000; let calls=[];
+bot.api.config.use(async (_p, method, payload)=>{ calls.push({method,...payload}); return {ok:true,result: method==='answerCallbackQuery'?true:{message_id:++seq,date:1,chat:{id:Number(payload.chat_id)||0,type:'private'},text:payload.text||''}}; });
+const text=(id,value)=>bot.handleUpdate({update_id:++seq,message:{message_id:++seq,date:1,chat:{id,type:'private'},from:{id,first_name:'Client',is_bot:false},text:value,...(value.match(/^\/\S+/) ? {entities:[{type:'bot_command',offset:0,length:value.match(/^\/\S+/)[0].length}]}:{})}});
+const click=(id,data)=>bot.handleUpdate({update_id:++seq,callback_query:{id:String(++seq),chat_instance:'test',from:{id,first_name:'Client',is_bot:false},data,message:{message_id:42,date:1,chat:{id,type:'private'},from:botInfo,text:'Order'}}});
+const last=(m)=>[...calls].reverse().find(c=>c.method===m);
+const kbs=(c)=>(c?.reply_markup?.inline_keyboard||[]).flat().map(b=>b.callback_data).filter(Boolean);
+after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+
+test('отзыв из бота: витрина, оценка, текст', async () => {
+  const order = store.createOrder({ userId:'555', currency:'GOOGLE_USD', units:100, crypto:100, rate:1, wallet:'0xabc' });
+  store.updateOrder(order.id, { status:'completed' });
+  await click(555,'c:reviews');
+  const screen = last('editMessageText');
+  assert.ok(screen, 'витрина отзывов отвечает');
+  assert.match(screen.text, /Отзывы клиентов/);
+  assert.ok(kbs(screen).includes('c:rate:'+order.id), 'есть кнопка оставить отзыв');
+  await click(555,'c:rate:'+order.id);
+  const rate = last('editMessageText');
+  assert.ok(kbs(rate).includes(`c:ratev:${order.id}:5`), 'есть шкала оценки');
+  await click(555,`c:ratev:${order.id}:5`);
+  await text(555,'Быстро и без лишних вопросов');
+  const saved = store.getReviewByOrder(order.id);
+  assert.ok(saved, 'отзыв сохранён');
+  assert.equal(saved.rating, 5);
+  assert.equal(saved.text, 'Быстро и без лишних вопросов');
+  await click(555,'c:reviews');
+  assert.match(last('editMessageText').text, /Быстро и без лишних вопросов/);
+  // повторный отзыв по той же заявке невозможен
+  await click(555,`c:ratev:${order.id}:5`);
+  assert.match(last('editMessageText').text, /уже оставили отзыв/);
+});
