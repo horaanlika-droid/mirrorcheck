@@ -29,6 +29,7 @@ const clientOrder = (o, reviewedIds) => ({
   giftCode: o.giftCode || null,
   expiresAt: o.expiresAt ?? null,
   paidAt: o.paidAt || null,
+  completedAt: o.completedAt || null, // когда оператор подтвердил выплату
   cancelReason: o.cancelReason || null,
   wallet: o.wallet,
   crypto: o.crypto,

@@ -365,6 +365,7 @@ function createOrder(o) {
       grossCrypto: o.grossCrypto ?? o.crypto,
       expiresAt: o.expiresAt ?? null, // deal time limit (gift cards — 1 hour)
       paidAt: null, // when the client tapped "I paid"
+      completedAt: null, // when the operator confirmed the payout (currency issued)
       units: o.units ?? null, // gift card face value, $
       giftCode: o.giftCode || null, // card code (visible only to the client and the operator)
       wallet: o.wallet || '',

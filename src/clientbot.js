@@ -439,7 +439,11 @@ function orderDetailText(o) {
       `Обычно 5–15 минут.`;
   }
   if (o.status === 'completed') {
-    return head + `🟢 <b>Завершена.</b> Выплата ${payoutOf(o)} отправлена на кошелёк:\n<code>${esc(o.wallet)}</code>${o.txUrl ? `\n🔗 ${esc(o.txUrl)}` : ''}`;
+    return head +
+      `🟢 <b>Завершена — валюта выдана.</b>\n` +
+      `💸 Выплата ${payoutOf(o)} отправлена на кошелёк:\n<code>${esc(o.wallet)}</code>` +
+      (o.completedAt ? `\n🕒 ${fmtDate(o.completedAt)}` : '') +
+      (o.txUrl ? `\n🔗 ${esc(o.txUrl)}` : '');
   }
   return head + `${o.status === 'rejected' ? '🔴 Отклонена оператором.' : '⚪ Отменена.'}${o.cancelReason ? `\nПричина: ${esc(o.cancelReason)}` : ''}`;
 }

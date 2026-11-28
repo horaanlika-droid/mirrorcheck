@@ -56,7 +56,25 @@ async function receiveTelegram(ctx, order, from) {
 
 // Show recent context without retransmitting every file. Download buttons always
 // resolve a message within the order, after the caller's ownership/role check.
-function openTelegram(ctx, order, from) {
+// Для оператора в диалог добавлены действия по сделке: выдать валюту, отклонить,
+// подключиться — чтобы не выходить из переписки в карточку заявки.
+function adminChatActions(kb, order, payoutLabel) {
+  const o = order;
+  if (o.status === 'paid') {
+    kb.row().text(`✅ Проверено — выдать ${payoutLabel || ''}`.trim(), `o:${o.id}:confirm`);
+    kb.text('❌ Карта недействительна', `o:${o.id}:unpaid`);
+  } else if (o.status === 'new') {
+    kb.row().text('🤝 Подключить — запросить код', `o:${o.id}:connect`);
+    kb.text('❌ Отклонить', `o:${o.id}:reject`);
+  } else if (o.status === 'details') {
+    kb.row().text('❌ Отклонить', `o:${o.id}:reject`);
+  } else if (o.status === 'completed') {
+    kb.row().text(o.txUrl ? '🔗 Изменить ссылку' : '🔗 Ссылка на блокчейн', `o:${o.id}:tx`);
+  }
+  return kb;
+}
+
+function openTelegram(ctx, order, from, opts = {}) {
   const prefix = from === 'admin' ? 'o' : 'c';
   const kb = new InlineKeyboard();
   const recent = store.getOrderMessages(order.id).slice(-5).map((m) => {
@@ -67,9 +85,14 @@ function openTelegram(ctx, order, from) {
     }
     return `${m.from === 'admin' ? 'Оператор' : 'Клиент'}: ${parts.filter(Boolean).join(' · ')}`;
   });
+  if (from === 'admin') adminChatActions(kb, order, opts.payout);
   kb.text('↩️ К заявке', from === 'admin' ? `o:${order.id}` : `c:order:${order.id}`);
   const history = recent.length ? `\n\nПоследние сообщения:\n${recent.join('\n')}` : '';
-  return ctx.reply(`💬 Диалог сделки #${order.id}${history}\n\nПришлите сообщение, фото или документ (JPG, PNG, WebP, PDF до 8 МБ). Подпись необязательна. Не отправляйте код карты до запроса оператора.\n/cancel — выйти из диалога`, { reply_markup: kb });
+  // Оператору подсказываем, как завершить сделку, не выходя из чата.
+  const adminHint = from === 'admin'
+    ? '\n\nКогда карта проверена и валюта отправлена — нажмите «✅ Проверено — выдать», сделка закроется, клиент получит уведомление.'
+    : '';
+  return ctx.reply(`💬 Диалог сделки #${order.id}${history}\n\nПришлите сообщение, фото или документ (JPG, PNG, WebP, PDF до 8 МБ). Подпись необязательна. Не отправляйте код карты до запроса оператора.${adminHint}\n/cancel — выйти из диалога`, { reply_markup: kb });
 }
 
 async function sendFile(ctx, order, messageId) {
