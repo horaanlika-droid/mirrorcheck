@@ -489,17 +489,92 @@ test('тексты интерфейса доступны оператору, с�
 });
 
 
-test('новые заявки только USDT/BEP-20, история возвращает исходные валюту, сеть и сумму', async () => {
-  const wallet = '0x' + 'abcD'.repeat(10);
-  const create = (extra) => req('POST', '/api/orders', { demo: CLIENT_DEMO, body: { currency: 'GOOGLE_USD', units: 10, wallet, ...extra } });
-  for (const extra of [{ payoutCurrency: 'BTC' }, { network: 'ERC20' }, { network: 'TRC20' }, { wallet: 'bc1' + 'a'.repeat(30) }, { wallet: wallet.slice(1) }]) {
-    assert.equal((await create(extra)).status, 400);
-  }
-  const result = await create({ network: 'BEP-20', payoutCurrency: 'USDT' });
-  assert.equal(result.status, 200);
-  assert.equal(result.data.order.network, 'BEP20');
-  assert.equal(result.data.order.crypto, 9);
-  assert.equal(result.data.order.payoutLabel, 'USDT (BEP-20)');
+test('BEP-20 моментальный без комиссии; TRC-20, ERC-20, TON и BTC с вычетом комиссии сети', async () => {
+  const bepWallet = '0x' + 'abcD'.repeat(10);
+  const trcWallet = 'T' + '9aBcDeFgHiJkLmNoPqRsTuVwXyZ123456'; // 34 chars Base58
+  const btcWallet = 'bc1q' + 'a'.repeat(35);
+  const tonWallet = 'EQ' + 'aB_c-123'.repeat(5) + '123456';
+  const create = (body) => req('POST', '/api/orders', { demo: CLIENT_DEMO, body: { currency: 'GOOGLE_USD', units: 100, ...body } });
+
+  // Неподдерживаемые сети или несоответствующие адреса кошельков отклоняются.
+  assert.equal((await create({ wallet: bepWallet, network: 'SOLANA' })).status, 400);
+  assert.equal((await create({ wallet: bepWallet, payoutId: 'USDT_TRC20' })).status, 400);
+  assert.equal((await create({ wallet: trcWallet, payoutId: 'USDT_BEP20' })).status, 400);
+  assert.equal((await create({ wallet: btcWallet, payoutId: 'USDT_BEP20' })).status, 400);
+  assert.equal((await create({ wallet: bepWallet.slice(1), payoutId: 'USDT_BEP20' })).status, 400);
+
+  // 1) USDT (BEP-20) — моментально и строго без комиссии сети (networkFee === 0).
+  const bep = await create({ wallet: bepWallet, network: 'BEP-20', payoutCurrency: 'USDT' });
+  assert.equal(bep.status, 200);
+  assert.equal(bep.data.order.payoutId, 'USDT_BEP20');
+  assert.equal(bep.data.order.network, 'BEP20');
+  assert.equal(bep.data.order.networkFee, 0);
+  assert.equal(bep.data.order.instant, true);
+  assert.equal(bep.data.order.crypto, 90);
+  assert.equal(bep.data.order.grossCrypto, 90);
+  assert.equal(bep.data.order.payoutLabel, 'USDT (BEP-20)');
+
+  // 2) USDT (TRC-20) — вычитается комиссия сети (по умолчанию 1.5 USDT).
+  const trc = await create({ wallet: trcWallet, payoutId: 'USDT_TRC20' });
+  assert.equal(trc.status, 200);
+  assert.equal(trc.data.order.payoutId, 'USDT_TRC20');
+  assert.equal(trc.data.order.network, 'TRC20');
+  assert.equal(trc.data.order.networkFee, 1.5);
+  assert.equal(trc.data.order.instant, false);
+  assert.equal(trc.data.order.grossCrypto, 90);
+  assert.equal(trc.data.order.crypto, 88.5);
+  assert.equal(trc.data.order.payoutLabel, 'USDT (TRC-20)');
+
+  // 3) USDT (ERC-20) и USDT (TON) — вычитается комиссия сети.
+  const erc = await create({ wallet: bepWallet, network: 'ERC20', payoutCurrency: 'USDT' });
+  assert.equal(erc.status, 200);
+  assert.equal(erc.data.order.network, 'ERC20');
+  assert.equal(erc.data.order.networkFee, 3);
+  assert.equal(erc.data.order.crypto, 87);
+
+  const ton = await create({ wallet: tonWallet, network: 'TON', payoutCurrency: 'USDT' });
+  assert.equal(ton.status, 200);
+  assert.equal(ton.data.order.network, 'TON');
+  assert.equal(ton.data.order.networkFee, 0.5);
+  assert.equal(ton.data.order.crypto, 89.5);
+
+  // 4) Bitcoin (BTC) — пересчёт по курсу BTC/USD и вычет комиссии сети BTC.
+  const btc = await create({ wallet: btcWallet, payoutCurrency: 'BTC' });
+  assert.equal(btc.status, 200);
+  assert.equal(btc.data.order.payoutId, 'BTC');
+  assert.equal(btc.data.order.payoutCurrency, 'BTC');
+  assert.equal(btc.data.order.network, 'BTC');
+  assert.equal(btc.data.order.payoutDecimals, 8);
+  assert.equal(btc.data.order.networkFee, 0.00005);
+  assert.ok(btc.data.order.grossCrypto > btc.data.order.crypto);
+  assert.ok(Math.abs((btc.data.order.grossCrypto - btc.data.order.crypto) - 0.00005) < 1e-8);
+
+  // 5) Оператор не может задать комиссию или отключить BEP-20 (400), но может менять комиссии/статус других сетей и курс BTC.
+  assert.equal((await req('POST', '/api/admin/settings', { body: { networkFees: { USDT_BEP20: 5 } } })).status, 400);
+  assert.equal((await req('POST', '/api/admin/settings', { body: { payoutEnabled: { USDT_BEP20: false } } })).status, 400);
+  const upd = await req('POST', '/api/admin/settings', {
+    body: {
+      btcUsd: 90000,
+      networkFees: { USDT_BEP20: 0, USDT_TRC20: 2.5, BTC: 0.0001 },
+      payoutEnabled: { USDT_BEP20: true, USDT_ERC20: false },
+    },
+  });
+  assert.equal(upd.status, 200);
+  assert.equal(upd.data.admin.networkFees.USDT_BEP20, 0, 'BEP-20 всегда 0 комиссии');
+  assert.equal(upd.data.admin.payoutEnabled.USDT_BEP20, true, 'BEP-20 нельзя выключить');
+  assert.equal(upd.data.admin.networkFees.USDT_TRC20, 2.5);
+  assert.equal(upd.data.admin.btcUsd, 90000);
+  assert.equal((await create({ wallet: bepWallet, network: 'ERC20' })).status, 400, 'выключенная сеть отклоняется');
+  const trcAfter = await create({ wallet: trcWallet, network: 'TRC20' });
+  assert.equal(trcAfter.status, 200);
+  assert.equal(trcAfter.data.order.networkFee, 2.5);
+  assert.equal(trcAfter.data.order.crypto, 87.5);
+  // Восстановим настройки, чтобы не влиять на другие тесты.
+  await req('POST', '/api/admin/settings', {
+    body: { networkFees: { USDT_TRC20: 1.5, BTC: 0.00005 }, payoutEnabled: { USDT_ERC20: true } },
+  });
+
+  // Обратная совместимость со старой историей заявок (без payoutId / с null network).
   store.mutate((db) => db.orders.push({ id: 888, userId: CLIENT_DEMO.id, direction: 'sell', currency: 'XBOX_USD', network: null, crypto: 0.00000035, status: 'completed' }));
   const history = await req('GET', '/api/me', { demo: CLIENT_DEMO });
   const old = history.data.orders.find((o) => o.id === 888);

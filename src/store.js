@@ -66,11 +66,15 @@ function normalizeBlockOrder(raw) {
 
 const defaults = () => {
   const settings = {
-    // Цена 1 USDT в USD. До получения котировки используем паритет.
+    // Цена 1 USDT в USD и 1 BTC в USD. До получения котировки используем стартовые значения.
     usdtUsd: 1,
+    btcUsd: 95000,
     // У каждой карты своя скидка к споту (%) и свой итоговый курс (USDT за $1 номинала).
     cardFees: Object.fromEntries(currencies.GIFT_KEYS.map((key) => [key, 0])),
     cardRates: {}, // заполняется ниже из спота и скидок
+    // Комиссии сетей выплаты. BEP-20 всегда 0 (моментальный вывод без комиссии).
+    networkFees: Object.fromEntries(currencies.PAYOUT_OPTION_LIST.map((o) => [o.id, o.defaultFee])),
+    payoutEnabled: Object.fromEntries(currencies.PAYOUT_OPTION_LIST.map((o) => [o.id, true])),
     enabled: {
       GOOGLE_USD: true, ITUNES_USD: true, XBOX_USD: true, APPLE_STORE_USD: true,
     },
@@ -164,7 +168,21 @@ function load() {
         s.rateUpdatedAt = null;
         s.rateSource = 'manual';
       }
-      delete s.btcUsd;
+      if (!currencies.btcUsdQuote(rawSettings.btcUsd)) {
+        s.btcUsd = defaults().settings.btcUsd;
+      }
+      const rawNetFees = rawSettings.networkFees && typeof rawSettings.networkFees === 'object' ? rawSettings.networkFees : {};
+      s.networkFees = {};
+      for (const opt of currencies.PAYOUT_OPTION_LIST) {
+        s.networkFees[opt.id] = opt.instant
+          ? 0
+          : currencies.clampNetworkFee(rawNetFees[opt.id] === undefined ? opt.defaultFee : rawNetFees[opt.id], opt);
+      }
+      const rawPayoutOn = rawSettings.payoutEnabled && typeof rawSettings.payoutEnabled === 'object' ? rawSettings.payoutEnabled : {};
+      s.payoutEnabled = {};
+      for (const opt of currencies.PAYOUT_OPTION_LIST) {
+        s.payoutEnabled[opt.id] = rawPayoutOn[opt.id] !== false;
+      }
       s.cardRates = currencies.allCardRates(s);
       delete s.giftPercent;
       delete s.rateGOOGLEUSD;
@@ -221,10 +239,12 @@ const mutate = (fn) => {
 
 function publicSettings() {
   const s = db.settings;
-  // The client only sees gift-card directions and the final USDT payout per $1 of face value.
+  // The client sees gift-card directions and payout options (BEP-20 instant & zero-fee; BTC/TRC-20/ERC-20/TON with network fee).
   return {
     texts: textCatalogue().filter((item) => Object.prototype.hasOwnProperty.call(s.textOverrides || {}, item.id)).map((item) => ({ text: item.text, value: s.textOverrides[item.id] })),
     rates: currencies.publicRates(s).map((r) => ({ ...r, rate: r.direction === 'sell' ? r.rate : null })),
+    btcUsd: currencies.btcUsdQuote(s.btcUsd) || 95000,
+    payoutOptions: currencies.publicPayoutOptions(s),
     rateUpdatedAt: s.rateUpdatedAt,
     online: !!s.online,
     refPercent: s.refPercent,
@@ -311,9 +331,12 @@ function createOrder(o) {
       userName: o.userName || 'Клиент',
       userUsername: o.userUsername || null,
       direction: 'sell',
-      payoutCurrency: currencies.PAYOUT_CURRENCY,
+      payoutId: o.payoutId || currencies.PAYOUT_OPTIONS.USDT_BEP20.id,
+      payoutCurrency: o.payoutCurrency || currencies.PAYOUT_CURRENCY,
       currency: o.currency || null, // gift-card currency/key (e.g. GOOGLE_USD)
-      network: currencies.PAYOUT_NETWORK, // fixed server-side; never supplied by the client
+      network: o.network || currencies.PAYOUT_NETWORK, // validated server-side from PAYOUT_OPTIONS
+      networkFee: Number(o.networkFee) || 0,
+      grossCrypto: o.grossCrypto ?? o.crypto,
       expiresAt: o.expiresAt ?? null, // deal time limit (gift cards — 1 hour)
       paidAt: null, // when the client tapped "I paid"
       units: o.units ?? null, // gift card face value, $

@@ -83,7 +83,7 @@ const ratesHtml = () => `<!doctype html><meta charset="utf-8"><style>${SHELL_CSS
 var rows=(d.r||[]).map(function(x){return '<div class="r"><span>🎁 '+x[0]+'</span><b>'+(x[2]?('1 $ = '+Number((Number(x[1])||0).toFixed(${currencies.PAYOUT_DECIMALS}))+' USDT'):'недоступна')+'</b></div>'}).join('');
 document.getElementById("r").innerHTML=rows+
 '<div class="r"><span>Регион / валюта</span><b>США · USD</b></div>'+
-'<div class="r"><span>Выплата</span><b>USDT (BEP-20)</b></div>'+
+'<div class="r"><span>Выплата</span><b>USDT (BEP-20 0%) · BTC · TRC-20</b></div>'+
 '<div class="s">'+(d.on?"🟢 Приём заявок открыт":"🔴 Приём заявок закрыт")+'</div>';
 document.getElementById("ex").addEventListener("click",function(){W.request("ex")});</script>`;
 

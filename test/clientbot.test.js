@@ -424,3 +424,35 @@ test('диалог в Telegram: клиент и оператор обменив�
   assert.equal(store.getOrderMessages(order.id).length, 3);
   assert.equal(store.getOrder(order.id).status, 'new');
 });
+
+test('клиентский бот: переключение сети выплаты на TRC-20 и BTC вычитает комиссию сети', async () => {
+  const client = 1099;
+  await text(client, '/start');
+  await click(client, 'c:units:GOOGLE_USD:100');
+  const askBep = lastCall('editMessageText');
+  assert.ok(markupCallbacks(askBep).includes('c:pnet:USDT_TRC20'));
+  assert.ok(markupCallbacks(askBep).includes('c:pnet:BTC'));
+
+  // Переключаемся на USDT (TRC-20) — проверяет TRON-адрес и вычитает 1.5 USDT комиссии сети.
+  await click(client, 'c:pnet:USDT_TRC20');
+  const askTrc = lastCall('editMessageText');
+  assert.match(askTrc.text, /TRC-20/);
+  await text(client, 'T' + '9aBcDeFgHiJkLmNoPqRsTuVwXyZ123456');
+  const trcOrder = store.get().orders.find((o) => String(o.userId) === String(client) && o.network === 'TRC20');
+  assert.ok(trcOrder, 'создана заявка TRC-20');
+  assert.equal(trcOrder.payoutCurrency, 'USDT');
+  assert.equal(trcOrder.networkFee, 1.5);
+  assert.equal(trcOrder.crypto, Math.floor((100 * trcOrder.rate - 1.5) * 1e6 + 1e-6) / 1e6);
+
+  // Переключаемся на BTC — проверяет BTC-адрес и вычитает комиссию сети BTC.
+  await click(client, 'c:units:GOOGLE_USD:100');
+  await click(client, 'c:pnet:BTC');
+  const askBtc = lastCall('editMessageText');
+  assert.match(askBtc.text, /Bitcoin|BTC/);
+  await text(client, 'bc1q' + 'a'.repeat(35));
+  const btcOrder = store.get().orders.find((o) => String(o.userId) === String(client) && o.payoutCurrency === 'BTC');
+  assert.ok(btcOrder, 'создана заявка BTC');
+  assert.equal(btcOrder.network, 'BTC');
+  assert.equal(btcOrder.networkFee, 0.00005);
+  assert.ok(btcOrder.grossCrypto > btcOrder.crypto);
+});
