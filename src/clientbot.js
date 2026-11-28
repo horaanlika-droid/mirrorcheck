@@ -9,7 +9,7 @@ const store = require('./store');
 const bus = require('./bus');
 const orderChat = require('./orderchat');
 const currencies = require('./currencies');
-const { esc, fmtUsdt, fmtOrderPayout, fmtDate, parseNum } = require('./util');
+const { esc, fmtCrypto, fmtUsdt, fmtOrderPayout, fmtDate, parseNum } = require('./util');
 const widget = require('./widget');
 
 const clientFlows = new Map(); // userId -> состояние FSM
@@ -29,8 +29,8 @@ const loyaltyLabel = (o) => Number(o.loyaltyDiscountPercent) > 0
 const GIFT_PRIVACY =
   '🛡 <b>Минимальный цифровой след</b>\n' +
   '• Где и по какому курсу вы купили карту — нам не важно. Хоть на маркетплейсе, хоть у знакомых, хоть за наличные: важен только рабочий код.\n' +
-  '• Мы не просим документы и регистрацию: только код карты и адрес кошелька для USDT (BEP-20).\n' +
-  '• Выплата приходит прямо на ваш кошелёк — без банков, бирж и посредников.\n' +
+  '• Мы не просим документы и регистрацию: только код карты и адрес кошелька для выплаты.\n' +
+  '• Моментальный вывод без сетевого сбора — USDT (BEP-20), а также доступны Bitcoin (BTC), TRC-20, ERC-20 и TON.\n' +
   '• Меньше мест, где фиксируются ваши данные, — меньше цифровой след.';
 
 /* ---------- состояние ---------- */
@@ -102,7 +102,8 @@ function clientMenu(ctx) {
   const online = s.online ? '🟢 Обмен <b>ОНЛАЙН</b>' : '🔴 Обмен <b>ОФФЛАЙН</b>';
   return show(ctx,
     `🌌 <b>Pricelex Worldwide | Official</b> — обмен\n${online}\n\n` +
-    `Выкупаем подарочные карты Google, iTunes, Xbox и Apple Store (регион США, USD) с выплатой только в USDT (BEP-20).\n` +
+    `Выкупаем подарочные карты Google, iTunes, Xbox и Apple Store (регион США, USD).\n` +
+    `Моментальный вывод без комиссии — <b>USDT (BEP-20)</b>; также доступны <b>BTC</b>, <b>TRC-20</b>, <b>ERC-20</b> и <b>TON</b> по комиссии сети.\n` +
     `Сумма выплаты видна до создания заявки.\n\n` +
     `Что хотите сделать?`,
     menuKb(s));
@@ -133,7 +134,7 @@ function giftRules(ctx, pair) {
     `1. Карта должна быть <b>${esc(label)}</b> региона <b>США</b>, в <b>USD</b>, с полным неиспользованным балансом. Карты других регионов и валют не принимаем.\n` +
     `2. Сначала создаётся заявка, затем <b>подключается оператор</b>. <b>Ничего не отправляйте и никому не сообщайте код, пока оператор не попросит.</b>\n` +
     `3. Код карты вы отправляете здесь (или в приложении) <b>только после подключения оператора</b>. Он проверит карту (обычно 5–15 минут).\n` +
-    `4. Выплата в <b>USDT</b> только в сети <b>BNB Smart Chain (BEP-20)</b>. Сумма считается по текущему курсу этой карты.\n` +
+    `4. Выплата: <b>USDT (BEP-20)</b> — моментально и <b>без сетевого сбора</b>; либо <b>BTC</b>, <b>TRC-20</b>, <b>ERC-20</b>, <b>TON</b> по тарифу сети.\n` +
     `5. Поддержка никогда не просит код или деньги вне заявки. Не передавайте код никому, кроме оператора внутри заявки.\n` +
     `6. На сделку даётся <b>1 час</b> с момента создания заявки. Если карта окажется недействительной, заявку отклонят без выплаты.\n\n` +
     GIFT_PRIVACY,
@@ -161,8 +162,8 @@ function giftIntro(ctx, pair, promo = null) {
   }
   kb.text('↩️ К списку карт', 'c:exchange');
   return show(ctx,
-    `${esc(pair.label)} → USDT (BEP-20)\n\n` +
-    `Вы отдаёте код карты ${esc(pair.label)} номиналом в <b>USD</b> — мы отправляем USDT на ваш кошелёк в сети BNB Smart Chain (BEP-20).\n\n` +
+    `${esc(pair.label)} → USDT (BEP-20) / BTC / TRC-20\n\n` +
+    `Вы отдаёте код карты ${esc(pair.label)} номиналом в <b>USD</b> — мы отправляем USDT (BEP-20 моментально без сетевого сбора) или BTC / TRC-20 / ERC-20 / TON по тарифу сети.\n\n` +
     `💱 Курс этой карты: <b>1 $ = ${esc(fmtUsdt(effectiveRate))}</b>. Курс обновляется автоматически.\n` +
     (feeDiscount > 0 ? `🎉 Каждый 5-й обмен: комиссия снижена на <b>${feeDiscount} п.п.</b>.\n` : '') +
     (promo ? `🏷 Промокод <b>${esc(promo.code)}</b>: <b>+${promo.percent}%</b> к выплате${promo.minUnits ? ` (от $${promo.minUnits})` : ''}.\n` : '') +
@@ -174,35 +175,69 @@ function giftIntro(ctx, pair, promo = null) {
 }
 
 // Заявка создаётся БЕЗ кода: клиент отправляет код только после подключения оператора.
-function askGiftWallet(ctx, units, pair, promoCode = null) {
-  const back = new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`);
+function askGiftWallet(ctx, units, pair, promoCode = null, payoutId = 'USDT_BEP20') {
+  const s = store.get().settings;
+  let opt = currencies.findPayoutOption(payoutId) || currencies.PAYOUT_OPTIONS.USDT_BEP20;
+  if (!currencies.isPayoutEnabled(s, opt)) opt = currencies.PAYOUT_OPTIONS.USDT_BEP20;
   const check = promoCode ? store.validatePromo(promoCode, { units }) : null;
-  if (check && !check.ok) return show(ctx, esc(check.error), back);
+  if (check && !check.ok) {
+    return show(ctx, esc(check.error), new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`));
+  }
   ensureUser(ctx);
   const loyalty = store.loyaltyStatus(uidOf(ctx));
   const feeDiscount = loyalty.eligible
-    ? currencies.rateAfterFeeDiscount(store.get().settings, pair.currency, loyalty.discountPercent).feeDiscountPercent
+    ? currencies.rateAfterFeeDiscount(s, pair.currency, loyalty.discountPercent).feeDiscountPercent
     : 0;
-  const quote = currencies.giftPayout(store.get().settings, units, pair.currency, check?.promo.percent, feeDiscount);
+  const quote = currencies.giftPayout(s, units, pair.currency, check?.promo.percent, feeDiscount, opt);
   if (!quote) return assetScreen(ctx);
-  clientFlows.set(uidOf(ctx), { type: 'gift_wallet', units, key: pair.key, promoCode: promoCode || null });
+
+  const kb = new InlineKeyboard();
+  const enabledNets = currencies.PAYOUT_OPTION_LIST.filter((o) => currencies.isPayoutEnabled(s, o));
+  enabledNets.forEach((o, idx) => {
+    const netFee = currencies.networkFeeOf(s, o);
+    const active = o.id === opt.id ? '✓ ' : '';
+    const suffix = o.instant ? '0%' : `-${netFee} ${o.feeUnit}`;
+    kb.text(`${active}${o.shortLabel} (${suffix})`, `c:pnet:${o.id}`);
+    if (idx % 2 === 1 || idx === enabledNets.length - 1) kb.row();
+  });
+  kb.text('↩️ К номиналу', `c:giftnom:${pair.key}`);
+
+  clientFlows.set(uidOf(ctx), {
+    type: 'gift_wallet',
+    units,
+    key: pair.key,
+    promoCode: promoCode || null,
+    payoutId: opt.id,
+  });
+
+  const fmtQuote = (val) => fmtCrypto(val, opt.payoutCurrency, opt.decimals);
+  const feeInfo = opt.instant
+    ? '⚡ <b>Моментальный вывод без комиссии</b> (сеть BNB Smart Chain BEP-20).'
+    : `💸 Комиссия сети <b>${esc(opt.label)}</b>: <b>${esc(fmtQuote(quote.networkFee))}</b> (до вычета: ${esc(fmtQuote(quote.grossCrypto))}).`;
+  const netInfo = quote.crypto > 0
+    ? `Итого к выплате за $${units}: <b>${esc(fmtQuote(quote.crypto))}</b>`
+    : `⚠️ Номинала $${units} недостаточно для покрытия комиссии сети (${esc(fmtQuote(quote.networkFee))}). Выберите BEP-20 без комиссии или увеличьте номинал.`;
+
   return show(ctx,
-    `👛 <b>Кошелёк для USDT (BEP-20)</b>\n\n` +
-    `Выплата за карту на $${units} по текущему курсу: <b>${fmtUsdt(quote.crypto)}</b>.\n` +
+    `👛 <b>Кошелёк для ${esc(opt.label)}</b>\n\n` +
+    `${netInfo}\n` +
+    `${feeInfo}\n` +
     (feeDiscount > 0 ? `🎉 Учтена скидка комиссии <b>${feeDiscount} п.п.</b> за каждый 5-й обмен.\n` : '') +
-    `В кошельке или на бирже выберите получение USDT в сети <b>BNB Smart Chain (BEP-20)</b>. ` +
-    `Пришлите адрес: <b>0x</b> и 40 шестнадцатеричных символов. По одному адресу сеть определить нельзя.\n\n` +
-    `/cancel — отмена`, back);
+    `\n${esc(opt.walletHint)}\n` +
+    `Если нужна другая сеть выплаты — переключите кнопками ниже.\n\n` +
+    `/cancel — отмена`, kb);
 }
 
-function createGiftOrder(ctx, units, wallet, pair, promoCode = null) {
+function createGiftOrder(ctx, units, wallet, pair, promoCode = null, payoutId = 'USDT_BEP20') {
   const s = store.get().settings;
   if (!s.online) return { error: 'Обмен временно недоступен — попробуйте позже.' };
   if (!pair || pair.kind !== 'gift') return { error: 'Неизвестный тип карты.' };
   if (!currencies.isEnabled(s, pair.key)) return { error: 'Эта карта сейчас недоступна для выкупа.' };
+  const opt = currencies.findPayoutOption(payoutId) || currencies.PAYOUT_OPTIONS.USDT_BEP20;
+  if (!currencies.isPayoutEnabled(s, opt)) return { error: `Выплата в ${opt.label} сейчас недоступна.` };
   const unitsError = currencies.validateUnits(units);
   if (unitsError) return { error: unitsError };
-  const walletError = currencies.validateWallet(wallet);
+  const walletError = currencies.validateWallet(wallet, opt);
   if (walletError) return { error: walletError };
   let promo = null;
   if (promoCode) {
@@ -215,9 +250,16 @@ function createGiftOrder(ctx, units, wallet, pair, promoCode = null) {
   const feeDiscount = loyalty.eligible
     ? currencies.rateAfterFeeDiscount(s, pair.currency, loyalty.discountPercent).feeDiscountPercent
     : 0;
-  const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0, feeDiscount);
-  if (!payout || !(payout.crypto > 0)) {
-    return { error: 'Курс выплаты в USDT временно недоступен — попробуйте позже.' };
+  const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0, feeDiscount, opt);
+  if (!payout) {
+    return { error: `Курс выплаты в ${opt.payoutCurrency} временно недоступен — попробуйте позже.` };
+  }
+  if (!(payout.crypto > 0)) {
+    return {
+      error: payout.networkFee > 0
+        ? `Сумма выплаты меньше комиссии сети (${payout.networkFee} ${payout.payoutCurrency}). Выберите BEP-20 без комиссии или увеличьте номинал.`
+        : 'Сумма выплаты слишком мала — увеличьте номинал карты.',
+    };
   }
   const order = store.createOrder({
     userId: uidOf(ctx),
@@ -226,6 +268,11 @@ function createGiftOrder(ctx, units, wallet, pair, promoCode = null) {
     expiresAt: Date.now() + (Number(pair.ttlMinutes) || 60) * 60 * 1000,
     units,
     currency: pair.currency,
+    payoutId: payout.payoutId,
+    payoutCurrency: payout.payoutCurrency,
+    network: payout.network,
+    networkFee: payout.networkFee,
+    grossCrypto: payout.grossCrypto,
     wallet,
     rate: payout.rate,
     crypto: payout.crypto,
@@ -391,7 +438,7 @@ function infoScreen(ctx) {
   const s = store.get().settings;
   return show(ctx,
     `ℹ️ <b>Pricelex Worldwide | Official</b>\n\n` +
-    `Выплата только в USDT (BEP-20). Сумма видна до создания заявки:\n${rateListText()}\n\n` +
+    `Моментальный вывод без комиссии — USDT (BEP-20); также доступны Bitcoin (BTC), TRC-20, ERC-20 и TON по комиссии сети:\n${rateListText()}\n\n` +
     `Статус: ${s.online ? '🟢 Онлайн' : '🔴 Оффлайн'}\n\n` +
     `📇 Оператор: ${esc(s.operator)}\n📣 Канал: ${esc(s.channel)}\n💬 Чат: ${esc(s.chat)}`,
     backMenuKb());
@@ -505,6 +552,13 @@ async function handleClientCallback(ctx, d) {
       'Введите номинал карты в $ (кратно $10, минимум $10):\n\n/cancel — отмена',
       new InlineKeyboard().text('↩️ К номиналу', `c:giftnom:${pair.key}`));
   }
+  if (d.startsWith('c:pnet:')) {
+    const flow = clientFlows.get(uidOf(ctx));
+    if (!flow || flow.type !== 'gift_wallet') return assetScreen(ctx);
+    const pair = currencies.get(flow.key);
+    if (!pair || pair.kind !== 'gift') return assetScreen(ctx);
+    return askGiftWallet(ctx, flow.units, pair, flow.promoCode || null, d.slice('c:pnet:'.length));
+  }
   if (d.startsWith('c:units:')) {
     const parts = d.split(':');
     const flow = clientFlows.get(uidOf(ctx));
@@ -518,7 +572,7 @@ async function handleClientCallback(ctx, d) {
       return show(ctx, 'Эта карта сейчас недоступна. Выберите другую или загляните позже.', assetKb());
     }
     if (!Number.isFinite(units) || currencies.validateUnits(units)) return giftIntro(ctx, pair);
-    return askGiftWallet(ctx, units, pair, flow && flow.key === pair.key ? flow.promoCode : null);
+    return askGiftWallet(ctx, units, pair, flow && flow.key === pair.key ? flow.promoCode : null, flow?.payoutId || 'USDT_BEP20');
   }
   if (d.startsWith('c:buy:')) {
     const pair = currencies.get(d.slice('c:buy:'.length));
@@ -576,13 +630,13 @@ async function handleClientText(ctx) {
     if (!Number.isFinite(n) || currencies.validateUnits(units)) {
       return ctx.reply('Минимум $10, шаг $10. Например: 20');
     }
-    return askGiftWallet(ctx, units, pair, f.promoCode || null);
+    return askGiftWallet(ctx, units, pair, f.promoCode || null, f.payoutId || 'USDT_BEP20');
   }
   if (f.type === 'gift_wallet') {
     const wallet = text.trim();
     const units = f.units;
     const pair = currencies.get(f.key || currencies.GIFT_KEY);
-    const { order, error } = createGiftOrder(ctx, units, wallet, pair, f.promoCode || null);
+    const { order, error } = createGiftOrder(ctx, units, wallet, pair, f.promoCode || null, f.payoutId || 'USDT_BEP20');
     if (error) return ctx.reply(`⚠️ ${error}`);
     clientFlows.delete(uidOf(ctx));
     return show(ctx,

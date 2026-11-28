@@ -32,10 +32,16 @@ const payoutText = (o) => esc(fmtOrderPayout(o));
 
 function orderText(o) {
   const ref = o.referrer ? store.getUser(o.referrer) : null;
+  const payoutCur = currencies.payoutCurrencyOf(o);
+  const netFee = Number(o.networkFee) || 0;
+  const feeLine = netFee > 0
+    ? `💸 Комиссия сети: <b>${esc(String(netFee))} ${esc(payoutCur)}</b> (до комиссии: ${esc(String(o.grossCrypto ?? o.crypto))} ${esc(payoutCur)})\n`
+    : (o.network === currencies.PAYOUT_NETWORK ? '⚡ Вывод: <b>BEP-20 · моментально, без комиссии</b>\n' : '');
   return (
     `📥 <b>Заявка #${o.id}</b>\n` +
     `👤 ${esc(o.userName)}${o.userUsername ? ' (@' + esc(o.userUsername) + ')' : ''} · <code>${esc(o.userId)}</code>\n` +
     `🎁 Карта: <b>${esc(dirLabel(o))} $${giftUnits(o)}</b> → выплата ${payoutText(o)}\n` +
+    feeLine +
     (o.promoCode ? `🏷 Промокод: <b>${esc(o.promoCode)}</b> (+${o.promoPercent}%)\n` : '') +
     (Number(o.loyaltyDiscountPercent) > 0 ? `🎉 Скидка комиссии за каждый 5-й обмен: <b>${o.loyaltyDiscountPercent} п.п.</b>\n` : '') +
     `🎟 Код карты: <code>${esc(o.giftCode || '—')}</code>\n` +
@@ -133,7 +139,7 @@ async function broadcast(text, options = {}) {
 const CLIENTS_ANNOUNCE_OPEN =
   '🟢 <b>Pricelex Worldwide: приём карт открыт!</b>\n\n' +
   'Снова принимаем подарочные карты Google, iTunes, Xbox и Apple Store региона США в USD 🎁\n' +
-  'Выплата только в USDT (BEP-20), без документов и регистрации — в приложении и в боте.';
+  'Моментальный вывод без комиссии — USDT (BEP-20), а также доступны Bitcoin (BTC), TRC-20, ERC-20 и TON по комиссии сети.';
 
 async function announceToClients(text) {
   if (!bot) return { sent: 0, failed: 0 };
@@ -411,17 +417,27 @@ function settingsKb(s) {
 
 function settingsText(s) {
   const base = Number(s.usdtUsd) > 0 ? `$${Number(s.usdtUsd).toLocaleString('ru-RU', { maximumFractionDigits: 8 })} за USDT` : 'ещё не подтянут';
+  const btcBase = currencies.btcUsdQuote(s.btcUsd)
+    ? `$${Number(s.btcUsd).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} за BTC`
+    : '—';
   const cards = currencies.list().map((p) => {
     const rate = currencies.rateOf(s, p.currency);
     const example = currencies.giftPayout(s, 10, p.currency);
     return `• ${esc(p.label)}: <b>1 $ = ${rate ? fmtUsdt(rate) : '—'}</b> ` +
       `(скидка ${currencies.feeOf(s, p.key)}% · $10 = ${example ? fmtUsdt(example.crypto) : '—'}) ${currencies.isEnabled(s, p.key) ? '✅' : '⛔'}`;
   }).join('\n');
+  const nets = currencies.PAYOUT_OPTION_LIST.map((opt) => {
+    const on = currencies.isPayoutEnabled(s, opt);
+    const fee = currencies.networkFeeOf(s, opt);
+    const feeTxt = opt.instant ? '⚡ моментально, 0 комиссии' : `комиссия сети ${fee} ${opt.feeUnit}`;
+    return `• ${esc(opt.label)}: ${feeTxt} ${on ? '✅' : '⛔'}`;
+  }).join('\n');
   return (
     `⚙️ <b>Настройки</b> (применяются мгновенно)\n\n` +
-    `📊 Выплата: <b>USDT (BEP-20)</b>\nСпотовый курс USDT/USD: <b>${base}</b>\n` +
+    `📊 Спотовый курс USDT/USD: <b>${base}</b> · BTC/USD: <b>${btcBase}</b>\n` +
     (s.rateUpdatedAt ? `Обновлён: ${fmtDate(s.rateUpdatedAt)} (${esc(s.rateSource || '?')})\n` : '') +
     `\n🎁 <b>Курс каждой карты — отдельный:</b>\n${cards}\n` +
+    `\n🌐 <b>Сети выплаты:</b>\n${nets}\n` +
     `\n🎁 Реферальный процент: <b>${s.refPercent}%</b>\n` +
     `Статус: ${s.online ? '🟢 Онлайн' : '🔴 Оффлайн'}\n` +
     `📇 ${esc(s.operator)} · 📣 ${esc(s.channel)}\n💬 ${esc(s.chat)}`
@@ -482,7 +498,8 @@ for (const p of currencies.list()) {
 }
 
 async function txPrompt(ctx, o) {
-  const example = o.network === currencies.PAYOUT_NETWORK ? ' (например, https://bscscan.com/tx/0x…)' : '';
+  const opt = currencies.findPayoutOption({ payoutCurrency: o.payoutCurrency, network: o.network });
+  const example = opt && opt.txExample ? ` (например, ${opt.txExample})` : '';
   flows.set(ctx.from.id, { type: 'tx', orderId: o.id, version: o.version || 0 });
   return ctx.reply(
     `🔗 Заявка #${o.id} — отправьте ссылку на транзакцию в блокчейне${example}.\n\nСсылка появится у клиента в завершённой заявке. Это опционально — можно оставить пустым, отправив /cancel.\n\nТекущая: ${o.txUrl ? esc(o.txUrl) : '— нет —'}\n/cancel — отмена`,

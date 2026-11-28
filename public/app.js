@@ -51,7 +51,7 @@
   // dir — selected direction (key from /api/settings → rates[]).
   // screen — which exchange sub-screen we are on: 'picker' (asset selection) or 'form' (exchange form).
   // sheet — which bottom sheet is open (crypto | gift) or null.
-  const S = { settings: null, me: null, loyalty: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, reviews: null, reviewsLoading: false, reviewTarget: null, reviewRating: 5, reviewOpen: false, adminReviewRating: 5, adminReviewEditId: null, adminReviews: [], adminPromos: [], adminPromoEditId: null, appliedPromo: null, inlineEdit: false, layoutEdit: false, tickerEditKind: null };
+  const S = { settings: null, me: null, loyalty: null, orders: [], order: null, tab: 'exchange', dir: 'GOOGLE_USD', payoutId: 'USDT_BEP20', isDemo: false, support: [], screen: 'picker', sheet: null, giftRules: false, giftRuleKey: null, adminOpen: false, admin: null, reviews: null, reviewsLoading: false, reviewTarget: null, reviewRating: 5, reviewOpen: false, adminReviewRating: 5, adminReviewEditId: null, adminReviews: [], adminPromos: [], adminPromoEditId: null, appliedPromo: null, inlineEdit: false, layoutEdit: false, tickerEditKind: null };
 
   const FALLBACK_TICKER = [
     'PRICELEX WORLDWIDE',
@@ -200,6 +200,68 @@
   }
 
   const USDT_DECIMALS = 6; // точность выплаты сервиса
+  const BTC_DECIMALS = 8;
+  const FALLBACK_PAYOUT_OPTIONS = [
+    {
+      id: 'USDT_BEP20', payoutCurrency: 'USDT', network: 'BEP20', label: 'USDT (BEP-20)', shortLabel: 'BEP-20',
+      coin: 'usdt', symbol: '₮', decimals: USDT_DECIMALS, instant: true, networkFee: 0, feeUnit: 'USDT',
+      badge: 'Моментально · без комиссии', walletPlaceholder: '0x…',
+      walletHint: 'Моментальный вывод без комиссии сети. Выберите получение USDT в сети BNB Smart Chain (BEP-20). Адрес начинается с 0x.',
+      walletPattern: '^0x(?!0{40}$)[0-9a-fA-F]{40}$',
+      walletError: 'Укажите ненулевой адрес для USDT (BEP-20): 0x и 40 шестнадцатеричных символов.',
+      enabled: true,
+    },
+    {
+      id: 'USDT_TRC20', payoutCurrency: 'USDT', network: 'TRC20', label: 'USDT (TRC-20)', shortLabel: 'TRC-20',
+      coin: 'usdt', symbol: '₮', decimals: USDT_DECIMALS, instant: false, networkFee: 1.5, feeUnit: 'USDT',
+      badge: 'По комиссии сети', walletPlaceholder: 'T…',
+      walletHint: 'Вывод USDT в сети TRON (TRC-20) с вычетом комиссии сети. Адрес начинается с T (34 символа).',
+      walletPattern: '^T[1-9A-HJ-NP-Za-km-z]{33}$',
+      walletError: 'Укажите корректный адрес для USDT (TRC-20): начинается с T, 34 символа.',
+      enabled: true,
+    },
+    {
+      id: 'USDT_ERC20', payoutCurrency: 'USDT', network: 'ERC20', label: 'USDT (ERC-20)', shortLabel: 'ERC-20',
+      coin: 'usdt', symbol: '₮', decimals: USDT_DECIMALS, instant: false, networkFee: 3, feeUnit: 'USDT',
+      badge: 'По комиссии сети', walletPlaceholder: '0x…',
+      walletHint: 'Вывод USDT в сети Ethereum (ERC-20) с вычетом комиссии сети. Адрес начинается с 0x.',
+      walletPattern: '^0x(?!0{40}$)[0-9a-fA-F]{40}$',
+      walletError: 'Укажите ненулевой адрес для USDT (ERC-20): 0x и 40 шестнадцатеричных символов.',
+      enabled: true,
+    },
+    {
+      id: 'USDT_TON', payoutCurrency: 'USDT', network: 'TON', label: 'USDT (TON)', shortLabel: 'TON',
+      coin: 'usdt', symbol: '₮', decimals: USDT_DECIMALS, instant: false, networkFee: 0.5, feeUnit: 'USDT',
+      badge: 'По комиссии сети', walletPlaceholder: 'UQ… или EQ…',
+      walletHint: 'Вывод USDT в сети TON с вычетом комиссии сети. Адрес начинается с UQ или EQ (48 символов).',
+      walletPattern: '^(?:EQ|UQ)[A-Za-z0-9_-]{46}$',
+      walletError: 'Укажите корректный адрес для USDT (TON): начинается с UQ или EQ, 48 символов.',
+      enabled: true,
+    },
+    {
+      id: 'BTC', payoutCurrency: 'BTC', network: 'BTC', label: 'Bitcoin (BTC)', shortLabel: 'BTC',
+      coin: 'btc', symbol: '₿', decimals: BTC_DECIMALS, instant: false, networkFee: 0.00005, feeUnit: 'BTC',
+      badge: 'По комиссии сети', walletPlaceholder: 'bc1… / 1… / 3…',
+      walletHint: 'Вывод в Bitcoin (BTC) с вычетом комиссии сети. Адрес начинается с bc1, 1 или 3.',
+      walletPattern: '^(?:bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{25,87}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$',
+      walletError: 'Укажите корректный Bitcoin-адрес (начинается с bc1, 1 или 3).',
+      enabled: true,
+    },
+  ];
+  function payoutOptions() {
+    const list = S.settings && Array.isArray(S.settings.payoutOptions) && S.settings.payoutOptions.length
+      ? S.settings.payoutOptions
+      : FALLBACK_PAYOUT_OPTIONS;
+    const enabled = list.filter((o) => o.enabled !== false);
+    return enabled.length ? enabled : [FALLBACK_PAYOUT_OPTIONS[0]];
+  }
+  function currentPayoutOption() {
+    const list = payoutOptions();
+    const found = list.find((o) => o.id === S.payoutId) || list.find((o) => o.id === 'USDT_BEP20') || list[0];
+    if (found && S.payoutId !== found.id) S.payoutId = found.id;
+    return found || FALLBACK_PAYOUT_OPTIONS[0];
+  }
+  const fmtPayout = (v, opt) => fmtCrypto(v, (opt && opt.payoutCurrency) || 'USDT', (opt && opt.decimals) ?? USDT_DECIMALS);
   // Без актуальных курсов показываем карты, но не разрешаем создать заявку.
   const giftFallback = (key, label, symbol, coin) => ({
     key, direction: 'sell', currency: key, network: 'BEP20', kind: 'gift', payoutCurrency: 'USDT', payoutDecimals: USDT_DECIMALS,
@@ -244,16 +306,37 @@
     if (!(p > 0)) return r;
     return Math.round((r * (1 + Math.min(p, 50) / 100)) * 1e12) / 1e12;
   }
-  function giftPayout(units, product = null, promoPercent = 0) {
+  function giftPayoutCalc(units, product = null, promoPercent = 0, payoutOpt = null) {
     const dir = product || (isGiftDir(currentDir()) ? currentDir() : currentSellDir());
-    const baseRate = Number(dir && dir.rate) || 0;
-    if (!(baseRate > 0)) return null;
-    const effectiveRate = promoPercent > 0 ? applyPromoRate(baseRate, promoPercent) : baseRate;
-    return floorTo((Number(units) || 0) * effectiveRate, dir.payoutDecimals);
+    const opt = payoutOpt || currentPayoutOption();
+    const baseUsdtRate = Number(dir && dir.rate) || 0;
+    if (!(baseUsdtRate > 0)) return null;
+    let convertFactor = 1;
+    if (opt.payoutCurrency === 'BTC') {
+      const btcUsd = Number(S.settings && S.settings.btcUsd) || 95000;
+      const usdtUsd = Number(S.settings && S.settings.usdtUsd) || 1;
+      if (!(btcUsd > 0)) return null;
+      convertFactor = usdtUsd / btcUsd;
+    }
+    const baseRate = Math.round((baseUsdtRate * convertFactor) * 1e12) / 1e12;
+    const effectiveUsdtRate = promoPercent > 0 ? applyPromoRate(baseUsdtRate, promoPercent) : baseUsdtRate;
+    const effectiveRate = promoPercent > 0 ? Math.round((effectiveUsdtRate * convertFactor) * 1e12) / 1e12 : baseRate;
+    const dec = Number.isFinite(Number(opt.decimals)) ? Number(opt.decimals) : USDT_DECIMALS;
+    const scale = 10 ** dec;
+    const grossCrypto = floorTo((Number(units) || 0) * effectiveRate, dec);
+    const networkFee = opt.instant ? 0 : (Number(opt.networkFee) || 0);
+    const crypto = Math.max(0, Math.round((grossCrypto - networkFee) * scale) / scale);
+    return { crypto, grossCrypto, networkFee, rate: effectiveRate, baseRate, opt };
   }
-  function giftWalletValid(address, product = null) {
-    const dir = product || (isGiftDir(currentDir()) ? currentDir() : currentSellDir());
-    const pattern = dir && dir.walletPattern;
+  function giftPayout(units, product = null, promoPercent = 0, payoutOpt = null) {
+    const calc = giftPayoutCalc(units, product, promoPercent, payoutOpt);
+    return calc ? calc.crypto : null;
+  }
+  function giftWalletValid(address, payoutOptOrProduct = null) {
+    const opt = (payoutOptOrProduct && payoutOptOrProduct.walletPattern)
+      ? payoutOptOrProduct
+      : currentPayoutOption();
+    const pattern = opt && opt.walletPattern;
     return !!pattern && new RegExp(pattern).test(String(address || '').trim());
   }
   function currentDir() {
@@ -638,8 +721,8 @@
           <section class="exchange-hero" data-block="hero" data-block-section="home">
             <div class="hero-copy">
               <div class="hero-kicker"><i></i> ПРИВАТНЫЙ ОБМЕН ЦИФРОВЫХ ПОДАРОЧНЫХ КАРТ</div>
-              <h1>Подарочные карты<br>на <span>USDT</span></h1>
-              <p>Выберите карту и номинал — увидите сумму до обмена. Выплата только в сети BNB Smart Chain (BEP-20).</p>
+              <h1>Подарочные карты<br>на <span>USDT и BTC</span></h1>
+              <p>Выберите карту и номинал — увидите сумму до обмена. Моментальный вывод без комиссии в BEP-20, а также BTC, TRC-20, ERC-20 и TON по комиссии сети.</p>
               <button class="hero-cta" id="heroStart">Начать обмен <span aria-hidden="true">→</span></button>
               <div class="hero-footnote"><span>Курс USDT/USD</span><b>·</b><span>Личная поддержка</span></div>
             </div>
@@ -674,9 +757,9 @@
           <details class="exchange-steps" data-block="steps" data-block-section="home">
             <summary>Как проходит обмен?</summary>
             <ol>
-              <li>Выберите карту, укажите адрес USDT (BEP-20) и создайте заявку.</li>
+              <li>Выберите карту, сеть выплаты (BEP-20 без комиссии или BTC / TRC-20 и др.) и создайте заявку.</li>
               <li>Дождитесь оператора. Передайте код карты только по его запросу.</li>
-              <li>После проверки получите USDT на свой кошелёк.</li>
+              <li>После проверки получите выплату на свой кошелёк.</li>
             </ol>
           </details>`,
       buyNote: `
@@ -696,8 +779,10 @@
             <div class="f-box" style="margin-top:10px"><div class="coin-ic ${esc(sell.coin)}" id="giftCardIcon">${coinInner(sell)}</div><input id="inUnits" type="number" inputmode="numeric" placeholder="10" min="${minUnits}" step="${step}" value="10"></div>
             <div class="f-hint">Номинал карты: от $${minUnits}, шаг $${step}</div>
             <div class="f-sep"><div class="arr">${ICONS.down}</div></div>
-            <div class="f-label"><span>Вы получите · BEP-20</span><span id="giftLimits"></span></div>
-            <div class="f-box"><div class="coin-ic usdt">₮</div><input id="outPayout" type="text" readonly placeholder="—"></div>
+            <div class="f-label"><span>Сеть и валюта выплаты</span><span id="payoutSpeedBadge"></span></div>
+            <div class="payout-net-grid" id="segPayoutNet"></div>
+            <div class="f-label"><span>Вы получите · <b id="payoutLabelShort">BEP-20</b></span><span id="giftLimits"></span></div>
+            <div class="f-box"><div class="coin-ic usdt" id="outPayoutIcon">₮</div><input id="outPayout" type="text" readonly placeholder="—"></div>
             <div class="promo-wrap">
               <div class="promo-row">
                 <div class="f-box promo-box"><span class="promo-ic" aria-hidden="true">🏷</span><input id="inPromo" placeholder="Промокод (если есть)" maxlength="32" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off" value="${esc(S.appliedPromo ? S.appliedPromo.code : '')}"></div>
@@ -707,20 +792,20 @@
               <div class="f-err" id="promoErr"></div>
             </div>
             <div class="f-meta" id="giftMeta"></div>
-            <div class="info-note" style="margin-top:10px">⏱ На сделку даётся <b>1 час</b>: создайте заявку → <b>дождитесь оператора</b> → отправьте код <b>только после его запроса</b> — оператор проверит карту и выплатит USDT (BEP-20).</div>
+            <div class="info-note" style="margin-top:10px">⏱ На сделку даётся <b>1 час</b>: создайте заявку → <b>дождитесь оператора</b> → отправьте код <b>только после его запроса</b> — оператор проверит карту и отправит выплату.</div>
           </div>`,
       formInfo: `
           <div class="card" data-block="formInfo" data-block-section="form">
             <div class="card-title">Где взять карту</div>
             <div class="info-note" id="giftInfo">Где и по какому курсу вы купили карту — не важно. Мы не спрашиваем чек и цену покупки: важно, чтобы карта работала. Регион <b>США</b>, номинал в <b>USD</b>, полный неиспользованный баланс.</div>
             <div class="info-warn">⚠️ Проверьте регион карты: США, валюта номинала — <b>USD ($)</b>.</div>
-            <div class="info-note" style="margin-top:10px">🛡 <b>Минимальный цифровой след</b><br>Карту можно купить <b>за наличные</b> — она не привязана к банковскому счёту или паспорту. Мы не просим документы и регистрацию: только код карты и адрес для выплаты USDT. Выплата приходит прямо на кошелёк — без банков, бирж и посредников. Меньше следов данных — спокойнее.</div>
+            <div class="info-note" style="margin-top:10px">🛡 <b>Минимальный цифровой след</b><br>Карту можно купить <b>за наличные</b> — она не привязана к банковскому счёту или паспорту. Мы не просим документы и регистрацию: только код карты и адрес для выплаты. Выплата приходит прямо на кошелёк — без банков, бирж и посредников. Меньше следов данных — спокойнее.</div>
           </div>`,
       formWallet: `
           <div class="card" data-block="formWallet" data-block-section="form">
-            <div class="card-title">Адрес для выплаты USDT (BEP-20)</div>
-            <div class="f-box"><div class="coin-ic usdt">₮</div><input id="inPayoutWallet" placeholder="0x…" aria-label="Адрес кошелька USDT (BEP-20)" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
-            <div class="f-hint" id="giftWalletHint">${esc(sell.walletHint)}</div>
+            <div class="card-title" id="walletCardTitle">Адрес для выплаты USDT (BEP-20)</div>
+            <div class="f-box"><div class="coin-ic usdt" id="inWalletIcon">₮</div><input id="inPayoutWallet" placeholder="0x…" aria-label="Адрес кошелька для выплаты" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"></div>
+            <div class="f-hint" id="giftWalletHint">${esc(currentPayoutOption().walletHint)}</div>
             <div class="f-err" id="giftErr"></div>
           </div>`,
     };
@@ -856,9 +941,17 @@
     const units = Math.max(0, Math.floor((Number($('#inUnits')?.value) || 0) / step) * step);
     if (btn) btn.disabled = true;
     try {
+      const opt = currentPayoutOption();
       const r = await api('/api/promo/check', {
         method: 'POST',
-        body: { code, currency: dir && dir.currency, units: units || null },
+        body: {
+          code,
+          currency: dir && dir.currency,
+          units: units || null,
+          payoutId: opt.id,
+          payoutCurrency: opt.payoutCurrency,
+          network: opt.network,
+        },
       });
       S.appliedPromo = r.promo;
       input.value = r.promo.code;
@@ -913,13 +1006,53 @@
     const promoExpired = promo && promo.expiresAt && Date.now() > Number(promo.expiresAt);
     const promoTooLow = promo && promo.minUnits && nominal > 0 && nominal < Number(promo.minUnits);
     const promoActive = !!(promo && !promoExpired && !promoTooLow);
-    const effectiveRate = promoActive ? applyPromoRate(rate, promo.percent) : rate;
-    const basePayout = giftPayout(nominal, payoutDir, 0);
-    const payout = promoActive ? giftPayout(nominal, payoutDir, promo.percent) : basePayout;
-    const scale = 10 ** dir.payoutDecimals;
-    const bonus = promoActive && payout && basePayout ? Math.max(0, Math.round((payout - basePayout) * scale) / scale) : 0;
+    const opt = currentPayoutOption();
+    const netBox = $('#segPayoutNet');
+    if (netBox) {
+      const opts = payoutOptions();
+      netBox.innerHTML = opts.map((o) => {
+        const feeText = o.instant
+          ? '⚡ Без комиссии'
+          : `Сеть: −${fmtCrypto(o.networkFee, o.symbol, o.decimals)}`;
+        return `<button type="button" class="payout-net-btn${o.id === opt.id ? ' on' : ''}${o.instant ? ' instant' : ''}" data-payout-id="${esc(o.id)}">
+          <span class="payout-net-top"><span>${esc(o.payoutCurrency)} · ${esc(o.shortLabel)}</span></span>
+          <span class="payout-net-badge">${esc(feeText)}</span>
+        </button>`;
+      }).join('');
+      netBox.querySelectorAll('[data-payout-id]').forEach((b) =>
+        b.addEventListener('click', () => {
+          S.payoutId = b.dataset.payoutId;
+          haptic('light');
+          const err = $('#giftErr');
+          if (err) err.textContent = '';
+          renderGiftMeta();
+        })
+      );
+    }
+
+    const baseCalc = giftPayoutCalc(nominal, payoutDir, 0, opt);
+    const calc = promoActive ? giftPayoutCalc(nominal, payoutDir, promo.percent, opt) : baseCalc;
+    const payout = calc ? calc.crypto : null;
+    const grossPayout = calc ? calc.grossCrypto : null;
+    const effectiveRate = calc ? calc.rate : 0;
+    const scale = 10 ** opt.decimals;
+    const bonus = promoActive && calc && baseCalc ? Math.max(0, Math.round((calc.grossCrypto - baseCalc.grossCrypto) * scale) / scale) : 0;
+
+    const shortLbl = $('#payoutLabelShort');
+    if (shortLbl) shortLbl.textContent = opt.shortLabel;
+    const speedBadge = $('#payoutSpeedBadge');
+    if (speedBadge) speedBadge.textContent = opt.instant ? '⚡ Моментально' : 'По комиссии сети';
+    const outIc = $('#outPayoutIcon');
+    if (outIc) { outIc.className = 'coin-ic ' + opt.coin; outIc.textContent = opt.symbol; }
+    const wTitle = $('#walletCardTitle');
+    if (wTitle) wTitle.textContent = `Адрес для выплаты ${opt.label}`;
+    const wIc = $('#inWalletIcon');
+    if (wIc) { wIc.className = 'coin-ic ' + opt.coin; wIc.textContent = opt.symbol; }
+    const wInput = $('#inPayoutWallet');
+    if (wInput) wInput.placeholder = opt.walletPlaceholder || '…';
+
     const out = $('#outPayout');
-    if (out) out.value = nominal && payout ? fmtUsdt(payout) : '—';
+    if (out) out.value = nominal && calc ? (payout > 0 ? fmtPayout(payout, opt) : `Мало (комиссия ${fmtPayout(opt.networkFee, opt)})`) : '—';
     const rule = $('#giftRule');
     if (rule) rule.textContent = `от $${minUnits} · шаг $${step}`;
     const info = $('#giftInfo');
@@ -927,7 +1060,7 @@
     const limits = $('#giftLimits');
     if (limits) {
       limits.textContent = effectiveRate
-        ? `${fmtUsdt(effectiveRate)} за $1 номинала`
+        ? `${fmtPayout(effectiveRate, opt)} за $1 номинала`
         : 'направление недоступно';
     }
     const promoBox = $('#promoApplied');
@@ -960,24 +1093,29 @@
     const hint = $('#giftWalletHint');
     if (hint) {
       hint.textContent = wallet
-        ? giftWalletValid(wallet)
-          ? `Выплата: ${payout ? fmtUsdt(payout) : '—'} в сети BEP-20 за карту на $${nominal}`
-          : dir.walletError
-        : dir.walletHint;
+        ? giftWalletValid(wallet, opt)
+          ? `Выплата: ${payout > 0 ? fmtPayout(payout, opt) : '—'} (${opt.label}) за карту на $${nominal}`
+          : opt.walletError
+        : opt.walletHint;
     }
     const meta = $('#giftMeta');
     if (meta) {
+      const feeLine = opt.instant
+        ? `<div class="row"><span>Вывод и комиссия сети</span><b class="meta-instant">⚡ Моментально · без комиссии</b></div>`
+        : `<div class="row"><span>Комиссия сети ${esc(opt.shortLabel)}</span><b class="meta-fee">−${fmtPayout(opt.networkFee, opt)}</b></div>`;
       meta.innerHTML = `
         <div class="row"><span>Номинал карты</span><b>$${nominal}</b></div>
-        <div class="row"><span>Курс карты</span><b>1 $ = ${effectiveRate ? fmtUsdt(effectiveRate) : '—'}</b></div>
+        <div class="row"><span>Курс (${esc(opt.payoutCurrency)})</span><b>1 $ = ${effectiveRate ? fmtPayout(effectiveRate, opt) : '—'}</b></div>
         ${loyaltyDiscount > 0 ? `<div class="row"><span>Бонус за каждый 5-й обмен</span><b class="meta-promo">−${loyaltyDiscount} п.п. комиссии</b></div>` : ''}
-        ${promoActive ? `<div class="row"><span>Промокод ${esc(promo.code)}</span><b class="meta-promo">+${promo.percent}%${bonus > 0 ? ` (+${fmtUsdt(bonus)})` : ''}</b></div>` : ''}
-        <div class="row"><span>Выплата</span><b>${payout ? fmtUsdt(payout) : '—'}</b></div>`;
+        ${promoActive ? `<div class="row"><span>Промокод ${esc(promo.code)}</span><b class="meta-promo">+${promo.percent}%${bonus > 0 ? ` (+${fmtPayout(bonus, opt)})` : ''}</b></div>` : ''}
+        ${!opt.instant && grossPayout > 0 ? `<div class="row"><span>Начислено по курсу</span><b>${fmtPayout(grossPayout, opt)}</b></div>` : ''}
+        ${feeLine}
+        <div class="row"><span>Итого к выплате</span><b>${payout > 0 ? fmtPayout(payout, opt) : '—'}</b></div>`;
     }
     const btn = $('#btnSell');
     if (btn) {
       btn.disabled = !s.online || !rate;
-      btn.querySelector('span').textContent = s.online ? 'Сдать карту за USDT' : '⛔ Обмен временно недоступен';
+      btn.querySelector('span').textContent = s.online ? `Сдать карту за ${opt.payoutCurrency}` : '⛔ Обмен временно недоступен';
     }
   }
 
@@ -1048,6 +1186,7 @@
     const err = $('#giftErr');
     err.textContent = '';
     const dir = isGiftDir(currentDir()) ? currentDir() : currentSellDir();
+    const opt = currentPayoutOption();
     const step = Number(dir && dir.step) || 10;
     const minUnits = Number(dir && dir.minUnits) || step;
     const units = Math.floor((Number($('#inUnits').value) || 0) / step) * step;
@@ -1055,7 +1194,7 @@
     if (!s.online) return (err.textContent = '⛔ Обмен временно недоступен — попробуйте позже.');
     if (!(Number(dir.rate) > 0)) return (err.textContent = 'Выкуп этой карты сейчас недоступен.');
     if (!units || units < minUnits) return (err.textContent = `Минимум $${minUnits}, шаг $${step}.`);
-    if (!giftWalletValid(wallet, dir)) return (err.textContent = dir.walletError);
+    if (!giftWalletValid(wallet, opt)) return (err.textContent = opt.walletError);
     const typedPromo = ($('#inPromo') && $('#inPromo').value || '').trim().toUpperCase();
     if (typedPromo && (!S.appliedPromo || S.appliedPromo.code !== typedPromo)) {
       const ok = await applyPromoCode(true);
@@ -1064,8 +1203,12 @@
     if (S.appliedPromo && S.appliedPromo.minUnits && units < Number(S.appliedPromo.minUnits)) {
       return (err.textContent = `Промокод ${S.appliedPromo.code} действует от номинала $${S.appliedPromo.minUnits}.`);
     }
-    const payout = giftPayout(units, dir, S.appliedPromo ? S.appliedPromo.percent : 0);
-    if (!(payout > 0)) return (err.textContent = 'Не удалось рассчитать выплату — проверьте курс и номинал.');
+    const payout = giftPayout(units, dir, S.appliedPromo ? S.appliedPromo.percent : 0, opt);
+    if (!(payout > 0)) {
+      return (err.textContent = opt.networkFee > 0
+        ? `Сумма выплаты меньше комиссии сети (${fmtPayout(opt.networkFee, opt)}). Выберите BEP-20 без комиссии или увеличьте номинал.`
+        : 'Не удалось рассчитать выплату — проверьте курс и номинал.');
+    }
     haptic('medium');
     giftRulesOpen();
   }
@@ -1076,11 +1219,12 @@
     const s = S.settings;
     const err = $('#giftErr');
     const dir = dirs().find((d) => d.key === S.giftRuleKey) || (isGiftDir(currentDir()) ? currentDir() : currentSellDir());
+    const opt = currentPayoutOption();
     const step = Number(dir && dir.step) || 10;
     const minUnits = Number(dir && dir.minUnits) || step;
     const units = Math.floor((Number($('#inUnits').value) || 0) / step) * step;
     const wallet = ($('#inPayoutWallet').value || '').trim();
-    if (!s.online || !eligible(dir) || !giftWalletValid(wallet, dir) || !units || units < minUnits) {
+    if (!s.online || !eligible(dir) || !giftWalletValid(wallet, opt) || !units || units < minUnits) {
       giftRulesClose();
       return renderGiftMeta();
     }
@@ -1091,7 +1235,16 @@
       const promoCode = S.appliedPromo ? S.appliedPromo.code : '';
       const r = await api('/api/orders', {
         method: 'POST',
-        body: { units, wallet, currency: dir.currency, payoutCurrency: dir.payoutCurrency, network: dir.network, promoCode, startParam },
+        body: {
+          units,
+          wallet,
+          currency: dir.currency,
+          payoutId: opt.id,
+          payoutCurrency: opt.payoutCurrency,
+          network: opt.network,
+          promoCode,
+          startParam,
+        },
       });
       S.order = r.order;
       S.orders.unshift(r.order);
@@ -1142,6 +1295,12 @@
   function renderGiftStage(o) {
     const box = $('#exOrder');
     const payout = giftPayoutText(o);
+    const feeVal = Number(o.networkFee) || 0;
+    const feeBadge = feeVal > 0
+      ? `<div class="order-promo-badge">💸 Комиссия сети: <b>${esc(fmtCrypto(feeVal, o.payoutCurrency || 'USDT', o.payoutDecimals))}</b></div>`
+      : (o.network === 'BEP20'
+        ? `<div class="order-promo-badge">⚡ BEP-20 · моментально, без комиссии</div>`
+        : '');
     const promoBadge = o.promoCode
       ? `<div class="order-promo-badge">🏷 Промокод <b>${esc(o.promoCode)}</b> · +${o.promoPercent}%</div>`
       : '';
@@ -1154,6 +1313,7 @@
         <div class="card stage">
           ${chip('details')}
           <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
+          ${feeBadge}
           ${promoBadge}
           ${loyaltyBadge}
           <div class="stage-title">Подтвердите передачу карты</div>
@@ -1186,6 +1346,7 @@
           <div class="spinner-wrap"><div class="spinner"></div><div class="spinner-ic">🤝</div></div>
           ${chip('new', 'Ждём оператора')}
           <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
+          ${feeBadge}
           ${promoBadge}
           ${loyaltyBadge}
           <div class="stage-title">Заявка #${o.id} создана</div>
@@ -1202,6 +1363,7 @@
         <div class="card stage">
           ${chip('details', 'Оператор на связи')}
           <div class="pay-dir">${ICONS.swap}<span>${esc(giftLabelOf(o))} <b>$${giftNominal(o)}</b> → ${payout}</span></div>
+          ${feeBadge}
           ${promoBadge}
           ${loyaltyBadge}
           <div class="stage-title">Оператор на связи</div>
@@ -1839,6 +2001,47 @@
       })
     );
   }
+  function renderAdminPayouts() {
+    const box = $('#admPayoutNetworks');
+    if (!box) return;
+    const A = S.admin || {};
+    const opts = Array.isArray(A.payoutOptions) && A.payoutOptions.length
+      ? A.payoutOptions
+      : FALLBACK_PAYOUT_OPTIONS;
+    const fees = A.networkFees || {};
+    const enabled = A.payoutEnabled || {};
+    box.innerHTML = opts.map((opt) => {
+      const isOn = opt.instant ? true : enabled[opt.id] !== false;
+      const feeVal = opt.instant ? 0 : (fees[opt.id] !== undefined ? Number(fees[opt.id]) : Number(opt.networkFee) || 0);
+      const step = opt.payoutCurrency === 'BTC' ? '0.00001' : '0.1';
+      return `<div class="adm-payout-row${opt.instant ? ' instant' : ''}" data-payout-row="${esc(opt.id)}">
+        <div class="adm-payout-info">
+          <div class="adm-payout-name">${esc(opt.label)}</div>
+          <div class="adm-payout-sub">${opt.instant ? '⚡ Моментальный вывод · всегда без комиссии' : 'Комиссия сети (вычитается из выплаты)'}</div>
+        </div>
+        ${opt.instant
+          ? `<span class="adm-payout-free">0 USDT · всегда вкл</span>`
+          : `<div class="adm-payout-fee-box">
+              <input type="number" inputmode="decimal" min="0" step="${step}" data-net-fee="${esc(opt.id)}" value="${feeVal}" aria-label="Комиссия сети ${esc(opt.label)}">
+              <span>${esc(opt.feeUnit)}</span>
+            </div>
+            <button type="button" class="adm-toggle adm-toggle-mini ${isOn ? 'on' : ''}" data-net-toggle="${esc(opt.id)}" role="switch" aria-checked="${isOn ? 'true' : 'false'}" aria-label="Включить ${esc(opt.label)}"><span class="adm-switch" aria-hidden="true"></span></button>`}
+      </div>`;
+    }).join('');
+    box.querySelectorAll('[data-net-toggle]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const next = !btn.classList.contains('on');
+        btn.classList.toggle('on', next);
+        btn.setAttribute('aria-checked', next ? 'true' : 'false');
+        haptic('light');
+      })
+    );
+    const btcEl = $('#admBtcUsd');
+    if (btcEl && A.btcUsd) btcEl.value = String(A.btcUsd);
+    const errEl = $('#admPayoutErr');
+    if (errEl) errEl.textContent = '';
+  }
+
   function renderAdmin() {
     const A = S.admin;
     if (!A) return;
@@ -1846,6 +2049,7 @@
     // Поддерживаемые карты и курс каждой из них
     renderAdminDirs($('#admGiftDirs'), GIFT_DIR);
     renderAdminFees();
+    renderAdminPayouts();
     $('#admGiftErr').textContent = '';
     // Чат
     $('#admChatLink').value = A.chat || '';
@@ -2924,6 +3128,27 @@
         'Курсы карт сохранены ✅'
       ).finally(() => { $('#admGiftSave').disabled = false; });
     });
+    const payoutSave = $('#admPayoutSave');
+    if (payoutSave) payoutSave.addEventListener('click', () => {
+      payoutSave.disabled = true;
+      haptic('medium');
+      const networkFees = {};
+      const payoutEnabled = {};
+      const box = $('#admPayoutNetworks');
+      if (box) {
+        box.querySelectorAll('[data-net-fee]').forEach((inp) => {
+          networkFees[inp.dataset.netFee] = inp.value === '' ? 0 : Number(inp.value);
+        });
+        box.querySelectorAll('[data-net-toggle]').forEach((btn) => {
+          payoutEnabled[btn.dataset.netToggle] = btn.classList.contains('on');
+        });
+      }
+      const btcRaw = $('#admBtcUsd') && $('#admBtcUsd').value ? Number($('#admBtcUsd').value) : undefined;
+      const body = { networkFees, payoutEnabled };
+      if (btcRaw !== undefined) body.btcUsd = btcRaw;
+      saveAdmin(body, $('#admPayoutErr'), 'Сети и комиссии сохранены ✅')
+        .finally(() => { payoutSave.disabled = false; });
+    });
     $('#admSessionBtn').addEventListener('click', async (e) => {
       const btn = e.currentTarget;
       const opening = !(S.admin && S.admin.online);
@@ -3174,14 +3399,21 @@
       } else if (o.status === 'details' && isGiftOrder(o)) {
         toast('Оператор на связи — ждём код карты от клиента');
       } else if (!isGiftOrder(o)) {
-        toast('Поддерживаются только заявки «карта USD → USDT (BEP-20)»');
+        toast('Поддерживаются только заявки с подарочными картами');
       } else if (o.status === 'paid') {
         const r = await api(`/api/admin/order/${o.id}/confirm`, { method: 'POST' });
         S.order = r.order;
         renderOrderStage();
         toast('Оператор подтвердил выплату (демо)');
       } else if (o.status === 'completed') {
-        const hint = o.network === 'BEP20' ? ' (BscScan: https://bscscan.com/tx/0x…)' : '';
+        const hints = {
+          BEP20: ' (BscScan: https://bscscan.com/tx/0x…)',
+          TRC20: ' (TronScan: https://tronscan.org/#/transaction/…)',
+          ERC20: ' (Etherscan: https://etherscan.io/tx/0x…)',
+          TON: ' (Tonviewer: https://tonviewer.com/transaction/…)',
+          BTC: ' (Mempool: https://mempool.space/tx/…)',
+        };
+        const hint = hints[o.network] || '';
         const url = prompt(`Ссылка на транзакцию${hint}:`, o.txUrl || '');
         if (url) {
           const r = await api(`/api/admin/order/${o.id}/tx`, { method: 'POST', body: { txUrl: url } });

@@ -15,10 +15,14 @@ const clientOrder = (o, reviewedIds) => ({
   direction: o.direction || 'sell',
   currency: o.currency,
   network: o.network || null,
+  payoutId: o.payoutId || null,
   currencyLabel: currencies.label(o.currency),
   payoutCurrency: currencies.payoutCurrencyOf(o),
   payoutLabel: currencies.payoutLabelOf(o),
   payoutDecimals: currencies.payoutDecimals(currencies.payoutCurrencyOf(o)),
+  networkFee: Number(o.networkFee) || 0,
+  grossCrypto: o.grossCrypto ?? o.crypto,
+  instant: o.network === currencies.PAYOUT_NETWORK,
   units: o.units ?? null,
   giftCode: o.giftCode || null,
   expiresAt: o.expiresAt ?? null,
@@ -287,9 +291,13 @@ function createApp() {
     return {
       chat: s.chat,
       usdtUsd: s.usdtUsd,
+      btcUsd: currencies.btcUsdQuote(s.btcUsd) || 95000,
       cardFees: Object.fromEntries(currencies.GIFT_KEYS.map((key) => [key, currencies.feeOf(s, key)])),
       cardRates: currencies.allCardRates(s),
       directions: Object.fromEntries(currencies.list().map((p) => [p.key, on(p.key)])),
+      networkFees: Object.fromEntries(currencies.PAYOUT_OPTION_LIST.map((o) => [o.id, currencies.networkFeeOf(s, o)])),
+      payoutEnabled: Object.fromEntries(currencies.PAYOUT_OPTION_LIST.map((o) => [o.id, currencies.isPayoutEnabled(s, o)])),
+      payoutOptions: currencies.publicPayoutOptions(s),
       online: !!s.online,
       ticker: store.normalizeLines(s.ticker, store.DEFAULT_TICKER),
       tickerEnabled: s.tickerEnabled !== false,
@@ -506,8 +514,55 @@ function createApp() {
       if (parsed.error) return res.status(400).json({ error: parsed.error });
       blockOrderPatch = parsed;
     }
+    // 6) Сети выплат, комиссии сетей и курс BTC/USD
+    let networkFeesPatch = null;
+    if (body.networkFees !== undefined) {
+      if (!body.networkFees || typeof body.networkFees !== 'object' || Array.isArray(body.networkFees)) {
+        return res.status(400).json({ error: 'networkFees: ожидается объект с комиссиями сетей.' });
+      }
+      const map = {};
+      for (const [id, value] of Object.entries(body.networkFees)) {
+        const opt = currencies.PAYOUT_OPTIONS[id];
+        if (!opt) return res.status(400).json({ error: `Неизвестная сеть выплаты: ${id}` });
+        const num = Number(value);
+        if (opt.instant) {
+          if (!Number.isFinite(num) || num !== 0) {
+            return res.status(400).json({ error: 'Вывод в USDT (BEP-20) всегда моментальный и без комиссии (0).' });
+          }
+          map[id] = 0;
+        } else {
+          if (!Number.isFinite(num) || num < 0 || num > opt.maxFee) {
+            return res.status(400).json({ error: `Комиссия сети ${opt.label}: число от 0 до ${opt.maxFee} ${opt.feeUnit}.` });
+          }
+          map[id] = currencies.clampNetworkFee(num, opt);
+        }
+      }
+      if (Object.keys(map).length) networkFeesPatch = map;
+    }
+    let payoutEnabledPatch = null;
+    if (body.payoutEnabled !== undefined) {
+      if (!body.payoutEnabled || typeof body.payoutEnabled !== 'object' || Array.isArray(body.payoutEnabled)) {
+        return res.status(400).json({ error: 'payoutEnabled: ожидается объект.' });
+      }
+      const map = {};
+      for (const [id, value] of Object.entries(body.payoutEnabled)) {
+        const opt = currencies.PAYOUT_OPTIONS[id];
+        if (!opt) return res.status(400).json({ error: `Неизвестная сеть выплаты: ${id}` });
+        if (typeof value !== 'boolean') return res.status(400).json({ error: 'payoutEnabled: только true или false' });
+        if (opt.instant && value === false) {
+          return res.status(400).json({ error: 'Моментальный вывод в USDT (BEP-20) без комиссии должен оставаться доступным.' });
+        }
+        map[id] = value;
+      }
+      if (Object.keys(map).length) payoutEnabledPatch = map;
+    }
+    if (body.btcUsd !== undefined) {
+      const bq = currencies.btcUsdQuote(body.btcUsd);
+      if (!bq) return res.status(400).json({ error: 'btcUsd: укажите корректный курс BTC/USD (1000–10000000).' });
+      patch.btcUsd = Math.round(bq * 100) / 100;
+    }
     if (openTrading !== null) patch.online = openTrading;
-    if (!Object.keys(patch).length && !cardFeesPatch && !blockOrderPatch) {
+    if (!Object.keys(patch).length && !cardFeesPatch && !blockOrderPatch && !networkFeesPatch && !payoutEnabledPatch) {
       return res.status(400).json({ error: 'Нечего обновлять — передайте хотя бы одно поле.' });
     }
     const wasOnline = !!store.get().settings.online;
@@ -516,8 +571,14 @@ function createApp() {
       if (patch.enabled) {
         s.enabled = { ...(s.enabled || {}), ...patch.enabled };
       }
-      for (const key of ['chat', 'online', 'ticker', 'tickerEnabled', 'marquee', 'marqueeEnabled']) {
+      for (const key of ['chat', 'online', 'ticker', 'tickerEnabled', 'marquee', 'marqueeEnabled', 'btcUsd']) {
         if (patch[key] !== undefined) s[key] = patch[key];
+      }
+      if (networkFeesPatch) {
+        s.networkFees = { ...(s.networkFees || {}), ...networkFeesPatch, USDT_BEP20: 0 };
+      }
+      if (payoutEnabledPatch) {
+        s.payoutEnabled = { ...(s.payoutEnabled || {}), ...payoutEnabledPatch, USDT_BEP20: true };
       }
       if (blockOrderPatch) {
         const current = store.normalizeBlockOrder(s.blockOrder);
@@ -584,12 +645,16 @@ function createApp() {
     if (!currencies.isEnabled(s, pair.key)) {
       return res.status(400).json({ error: `Выкуп ${pair.label} временно недоступен — выберите другую карту.` });
     }
-    if (!currencies.supportsPayout(req.body)) {
-      return res.status(400).json({ error: 'Выплата возможна только в USDT в сети BNB Smart Chain (BEP-20).' });
+    const payoutOption = currencies.findPayoutOption(req.body);
+    if (!payoutOption) {
+      return res.status(400).json({ error: 'Неподдерживаемая валюта или сеть выплаты. Доступны USDT (BEP-20, TRC-20, ERC-20, TON) и BTC.' });
+    }
+    if (!currencies.isPayoutEnabled(s, payoutOption.id)) {
+      return res.status(400).json({ error: `Выплата в ${payoutOption.label} временно недоступна — выберите другую сеть.` });
     }
     const user = store.touchUser(a.user, req.body.startParam || '');
 
-    /* ---------- gift card → USDT (BEP-20) ---------- */
+    /* ---------- gift card → USDT (BEP-20 / TRC-20 / ERC-20 / TON) или BTC ---------- */
     const units = Number(req.body.units ?? req.body.cryptoAmount);
     const unitsError = currencies.validateUnits(units);
     if (unitsError) return res.status(400).json({ error: unitsError });
@@ -604,7 +669,7 @@ function createApp() {
       }
       giftCode = giftCodeRaw;
     }
-    const walletError = currencies.validateWallet(wallet);
+    const walletError = currencies.validateWallet(wallet, payoutOption);
     if (walletError) return res.status(400).json({ error: walletError });
 
     const promoRaw = String(req.body.promoCode || '').trim();
@@ -617,11 +682,16 @@ function createApp() {
 
     const loyalty = store.loyaltyStatus(user.id);
     const loyaltyDiscountPercent = loyalty.eligible ? loyalty.discountPercent : 0;
-    const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0, loyaltyDiscountPercent);
+    const payout = currencies.giftPayout(s, units, pair.currency, promo ? promo.percent : 0, loyaltyDiscountPercent, payoutOption);
     if (!payout) {
-      return res.status(400).json({ error: 'Курс выплаты в USDT временно недоступен — попробуйте позже.' });
+      return res.status(400).json({ error: `Курс выплаты в ${payoutOption.payoutCurrency} временно недоступен — попробуйте позже.` });
     }
     if (!(payout.crypto > 0)) {
+      if (payout.networkFee > 0) {
+        return res.status(400).json({
+          error: `Сумма выплаты не покрывает комиссию сети (${payout.networkFee} ${payout.payoutCurrency}). Выберите моментальный USDT (BEP-20) без комиссии или увеличьте номинал карты.`,
+        });
+      }
       return res.status(400).json({ error: 'Сумма выплаты слишком мала — увеличьте номинал карты.' });
     }
     const ttlMinutes = Number(pair.ttlMinutes) || 60;
@@ -632,6 +702,11 @@ function createApp() {
       expiresAt: Date.now() + ttlMinutes * 60 * 1000, // one hour per deal
       units,
       currency: pair.currency,
+      payoutId: payout.payoutId,
+      payoutCurrency: payout.payoutCurrency,
+      network: payout.network,
+      networkFee: payout.networkFee,
+      grossCrypto: payout.grossCrypto,
       giftCode,
       wallet,
       rate: payout.rate,
@@ -793,7 +868,8 @@ function createApp() {
     if (b.currency && units && units > 0) {
       const pair = currencies.find(String(b.currency).toUpperCase());
       if (pair && pair.kind === 'gift') {
-        payout = currencies.giftPayout(store.get().settings, units, pair.currency, promo.percent);
+        const opt = currencies.findPayoutOption(b);
+        payout = currencies.giftPayout(store.get().settings, units, pair.currency, promo.percent, 0, opt);
       }
     }
     res.json({ promo: store.publicPromo(promo), payout });
