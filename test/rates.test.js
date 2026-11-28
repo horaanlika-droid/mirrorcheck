@@ -7,6 +7,7 @@ const path = require('path');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mirrorcheck-rates-'));
 process.env.DATA_DIR = dir;
+process.env.ALLOW_DEMO_AUTH = '1'; // демо-личность для тестов вместо cookie-сессии
 delete process.env.BOT_TOKEN;
 delete process.env.WIDGETS;
 

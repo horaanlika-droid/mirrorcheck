@@ -9,6 +9,8 @@ const admins = require('./admins');
 const textCatalogue = require('./texts');
 const orderChat = require('./orderchat');
 const attachments = require('./attachments');
+const session = require('./session');
+const { createLimiter, rateLimit, ipOf } = require('./ratelimit');
 
 const clientOrder = (o, reviewedIds) => ({
   id: o.id,
@@ -45,16 +47,26 @@ const clientOrder = (o, reviewedIds) => ({
   updatedAt: o.updatedAt,
 });
 
-// isAdmin is needed by the app to show "Admin" (chat-link editing).
-// In demo mode (BOT_TOKEN unset) the admin panel is open to everyone — like the demo operator console.
-const clientUser = (u) => ({
-  id: u.id,
-  name: u.name,
-  username: u.username,
-  referrer: u.referrer,
-  referredCount: u.referredCount || 0,
-  isAdmin: admins.has(String(u.id)) || (!config.botToken && String(u.id) === '900001'),
-});
+// Веб-клиент получает только публичные поля профиля: Telegram ID, username и
+// привязку к Telegram наружу не отдаём (минимизация данных).
+const clientUser = (u) => {
+  const webId = /^tgweb_([1-9]\d{0,15})$/.exec(String(u.id));
+  const tgId = /^[1-9]\d{0,15}$/.test(String(u.id)) ? String(u.id) : webId ? webId[1] : null;
+  return {
+    // Реферальную ссылку в Telegram можно строить только для Telegram-профилей.
+    // Внутренний веб-id не отдаём: он не нужен интерфейсу и не должен утекать.
+    id: tgId,
+    telegramId: tgId,
+    name: u.name,
+    username: u.username || null,
+    referrer: u.referrer,
+    referredCount: u.referredCount || 0,
+    // Анонимный псевдоним неизменяем; админ-панель — только для реальных операторов.
+    anonymous: !webId,
+    linked: !!webId,
+    isAdmin: admins.has(String(u.id)),
+  };
+};
 
 const MIN_TS = Date.UTC(2000, 0, 1);
 const MAX_TS = Date.UTC(2100, 11, 31, 23, 59, 59);
@@ -177,16 +189,49 @@ function validatePromoInput(body, { partial = false, existingId = null } = {}) {
 function createApp() {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', true);
+  // За прокси (бот-хостинги, nginx) реальный IP приходит в X-Forwarded-For.
+  // Без настройки доверяем только loopback, иначе клиент подделает IP и обойдёт лимиты.
+  app.set('trust proxy', process.env.TRUST_PROXY === '1' ? 1 : 'loopback');
   app.set('query parser', 'extended');
   app.use(express.json({ limit: '12mb' }));
+  // body-parser может прислать ошибку в next(err) — отвечаем JSON, а не 500-страницей.
   app.use((err, _req, res, next) => {
+    if (!err) return next();
     if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Запрос слишком большой. Максимальный размер вложения — 8 МБ.' });
-    next(err);
+    if (err.type === 'entity.parse.failed' || err.status === 400) return res.status(400).json({ error: 'Некорректный JSON в запросе.' });
+    return next(err);
   });
-
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store, private');
+    next();
+  });
+
+  app.use((req, res, next) => {
+    // Базовые защитные заголовки. CSP не запрещает inline-стили/скрипты, потому что
+    // интерфейс и Telegram SDK их используют, но запрещает фрейминг и чужие connect-хосты.
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
+    res.set('Cross-Origin-Opener-Policy', 'same-origin');
+    res.set(
+      'Content-Security-Policy',
+      [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' https://telegram.org",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com data:",
+        "img-src 'self' data: blob:",
+        "connect-src 'self'",
+        // Mini App встраивают web.telegram.org, Telegram Desktop и мобильные клиенты.
+        "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org https://*.t.me https://t.me telegram:",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "object-src 'none'",
+      ].join('; ')
+    );
+    if (String(req.get('x-forwarded-proto') || '').split(',')[0].trim() === 'https') {
+      res.set('Strict-Transport-Security', 'max-age=15552000');
+    }
     next();
   });
 
@@ -194,6 +239,46 @@ function createApp() {
     if (req.method === 'GET' && (req.path === '/' || req.path === '/index.html' || req.path === '/app.js' || req.path === '/order-chat.js')) {
       res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
       res.set('Pragma', 'no-cache');
+    }
+    next();
+  });
+
+  // Защита от CSRF и «чужих» сайтов: состояние меняем только с нашего Origin
+  // (или без него — старые Mini App/нативные клиенты), и никогда с чужим.
+  const selfHosts = () => {
+    const hosts = new Set();
+    const add = (raw) => {
+      try {
+        const u = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : 'https://' + raw);
+        hosts.add(u.host.toLowerCase());
+      } catch {}
+    };
+    if (store.get().settings.publicUrl) add(store.get().settings.publicUrl);
+    if (config.publicUrl) add(config.publicUrl);
+    return hosts;
+  };
+  app.use((req, res, next) => {
+    const write = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+    if (!write) return next();
+    const origin = String(req.get('origin') || '');
+    if (origin && origin !== 'null') {
+      let host = '';
+      try { host = new URL(origin).host.toLowerCase(); } catch { return res.status(403).json({ error: 'Запрос отклонён' }); }
+      const own = String(req.get('x-forwarded-host') || req.get('host') || '').split(',')[0].trim().toLowerCase();
+      if (host !== own && !selfHosts().has(host)) {
+        return res.status(403).json({ error: 'Запрос отклонён: недопустимый источник' });
+      }
+    }
+    const fetchSite = String(req.get('sec-fetch-site') || '');
+    if (fetchSite === 'cross-site') {
+      return res.status(403).json({ error: 'Запрос отклонён: межсайтовый запрос' });
+    }
+    // JSON API: простые cross-site формы не должны менять состояние.
+    // Пустое тело (cancel/confirm без данных) пропускаем — вреда от него нет.
+    if (write && req.path.startsWith('/api/') && (req.get('content-length') || req.get('transfer-encoding'))) {
+      if (!String(req.get('content-type') || '').includes('application/json')) {
+        return res.status(415).json({ error: 'Требуется Content-Type: application/json' });
+      }
     }
     next();
   });
@@ -220,20 +305,33 @@ function createApp() {
     next();
   });
 
+  /* ---------- идентичность ---------- */
+  // Приоритет: подписанный Telegram initData → подписанная cookie веб-сессии.
+  // Клиентские поля demo[id]/demo[name] больше не принимаются как личность:
+  // раньше так можно было выдать себя за оператора 900001.
+  const limiter = createLimiter();
+
   const auth = (req) => {
     const body = req.body || {};
     const q = req.query || {};
     const initData = body.initData || q.initData || req.get('x-telegram-init-data') || '';
-    if (config.botToken) {
-      if (initData && validateInitData(initData, config.botToken)) {
-        return { user: parseUser(initData), demo: false };
-      }
-      return null;
+    if (initData && config.botToken && validateInitData(initData, config.botToken)) {
+      return { user: parseUser(initData), demo: false, source: 'telegram' };
     }
-    const d = body.demo || q.demo;
-    if (d && d.id) {
-      return { user: { id: String(d.id), first_name: d.name || 'Demo', username: d.username || '' }, demo: true };
+    // Совместимость с тестами и локальными превью: demo-личность принимается только
+    // когда сессии выдавать нечем (нет BOT_TOKEN) и только из временного DATA_DIR.
+    // Разбор: ?demo[id]=…, ?demo=900002 и тело {"demo":{…}} или {"demo":"900002"}.
+    const rawDemo = body.demo || q.demo;
+    const demo = rawDemo && typeof rawDemo === 'object' ? rawDemo : rawDemo ? { id: rawDemo } : null;
+    if (demo && demo.id && !config.botToken && session.legacyAllowed() && /^\d{1,18}$/.test(String(demo.id))) {
+      return {
+        user: { id: String(demo.id), first_name: demo.name || 'Demo', username: demo.username || '' },
+        demo: true,
+        source: 'demo',
+      };
     }
+    const webUser = session.anonymousUser(req);
+    if (webUser) return { user: webUser, demo: false, source: 'web' };
     return null;
   };
 
@@ -246,22 +344,90 @@ function createApp() {
     return a;
   };
 
+  const isAdminRequest = (req) => {
+    const a = auth(req);
+    if (!a) return null;
+    return admins.has(String(a.user.id)) ? a : null;
+  };
+
   app.post('/api/init', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
     const user = store.touchUser(a.user, req.body.startParam || '');
-    res.json({ me: clientUser(user), settings: store.publicSettings(), demo: a.demo });
+    res.json({
+      me: clientUser(user),
+      settings: store.publicSettings(),
+      demo: a.demo,
+      source: a.source,
+      // Доступна ли анонимная сессия и куда идти за кодом привязки к Telegram.
+      web: webInfo(),
+    });
   });
 
+  // Публичные настройки: без сессии тоже доступны (витрина и курс до входа).
   app.get('/api/settings', (req, res) => res.json(store.publicSettings()));
 
-  const isAdminRequest = (req) => {
-    const a = auth(req);
-    if (!a) return null;
-    const id = String(a.user.id);
-    // In demo mode (BOT_TOKEN unset) the admin panel is open only to the demo guest and admins — clients don't see it.
-    return admins.has(id) || (!config.botToken && id === '900001') ? a : null;
-  };
+  // Публичная информация о веб-входе (нужна профилю: куда идти за кодом привязки).
+  const webInfo = () => ({
+    anonymousLogin: store.get().settings.webAccess !== 'telegram',
+    linkBot: store.get().settings.botUsername || (store.get().settings.bots || {}).client || null,
+  });
+
+  /* ---------- анонимная веб-сессия ---------- */
+  // 1) /api/session/challenge — proof-of-work, чтобы не плодить профили пачками.
+  app.get('/api/session/challenge', (req, res) => {
+    if (!rateLimit(limiter, 'session', req, res)) return;
+    res.json({ ...session.issueChallenge(), required: true });
+  });
+
+  // 2) /api/session — сервер сам придумывает имя и выдаёт подписанную HttpOnly-cookie.
+  app.post('/api/session', (req, res) => {
+    if (!rateLimit(limiter, 'session', req, res)) return;
+    if (!rateLimit(limiter, 'sessionDay', req, res)) return;
+    if (store.get().settings.webAccess === 'telegram') {
+      return res.status(403).json({ error: 'Анонимный вход отключён. Откройте приложение через Telegram.' });
+    }
+    const { challenge, nonce } = req.body || {};
+    if (!session.checkPow(challenge, nonce)) {
+      return res.status(400).json({ error: 'Не пройдена проверка безопасности. Обновите страницу.' });
+    }
+    const user = session.issueSession(res);
+    res.status(201).json({ me: clientUser(user), settings: store.publicSettings(), demo: false, source: 'web', web: webInfo() });
+  });
+
+  // 3) Привязка к Telegram: код из бота (/link) превращает веб-профиль в tgweb_<id>.
+  app.post('/api/link', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!rateLimit(limiter, 'link', req, res)) return;
+    const code = String(req.body?.code || '').trim();
+    const linked = session.redeemLinkCode(code, a.user.id);
+    if (!linked) return res.status(400).json({ error: 'Код неверный или истёк. Получите новый в боте: /link' });
+    session.issueSession(res, linked);
+    const user = store.getUser(linked.id);
+    res.json({ me: clientUser(user), settings: store.publicSettings(), demo: false, source: 'web', web: webInfo() });
+  });
+
+  app.post('/api/link/revoke', (req, res) => {
+    const a = needAuth(req, res);
+    if (!a) return;
+    if (!rateLimit(limiter, 'link', req, res)) return;
+    try {
+      const next = session.revokeLink(a.user.id, String(req.body?.confirm || ''));
+      session.issueSession(res, next);
+      res.json({ me: clientUser(store.getUser(next.id)), settings: store.publicSettings(), demo: false, source: 'web', web: webInfo() });
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  /* ---------- лимиты для действий ---------- */
+  app.use((req, res, next) => {
+    // Общий потолок на IP: приложение опрашивает статусы каждые 3 секунды.
+    if (!rateLimit(limiter, 'api', req, res)) return;
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !rateLimit(limiter, 'writes', req, res)) return;
+    next();
+  });
 
   // Only known fixed UI strings can be changed; never accept arbitrary keys or HTML.
   app.get('/api/admin/texts', (req, res) => {
@@ -604,7 +770,7 @@ function createApp() {
   app.post('/api/admin/settings/chat', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
-    if (config.botToken && !admins.has(String(a.user.id))) {
+    if (!isAdminRequest(req)) {
       return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
     }
     const chat = String(req.body?.chat || '').trim().slice(0, 300);
@@ -636,6 +802,7 @@ function createApp() {
   app.post('/api/orders', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
+    if (!rateLimit(limiter, 'orders', req, res, { key: a.user.id })) return;
     const s = store.get().settings;
     const currency = String(req.body.currency || '').toUpperCase();
     const pair = currencies.find(currency);
@@ -811,7 +978,8 @@ function createApp() {
   function chatOrder(req, res, role) {
     const a = needAuth(req, res);
     if (!a) return null;
-    const admin = role !== 'user' && isAdminRequest(req);
+    // 'read' доступен и владельцу заявки, и оператору; писать «от админа» — только оператору.
+    const admin = role === 'user' ? null : isAdminRequest(req);
     if (role === 'admin' && !admin) {
       res.status(403).json({ error: 'Только для оператора' });
       return null;
@@ -828,6 +996,9 @@ function createApp() {
     if (order) res.json({ messages: store.getOrderMessages(order.id).map(orderChat.publicMessage) });
   });
   const postMessage = (from) => (req, res, next) => {
+    const a = auth(req);
+    if (!a) return res.status(401).json({ error: 'Не авторизован' });
+    if (!rateLimit(limiter, 'chat', req, res, { key: a.user.id })) return;
     const order = chatOrder(req, res, from);
     if (!order) return;
     try {
@@ -845,10 +1016,15 @@ function createApp() {
     if (!order) return;
     const file = store.getOrderMessages(order.id).find((m) => m.id === Number(req.params.messageId))?.attachment;
     if (!file) return res.status(404).json({ error: 'Вложение не найдено' });
-    res.download(attachments.filePath(file), file.name, {
-      cacheControl: false,
-      headers: { 'Content-Type': file.type, 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'" },
-    }, (err) => {
+    // Вложение не должно кэшироваться и исполняться: заголовки ставим явно,
+    // иначе Express перезапишет их при res.download + cacheControl:false.
+    res.set({
+      'Cache-Control': 'no-store, private',
+      'Content-Type': file.type,
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "sandbox; default-src 'none'",
+    });
+    res.download(attachments.filePath(file), file.name, { cacheControl: false }, (err) => {
       if (!err) return;
       if (!res.headersSent && err.status === 404) return res.status(404).json({ error: 'Вложение не найдено' });
       next(err);
@@ -930,6 +1106,7 @@ function createApp() {
   app.post('/api/reviews', (req, res) => {
     const a = needAuth(req, res);
     if (!a) return;
+    if (!rateLimit(limiter, 'reviews', req, res, { key: a.user.id })) return;
     const b = req.body || {};
     const order = store.getOrder(b.orderId);
     if (!order || order.userId !== String(a.user.id)) {
@@ -1067,6 +1244,7 @@ function createApp() {
     const text = String(req.body?.text || '').trim();
     if (!text) return res.status(400).json({ error: 'Сообщение не может быть пустым' });
     if (text.length > 2000) return res.status(400).json({ error: 'Сообщение слишком длинное (до 2000 символов)' });
+    if (!rateLimit(limiter, 'support', req, res, { key: a.user.id })) return;
     store.touchUser(a.user, req.body.startParam || '');
     const msg = store.createSupportMessage(a.user.id, 'user', text);
     bus.emit('support_message', { message: msg, user: a.user });
@@ -1080,8 +1258,14 @@ function createApp() {
   });
 
   // DEMO operator console: exists ONLY when BOT_TOKEN is unset (preview without the bot).
+  // Доступ — только администратору. Демо-гость 900001 больше не «оператор»:
+  // иначе любой посетитель мог подтверждать чужие выплаты.
   if (!config.botToken) {
-    // Demo: the operator joins the gift order — the client can now send the code.
+    app.use('/api/admin', (req, res, next) => {
+      if (req.path === '/settings/chat') return next();
+      if (!isAdminRequest(req)) return res.status(403).json({ error: 'Только для оператора Pricelex Worldwide' });
+      next();
+    });
     app.post('/api/admin/order/:id/connect', (req, res) => {
       const o = store.getOrder(req.params.id);
       if (!o) return res.status(404).json({ error: 'Заявка не найдена' });
@@ -1120,6 +1304,13 @@ function createApp() {
       res.json({ message: msg });
     });
   }
+
+  // Глобальный обработчик: никогда не отдаём стектрейс наружу.
+  app.use((err, _req, res, _next) => {
+    console.error('[web] unhandled route error:', err && err.message);
+    if (res.headersSent) return;
+    res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+  });
 
   const publicDir = path.join(__dirname, '..', 'public');
   const indexFile = path.join(publicDir, 'index.html');

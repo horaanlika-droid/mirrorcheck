@@ -9,9 +9,10 @@ const { JSDOM } = require('jsdom');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pricelex-admin-features-'));
 process.env.DATA_DIR = dir;
+process.env.ALLOW_DEMO_AUTH = '1'; // демо-личность для тестов вместо cookie-сессии
 delete process.env.BOT_TOKEN;
-delete process.env.ADMIN_ID;
-delete process.env.ADMIN_IDS;
+process.env.ADMIN_ID = '900001';
+process.env.ADMIN_IDS = '';
 
 const store = require('../src/store');
 const currencies = require('../src/currencies');
@@ -20,10 +21,11 @@ const { createApp, parseTimestamp } = require('../src/web');
 let server = null;
 let baseUrl = '';
 
-const ADMIN_DEMO = { id: '900001', name: 'Operator' };
+// Демо-гость 900001 больше не оператор: админка — только для реальных администраторов.
+const OPERATOR_ADMIN = { id: '900001', name: 'Operator' };
 const CLIENT_DEMO = { id: '900002', name: 'Client' };
 
-async function req(method, endpoint, { demo = ADMIN_DEMO, body } = {}) {
+async function req(method, endpoint, { demo = OPERATOR_ADMIN, body } = {}) {
   const q = new URLSearchParams({ 'demo[id]': demo.id, 'demo[name]': demo.name });
   const sep = endpoint.includes('?') ? '&' : '?';
   const hasBody = ['POST', 'PUT', 'PATCH'].includes(method);

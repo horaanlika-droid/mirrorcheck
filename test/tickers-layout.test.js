@@ -8,9 +8,10 @@ const { JSDOM } = require('jsdom');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pricelex-tickers-layout-'));
 process.env.DATA_DIR = dir;
+process.env.ALLOW_DEMO_AUTH = '1'; // демо-личность для тестов вместо cookie-сессии
 delete process.env.BOT_TOKEN;
-delete process.env.ADMIN_ID;
-delete process.env.ADMIN_IDS;
+process.env.ADMIN_ID = '900001'; // оператор демо-панели — только реальный администратор
+process.env.ADMIN_IDS = '';
 
 const store = require('../src/store');
 const { createApp } = require('../src/web');
@@ -167,6 +168,9 @@ test('HTML и клиентское приложение рендерят две 
 
   const dom = new JSDOM(html, { url: baseUrl, runScripts: 'outside-only' });
   const doc = dom.window.document;
+  // Демо-личность для теста: обычный браузер получает анонимную cookie-сессию,
+  // а в jsdom проще явно указать клиента (как это делает админский блок ниже).
+  dom.window.localStorage.setItem('pricelex_demo', JSON.stringify({ id: Number(CLIENT_DEMO.id), name: CLIENT_DEMO.name }));
   const intervals = [];
   const timeouts = [];
 
@@ -204,7 +208,18 @@ test('HTML и клиентское приложение рендерят две 
       timeouts.push(id);
       return id;
     };
-    dom.window.fetch = (input, init) => fetch(new URL(String(input), baseUrl).toString(), init);
+    // Анонимная сессия: браузер сначала проходит PoW, сервер выдаёт cookie.
+    // В jsdom cookie не сохраняется автоматически — запоминаем её и подставляем,
+    // как это делает настоящий браузер.
+    let sessionCookie = '';
+    dom.window.fetch = async (input, init = {}) => {
+      const headers = { ...(init.headers || {}) };
+      if (sessionCookie) headers.cookie = sessionCookie;
+      const res = await fetch(new URL(String(input), baseUrl).toString(), { ...init, headers, redirect: 'manual' });
+      const set = res.headers.getSetCookie?.() || [];
+      for (const c of set) if (c.startsWith('plx_sid=')) sessionCookie = c.split(';')[0];
+      return res;
+    };
     dom.window.requestAnimationFrame = (cb) => dom.window.setTimeout(cb, 0);
     dom.window.cancelAnimationFrame = (id) => dom.window.clearTimeout(id);
     dom.window.eval(orderChatJs);

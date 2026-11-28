@@ -8,6 +8,7 @@ const path = require('node:path');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pricelex-clientbot-'));
 process.env.DATA_DIR = dir;
+process.env.ALLOW_DEMO_AUTH = '1'; // демо-личность для тестов вместо cookie-сессии
 process.env.BOT_TOKEN = '123456:test-token';
 process.env.ADMIN_ID = '111';
 process.env.ADMIN_IDS = '';
@@ -430,11 +431,12 @@ test('клиентский бот: переключение сети выпла�
   await text(client, '/start');
   await click(client, 'c:units:GOOGLE_USD:100');
   const askBep = lastCall('editMessageText');
-  assert.ok(markupCallbacks(askBep).includes('c:pnet:USDT_TRC20'));
-  assert.ok(markupCallbacks(askBep).includes('c:pnet:BTC'));
+  // В кнопке сети едут карта, номинал и сеть — шаг не зависит от памяти процесса.
+  assert.ok(markupCallbacks(askBep).includes('c:pnet:GOOGLE_USD:100:USDT_TRC20'));
+  assert.ok(markupCallbacks(askBep).includes('c:pnet:GOOGLE_USD:100:BTC'));
 
   // Переключаемся на USDT (TRC-20) — проверяет TRON-адрес и вычитает 1.5 USDT комиссии сети.
-  await click(client, 'c:pnet:USDT_TRC20');
+  await click(client, 'c:pnet:GOOGLE_USD:100:USDT_TRC20');
   const askTrc = lastCall('editMessageText');
   assert.match(askTrc.text, /TRC-20/);
   await text(client, 'T' + '9aBcDeFgHiJkLmNoPqRsTuVwXyZ123456');
@@ -446,7 +448,7 @@ test('клиентский бот: переключение сети выпла�
 
   // Переключаемся на BTC — проверяет BTC-адрес и вычитает комиссию сети BTC.
   await click(client, 'c:units:GOOGLE_USD:100');
-  await click(client, 'c:pnet:BTC');
+  await click(client, 'c:pnet:GOOGLE_USD:100:BTC');
   const askBtc = lastCall('editMessageText');
   assert.match(askBtc.text, /Bitcoin|BTC/);
   await text(client, 'bc1q' + 'a'.repeat(35));

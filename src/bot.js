@@ -127,6 +127,10 @@ function sendOrUpdateOrderAdmin(order) {
   return task;
 }
 
+// Веб-клиенты не имеют Telegram-чата: отправка им невозможна и не должна
+// логироваться как ошибка с их идентификатором.
+const telegramChatId = (userId) => (/^[1-9]\d{0,15}$/.test(String(userId)) ? String(userId) : null);
+
 async function broadcast(text, options = {}) {
   if (!bot) return;
   await Promise.all(admins.all().map(async (id) => {
@@ -143,7 +147,7 @@ const CLIENTS_ANNOUNCE_OPEN =
 
 async function announceToClients(text) {
   if (!bot) return { sent: 0, failed: 0 };
-  const users = Object.keys(store.get().users || {});
+  const users = Object.keys(store.get().users || {}).filter(telegramChatId);
   let sent = 0; let failed = 0;
   await Promise.all(users.map(async (id) => {
     try { await bot.api.sendMessage(id, text, { parse_mode: 'HTML' }); sent += 1; }
@@ -178,6 +182,7 @@ async function sendReceiptToAdmins(o) {
 }
 
 async function notifyClientConnected(o) {
+  if (!telegramChatId(o.userId)) return false;
   try {
     await bot.api.sendMessage(o.userId,
       `🤝 <b>Оператор подключился к заявке #${o.id}</b>\n\n` +
@@ -193,6 +198,7 @@ async function notifyClientConnected(o) {
 }
 
 async function notifyClientTx(o) {
+  if (!telegramChatId(o.userId)) return false;
   try {
     await bot.api.sendMessage(o.userId,
       `🔗 <b>Транзакция по заявке #${o.id} отправлена</b>\n\n${esc(o.txUrl)}\n\nПроверьте поступление ${payoutText(o)} на кошелёк:\n<code>${esc(o.wallet)}</code>`,
@@ -233,7 +239,7 @@ async function onOrderEvent({ order, type }) {
 // The same order thread is used by the Mini App and both Telegram roles.
 async function onOrderMessage({ order, message }) {
   const fromClient = message.from === 'user';
-  const recipients = fromClient ? admins.all() : [order.userId];
+  const recipients = fromClient ? admins.all() : [telegramChatId(order.userId)].filter(Boolean);
   const reply = new InlineKeyboard().text('💬 Ответить в сделке', fromClient ? `o:${order.id}:chat` : `c:chat:${order.id}`);
   const heading = `💬 Сделка #${order.id} · ${fromClient ? 'Клиент' : 'Оператор'}`;
   const text = message.text ? `${heading}\n${message.text}` : heading;
@@ -269,7 +275,8 @@ async function onSupportMessage({ message, user }) {
   if (message.from === 'user') {
     await broadcast(text, { parse_mode: 'HTML', reply_markup: kb });
   } else {
-    // admin reply -> try to notify client via bot
+    // admin reply -> try to notify client via bot (only if the client has a Telegram chat)
+    if (!telegramChatId(message.userId)) return;
     try {
       await bot.api.sendMessage(message.userId,
         `💬 <b>Поддержка Pricelex Worldwide:</b>\n${esc(message.text)}`,
@@ -400,7 +407,13 @@ function settingsKb(s) {
     const short = p.label.replace(' Gift Card', '');
     kb.row().text(`💱 ${short}: скидка ${currencies.feeOf(s, p.key)}% · ${fmtUsdt(currencies.rateOf(s, p.currency) || 0)}`, `s:fee_${p.key}`);
   }
+  // Сети выплаты: включение/выключение — как кнопки направлений на сайте.
+  for (const opt of currencies.PAYOUT_OPTION_LIST) {
+    kb.row().text(`${currencies.isPayoutEnabled(s, opt) ? '✅' : '⛔'} ${opt.shortLabel} · ${opt.instant ? '0' : currencies.networkFeeOf(s, opt)} ${opt.feeUnit}`, `s:net_${opt.id}`);
+  }
   return kb
+    .row()
+    .text('🏷 Промокоды', 'm:promos')
     .row()
     .text('🔄 Обновить курс', 's:refresh')
     .row()
@@ -476,6 +489,38 @@ async function linksMenu(ctx, edit = true) {
   const kb = new InlineKeyboard().text('↩️ Назад', 'm:home');
   if (edit) await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
   else await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
+}
+
+/* ---------- промокоды (как в админке сайта) ---------- */
+
+const promoStatus = (p) => {
+  const now = Date.now();
+  if (p.active === false) return '⏸ на паузе';
+  if (p.expiresAt && Number(p.expiresAt) < now) return '⌛ истёк';
+  if (p.maxUses != null && Number(p.usedCount) >= Number(p.maxUses)) return '✅ исчерпан';
+  return '🟢 активен';
+};
+
+async function promosMenu(ctx, edit = true) {
+  const list = store.listPromos().slice(0, 10);
+  const text =
+    `🏷 <b>Промокоды</b>\n\n` +
+    `Клиент вводит код при обмене — выплата растёт на указанный процент.\n\n` +
+    (list.length
+      ? list.map((p) => `• <code>${esc(p.code)}</code> · +${p.percent}% · ${promoStatus(p)}` +
+          ` · использований ${p.usedCount || 0}${p.maxUses != null ? '/' + p.maxUses : ''}` +
+          (p.minUnits ? ` · от $${p.minUnits}` : '')).join('\n')
+      : 'Промокодов пока нет.') +
+    `\n\nСоздать: /newpromo КОД ПРОЦЕНТ [лимит] [от_суммы]$`;
+  const kb = new InlineKeyboard();
+  for (const p of list) {
+    kb.text(`${p.active === false ? '▶️' : '⏸'} ${p.code}`, `pr:t:${p.id}`)
+      .text(`🗑 ${p.code}`, `pr:d:${p.id}`)
+      .row();
+  }
+  kb.text('↩️ Настройки', 'm:settings');
+  if (edit) return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {});
+  return ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
 }
 
 /* ---------- FSM ввода от админа ---------- */
@@ -601,7 +646,8 @@ function homeKb() {
     .text('🔗 Ссылки', 'm:links')
     .row()
     .text('💬 Поддержка', 'm:support')
-    .text('👥 Админы', 'm:admins');
+    .text('👥 Админы', 'm:admins')
+    .text('🔗 Привязка сайта', 'm:linkcode');
 }
 
 async function adminsMenu(ctx) {
@@ -631,6 +677,22 @@ function register() {
     flows.delete(ctx.from.id);
     return supportMenu(ctx, false);
   });
+  bot.command('reviews', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    flows.delete(ctx.from.id);
+    const all = store.listReviews(500);
+    const summary = store.reviewSummary(all);
+    const shown = all.slice(0, 5).map((r) => {
+      const stars = '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating);
+      return `👤 ${esc(r.name)} · ${stars}\n${esc(r.text.slice(0, 200))}` + (r.reply ? `\n↳ ${esc(r.reply.slice(0, 150))}` : '');
+    }).join('\n\n');
+    return ctx.reply(
+      `⭐ <b>Отзывы</b>\n\n` +
+      (summary.count ? `Средняя оценка: <b>${summary.avg.toFixed(1)} / 5</b> · ${summary.count}\n\n` : 'Отзывов пока нет.\n\n') +
+      (shown || ''),
+      { parse_mode: 'HTML', reply_markup: homeKb() }
+    );
+  });
   for (const command of ['addadmin', 'removeadmin']) {
     bot.command(command, async (ctx) => {
       if (!isAdmin(ctx)) return;
@@ -649,9 +711,38 @@ function register() {
       } catch (e) { return ctx.reply(e.message); }
     });
   }
+  bot.command('newpromo', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    flows.delete(ctx.from.id);
+    const [rawCode, rawPercent, rawMax, rawMin] = String(ctx.match || '').trim().split(/\s+/);
+    const code = store.normalizePromoCode(rawCode || '');
+    const percent = Number(String(rawPercent || '').replace(',', '.'));
+    if (!/^[A-Z0-9_-]{2,32}$/.test(code)) {
+      return ctx.reply('Формат: /newpromo КОД ПРОЦЕНТ [лимит] [от_суммы]\nПример: /newpromo BONUS10 10 50 100\nКод: 2–32 символа, латиница/цифры.');
+    }
+    if (!Number.isFinite(percent) || percent < 0.1 || percent > 50) return ctx.reply('Процент: число от 0.1 до 50.');
+    if (store.getPromoByCode(code)) return ctx.reply('Промокод с таким кодом уже существует.');
+    const maxUses = rawMax === undefined ? null : Number(rawMax);
+    const minUnits = rawMin === undefined ? null : Number(rawMin);
+    if (maxUses !== null && (!Number.isFinite(maxUses) || maxUses < 1)) return ctx.reply('Лимит использований — целое число от 1.');
+    if (minUnits !== null && (!Number.isFinite(minUnits) || minUnits < 1)) return ctx.reply('Минимальная сумма — число от 1.');
+    store.createPromo({ code, percent, maxUses, minUnits });
+    await promosMenu(ctx, false);
+    return ctx.reply(`✅ Промокод <code>${esc(code)}</code> создан: +${percent}%.`, { parse_mode: 'HTML', reply_markup: homeKb() });
+  });
+  bot.command('promos', (ctx) => {
+    if (!isAdmin(ctx)) return;
+    flows.delete(ctx.from.id);
+    return promosMenu(ctx, false);
+  });
+  bot.command('link', async (ctx) => {
+    if (!isAdmin(ctx) && ctx.chat?.type === 'private') return clientbot.sendLinkCode(ctx);
+  });
   bot.command('start', async (ctx) => {
     if (!isAdmin(ctx)) {
       if (ctx.chat?.type !== 'private') return;
+      // t.me/<bot>?start=link — сразу код привязки браузера к Telegram.
+      if (String(ctx.match || '').trim() === 'link') return clientbot.sendLinkCode(ctx);
       // Клиентский флоу прямо в чате (для тех, кто не хочет открывать приложение).
       return clientbot.clientStart(ctx, (ctx.match || '').toString().trim());
     }
@@ -685,6 +776,21 @@ function register() {
     if (d === 'm:admins') return adminsMenu(ctx);
     if (d === 'm:links') return linksMenu(ctx, true);
     if (d === 'm:support') return supportMenu(ctx, true);
+    if (d === 'm:promos') return promosMenu(ctx, true);
+    const promoAct = d.match(/^pr:(t|d):(\d+)$/);
+    if (promoAct) {
+      const promo = store.getPromo(promoAct[2]);
+      if (!promo) return ctx.answerCallbackQuery({ text: 'Промокод не найден' }).catch(() => {});
+      if (promoAct[1] === 't') {
+        store.updatePromo(promo.id, { active: promo.active === false });
+        await ctx.answerCallbackQuery({ text: promo.active === false ? 'Включён ✅' : 'Поставлен на паузу ⏸' }).catch(() => {});
+      } else {
+        store.deletePromo(promo.id);
+        await ctx.answerCallbackQuery({ text: 'Удалён 🗑' }).catch(() => {});
+      }
+      return promosMenu(ctx, true);
+    }
+    if (d === 'm:linkcode') return clientbot.sendLinkCode(ctx);
 
     if (d.startsWith('sup:')) {
       const userId = d.slice(4);
@@ -707,6 +813,22 @@ function register() {
       const active = store.activeOrders().filter((o) => currencies.keyOf(o.currency) === key).length;
       const extra = active ? ` · активных заявок: ${active} (обработайте вручную)` : '';
       await ctx.answerCallbackQuery({ text: `${pair.label}: ${st ? 'включено ✅' : 'выключено ⛔'}${extra}` }).catch(() => {});
+      return settingsMenu(ctx, true);
+    }
+    if (d.startsWith('s:net_')) {
+      const opt = currencies.PAYOUT_OPTIONS[d.slice('s:net_'.length)];
+      if (!opt) return;
+      // BEP-20 — базовая сеть: её нельзя выключить (как и в админке сайта).
+      if (opt.id === currencies.PAYOUT_OPTIONS.USDT_BEP20.id) {
+        return ctx.answerCallbackQuery({ text: 'BEP-20 — базовая сеть, её нельзя выключить' }).catch(() => {});
+      }
+      store.mutate((db) => {
+        db.settings.payoutEnabled = db.settings.payoutEnabled || {};
+        db.settings.payoutEnabled[opt.id] = !currencies.isPayoutEnabled(db.settings, opt);
+      });
+      const now = currencies.isPayoutEnabled(store.get().settings, opt);
+      const active = store.activeOrders().filter((o) => o.payoutId === opt.id).length;
+      await ctx.answerCallbackQuery({ text: `${opt.label}: ${now ? 'включено ✅' : 'выключено ⛔'}${active ? ` · активных заявок: ${active}` : ''}` }).catch(() => {});
       return settingsMenu(ctx, true);
     }
     if (d === 's:online') {
@@ -843,6 +965,9 @@ async function startBot() {
       { command: 'start', description: 'Главное меню' },
       { command: 'menu', description: 'Показать меню' },
       { command: 'support', description: 'Чаты поддержки' },
+      { command: 'promos', description: 'Промокоды' },
+      { command: 'reviews', description: 'Отзывы клиентов' },
+      { command: 'newpromo', description: 'Создать промокод: /newpromo КОД ПРОЦЕНТ' },
     ])
     .catch(() => {});
 

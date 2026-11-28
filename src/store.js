@@ -5,6 +5,8 @@ const textCatalogue = require('./texts');
 const attachments = require('./attachments');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+// WEB_ACCESS=telegram закрывает анонимный вход (по умолчанию браузер открывается анонимно).
+const WEB_ACCESS_DEFAULT = String(process.env.WEB_ACCESS || '').trim().toLowerCase() === 'telegram' ? 'telegram' : 'auto';
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 const DEFAULT_TICKER = [
@@ -28,7 +30,7 @@ const DEFAULT_MARQUEE = [
 const DEFAULT_BLOCK_ORDER = {
   home: ['hero', 'marquee', 'cards', 'steps', 'buyNote'],
   form: ['formCalc', 'formInfo', 'formWallet'],
-  profile: ['profileHead', 'profileRef', 'profileContacts', 'profileAbout'],
+  profile: ['profileHead', 'profileRef', 'profilePrivacy', 'profileContacts', 'profileAbout'],
 };
 
 function normalizeLines(raw, fallback) {
@@ -93,6 +95,11 @@ const defaults = () => {
     blockOrder: normalizeBlockOrder(DEFAULT_BLOCK_ORDER),
     publicUrl: null,
     botUsername: null,
+    // Второй бот (клиентский) для привязки веб-профиля к Telegram: /link
+    bots: { operator: null, client: null },
+    // Режим доступа: 'auto' — вне Telegram открывается анонимно;
+    // 'telegram' — только Telegram (анонимный вход выключен).
+    webAccess: WEB_ACCESS_DEFAULT,
   };
   settings.cardRates = currencies.allCardRates(settings);
   return {
@@ -108,6 +115,7 @@ const defaults = () => {
     reviewSeq: 1,
     orderMessages: [], // диалог клиента и оператора по заявке: { id, orderId, userId, from: 'user'|'admin', text, at }
     orderMsgSeq: 1,
+    linkCodes: {}, // одноразовые коды привязки браузера к Telegram (10 минут)
     promos: [], // promo codes: { id, code, percent, maxUses, usedCount, minUnits, expiresAt, active, createdAt, updatedAt }
     promoSeq: 1,
   };
@@ -206,6 +214,15 @@ function load() {
       s.marquee = normalizeLines(rawSettings.marquee, DEFAULT_MARQUEE);
       s.marqueeEnabled = rawSettings.marqueeEnabled !== false;
       s.blockOrder = normalizeBlockOrder(rawSettings.blockOrder);
+      // Веб-доступ и второй бот: старые базы получают безопасные значения по умолчанию.
+      // Явная настройка в базе важнее переменной окружения.
+      if (rawSettings.webAccess === 'telegram' || rawSettings.webAccess === 'auto') s.webAccess = rawSettings.webAccess;
+      else s.webAccess = WEB_ACCESS_DEFAULT;
+      if (!s.bots || typeof s.bots !== 'object') s.bots = { operator: null, client: null };
+      if (!db.linkCodes || typeof db.linkCodes !== 'object') db.linkCodes = {};
+      for (const [uid, u] of Object.entries(db.users || {})) {
+        if (u && u.anonymous === undefined) u.anonymous = /^(web_|tgweb_)/.test(uid);
+      }
       return;
     }
   } catch (e) {
@@ -258,6 +275,12 @@ function publicSettings() {
     blockOrder: normalizeBlockOrder(s.blockOrder),
     publicUrl: s.publicUrl,
     botUsername: s.botUsername,
+    // Для профиля: доступен ли анонимный вход и какой бот выдаёт код привязки.
+    privacy: {
+      anonymousLogin: s.webAccess !== 'telegram',
+      // Код привязки выдаёт тот же бот, что обслуживает клиентов (@botUsername).
+      linkBot: s.botUsername || (s.bots && s.bots.client) || null,
+    },
   };
 }
 
@@ -268,6 +291,8 @@ function touchUser(u, refParam) {
     if (!user) {
       user = d.users[id] = {
         id,
+        // Анонимные (не Telegram) профили: их псевдоним придумывает сервер.
+        anonymous: /^(web_|tgweb_)/.test(id),
         name: u.first_name || u.name || 'Клиент',
         username: u.username || null,
         referrer: null,
@@ -277,7 +302,8 @@ function touchUser(u, refParam) {
       };
     }
     user.lastSeen = Date.now();
-    if (u.first_name) user.name = u.first_name;
+    // Серверный псевдоним анонимного профиля закреплён: Telegram-поля его не перетирают.
+    if (u.first_name && !user.anonymous) user.name = u.first_name;
     if (u.username) user.username = u.username;
     if (refParam && !user.referrer) {
       const m = String(refParam).match(/^ref(\d{3,})$/);
